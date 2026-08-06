@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import os
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -10,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from .database import Base, engine, get_db
+from .database import BASE_DIR, Base, engine, get_db
 from .models import (
     Appointment,
     AttendanceSession,
@@ -31,9 +32,13 @@ from .models import (
 from .seed import seed_database
 
 app = FastAPI(title="PulseFit Studio")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-Path("app/static/receipts").mkdir(parents=True, exist_ok=True)
-templates = Jinja2Templates(directory="app/templates")
+STATIC_DIR = BASE_DIR / "app" / "static"
+TEMPLATES_DIR = BASE_DIR / "app" / "templates"
+RECEIPTS_DIR = STATIC_DIR / "receipts"
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 def optional_int(value: str | int | None) -> int | None:
@@ -506,6 +511,8 @@ def seed_business_modules(db: Session) -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    if os.getenv("VERCEL"):
+        return
     Base.metadata.create_all(bind=engine)
     ensure_schema()
     with next(get_db()) as db:
@@ -710,7 +717,7 @@ async def create_customer_membership(
     if receipt_image and receipt_image.filename:
         suffix = Path(receipt_image.filename).suffix.lower() or ".jpg"
         filename = f"receipt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{next_id}{suffix}"
-        target = Path("app/static/receipts") / filename
+        target = RECEIPTS_DIR / filename
         target.write_bytes(await receipt_image.read())
         receipt_path = f"/static/receipts/{filename}"
 
@@ -859,7 +866,7 @@ async def create_membership(
     if receipt_image and receipt_image.filename:
         suffix = Path(receipt_image.filename).suffix.lower() or ".jpg"
         filename = f"receipt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{next_id}{suffix}"
-        target = Path("app/static/receipts") / filename
+        target = RECEIPTS_DIR / filename
         target.write_bytes(await receipt_image.read())
         receipt_path = f"/static/receipts/{filename}"
 

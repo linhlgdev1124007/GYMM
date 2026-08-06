@@ -1,11 +1,15 @@
 from pathlib import Path
+import os
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASE_PATH = BASE_DIR / "gym.sqlite3"
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+if os.getenv("VERCEL"):
+    DATABASE_URL = f"sqlite:///file:{DATABASE_PATH.as_posix()}?mode=ro&uri=true"
+else:
+    DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
