@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Check-in tại quầy{% endblock %}
+{% block content %}
+<div class="split-grid">
+    <section class="form-panel">
+        <div class="panel-title"><div><h2>Ghi nhận vào phòng tập</h2><p>Luôn lưu event, không gán nhầm người nếu cần review.</p></div></div>
+        <form class="space-y-3" method="post">
+            <div class="form-field"><label>Khách hàng</label><select class="form-control" name="customer_id">{% for c in customers %}<option value="{{ c.id }}">{{ c.customer_code }} - {{ c.person.display_name }} - {{ c.status }}</option>{% endfor %}</select></div>
+            <div class="form-field"><label>Ghi chú</label><input class="form-control" name="note" placeholder="Ngoại lệ, công nợ, PT..."></div>
+            <button class="submit-btn inline-flex items-center gap-2"><i data-lucide="scan-face"></i>Check-in</button>
+        </form>
+    </section>
+    <section class="panel">
+        <div class="panel-title"><div><h2>Màn hình quầy</h2><p>Trạng thái lớn để lễ tân quét nhanh.</p></div></div>
+        <div class="rounded-lg bg-[#111315] p-5 text-white">
+            <div class="text-sm text-zinc-400">Trạng thái hiện tại</div>
+            <div class="mt-2 text-4xl font-black tracking-normal">SẴN SÀNG</div>
+            <div class="mt-4 h-2 rounded-full bg-zinc-800"><div class="h-2 w-2/3 rounded-full bg-gradient-to-r from-emerald-400 to-amber-300"></div></div>
+        </div>
+    </section>
+</div>
+<section class="table-panel mt-4"><div class="table-scroll"><table class="data-table">
+    <thead><tr><th>Khách</th><th>Giờ vào</th><th>Giờ ra</th><th>Kết quả</th><th>Trạng thái</th><th></th></tr></thead>
+    <tbody>{% for s in sessions %}<tr><td class="font-semibold">{{ s.customer.person.display_name if s.customer else "-" }}</td><td>{{ s.checked_in_at.strftime("%H:%M %d/%m") }}</td><td>{{ s.checked_out_at.strftime("%H:%M %d/%m") if s.checked_out_at else "-" }}</td><td><span class="badge {{ 'green' if s.result == 'allowed' else 'yellow' }}">{{ s.result }}</span></td><td><span class="badge {{ 'green' if s.status == 'open' else 'gray' }}">{{ s.status }}</span></td><td>{% if s.status == 'open' %}<form method="post" action="/check-in/{{ s.id }}/checkout"><button class="ghost-btn">Check-out</button></form>{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div></section>
+{% endblock %}

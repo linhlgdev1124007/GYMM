@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Sync & lỗi thiết bị{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+{% for d in devices %}
+    <section class="panel">
+        <div class="panel-title"><div><h2>{{ d.name }}</h2><p>{{ d.code }} · {{ d.ip_address }}</p></div><span class="badge {{ 'green' if d.status == 'online' else ('yellow' if d.status == 'maintenance' else 'red') }}">{{ d.status }}</span></div>
+        <div class="grid grid-cols-3 gap-3">
+            <div class="rounded-lg bg-zinc-50 p-4"><div class="text-xs font-bold text-zinc-500">Pending jobs</div><div class="mt-1 text-2xl font-black">{{ d.pending_jobs }}</div></div>
+            <div class="rounded-lg bg-zinc-50 p-4"><div class="text-xs font-bold text-zinc-500">Errors 24h</div><div class="mt-1 text-2xl font-black">{{ d.errors_24h }}</div></div>
+            <div class="rounded-lg bg-zinc-50 p-4"><div class="text-xs font-bold text-zinc-500">Mode</div><div class="mt-1 text-lg font-black">{{ d.purpose }}</div></div>
+        </div>
+    </section>
+{% endfor %}
+</div>
+{% endblock %}

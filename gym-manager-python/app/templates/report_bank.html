@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Giao dịch chuyển khoản{% endblock %}
+{% block content %}
+<section class="table-panel mb-4">
+    <div class="panel-title"><div><h2>Tài khoản nhận tiền</h2><p>Phân biệt tài khoản công ty public và tài khoản anh Minh private.</p></div><span class="badge green">{{ "{:,.0f}".format(total) }}</span></div>
+    <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Ngân hàng</th><th>Chủ tài khoản</th><th>Số tài khoản</th><th>Loại</th><th>Trạng thái</th></tr></thead>
+        <tbody>{% for a in accounts %}<tr><td class="font-bold">{{ a.bank_name }}</td><td>{{ a.account_name }}</td><td>{{ a.account_number }}</td><td><span class="badge {{ 'green' if a.visibility == 'public' else 'yellow' }}">{{ a.visibility }}</span></td><td>{{ a.status }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+</section>
+<section class="table-panel">
+    <div class="panel-title"><div><h2>File thống kê giao dịch vào tài khoản chủ</h2><p>Lọc riêng chuyển khoản để đối chiếu sao kê ngân hàng.</p></div></div>
+    <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Mã thu</th><th>Thời gian</th><th>Khách hàng</th><th>Số tiền</th><th>Tài khoản</th><th>Loại TK</th><th>Ghi chú</th></tr></thead>
+        <tbody>{% for p in payments %}<tr><td class="font-bold">{{ p.payment_no }}</td><td>{{ p.paid_at.strftime("%d/%m/%Y") }}</td><td>{{ p.customer.person.display_name }}</td><td>{{ "{:,.0f}".format(p.amount or 0) }}</td><td>{{ p.bank_account.bank_name if p.bank_account else "-" }}</td><td>{{ p.bank_account.visibility if p.bank_account else "-" }}</td><td>{{ p.note or "-" }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+</section>
+{% endblock %}

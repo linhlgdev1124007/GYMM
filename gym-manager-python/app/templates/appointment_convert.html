@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Khách chốt{% endblock %}
+{% block content %}
+<div class="toolbar">
+    <a class="ghost-btn inline-flex items-center" href="/appointments"><i data-lucide="arrow-left"></i><span class="ml-2">Quay lại lịch hẹn</span></a>
+</div>
+<section class="form-panel">
+    <div class="panel-title"><div><h2>Tạo khách từ lịch hẹn</h2><p>Ngày hẹn {{ appointment.scheduled_at.strftime("%d/%m/%Y") }} sẽ trở thành ngày đăng ký gói.</p></div></div>
+    <form class="form-grid membership-form-grid" method="post" data-convert-form>
+        <div class="form-field"><label>Họ tên</label><input class="form-control" name="display_name" value="{{ appointment.prospect_name or '' }}" required></div>
+        <div class="form-field"><label>Điện thoại</label><input class="form-control" name="phone"></div>
+        <div class="form-field"><label>Giới tính</label><select class="form-control" name="gender"><option value="">Chưa chọn</option><option>Nam</option><option>Nữ</option><option>Khác</option></select></div>
+        <div class="form-field"><label>Ngày sinh</label><input class="form-control" name="date_of_birth" type="date"></div>
+        <div class="form-field"><label>Mã thẻ MBS</label><input class="form-control" name="mbs_card_code"></div>
+        <div class="form-field"><label>Nhân viên sale</label><select class="form-control" name="sales_employee_id"><option value="">Không gán</option>{% for e in employees %}<option value="{{ e.id }}" {{ "selected" if appointment.employee_id == e.id else "" }}>{{ e.person.display_name }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label>Nguồn khách</label><select class="form-control" name="source">{% for source in source_options %}<option value="{{ source }}" {{ "selected" if source_value == source else "" }}>{{ source }}</option>{% endfor %}</select></div>
+        <div class="form-field modal-span"><label>Note khách hàng</label><textarea class="form-control textarea-control" name="notes">{{ appointment.note or "" }}</textarea></div>
+
+        <div class="form-field modal-span">
+            <label>Gói đăng ký</label>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {% for p in packages %}
+                <label class="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold">
+                    <input type="checkbox" name="package_ids" value="{{ p.id }}" data-package-price="{{ p.price or 0 }}" class="h-4 w-4 accent-emerald-500">
+                    <span class="min-w-0 flex-1">{{ p.name }}</span>
+                    <span class="text-zinc-500">{{ "{:,.0f}".format(p.price or 0) }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="form-field"><label>Tổng tiền</label><input class="form-control" type="number" name="final_price_display" value="0" readonly data-total-price></div>
+        <div class="form-field"><label>Số tiền cọc</label><input class="form-control" type="number" name="deposit_amount" value="0"></div>
+        <div class="form-field"><label>Hạn dư nợ</label><input class="form-control" type="date" name="debt_due_date"></div>
+        <div class="form-field"><label>Hình thức thanh toán</label><select class="form-control" name="payment_method"><option value="cash">Tiền mặt</option><option value="bank_transfer">Chuyển khoản</option><option value="card">Quẹt thẻ</option><option value="apple_pay">Apple Pay</option></select></div>
+        <div class="form-actions modal-span"><button class="submit-btn">Tạo khách và đăng ký gói</button></div>
+    </form>
+</section>
+<script>
+    const convertForm = document.querySelector('[data-convert-form]');
+    const totalPriceInput = document.querySelector('[data-total-price]');
+    const updateTotalPrice = () => {
+        const total = [...convertForm.querySelectorAll('[data-package-price]:checked')]
+            .reduce((sum, item) => sum + Number(item.dataset.packagePrice || 0), 0);
+        totalPriceInput.value = total;
+    };
+    convertForm.querySelectorAll('[data-package-price]').forEach((item) => {
+        item.addEventListener('change', updateTotalPrice);
+    });
+    updateTotalPrice();
+</script>
+{% endblock %}

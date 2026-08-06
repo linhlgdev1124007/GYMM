@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PulseFit Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/static/app.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+                    colors: {
+                        iron: '#111315',
+                        punch: '#10b981',
+                        volt: '#f8c14a',
+                        steel: '#eef2f6'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="min-h-screen bg-[#f3f6f8] text-zinc-900">
+    {% set toast_message = request.query_params.get('toast') if request else None %}
+    {% set toast_type = request.query_params.get('toast_type', 'success') if request else 'success' %}
+    {% if toast_message %}
+    <div class="toast-wrap" data-toast>
+        <div class="toast-card {{ 'error' if toast_type == 'error' else 'success' }}">
+            <div class="toast-icon">
+                <i data-lucide="{{ 'circle-alert' if toast_type == 'error' else 'circle-check' }}"></i>
+            </div>
+            <div class="toast-content">
+                <strong>{{ 'Có lỗi xảy ra' if toast_type == 'error' else 'Thành công' }}</strong>
+                <span>{{ toast_message }}</span>
+            </div>
+            <button class="toast-close" type="button" data-toast-close aria-label="Đóng thông báo">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+    </div>
+    {% endif %}
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark"><i data-lucide="dumbbell"></i></div>
+                <div>
+                    <div class="brand-name">PULSEFIT</div>
+                    <div class="brand-sub">Fitness Studio</div>
+                </div>
+            </div>
+            {% set nav = [
+                ('dashboard','/','layout-dashboard','Tổng quan'),
+                ('customers','/customers','users','Khách hàng'),
+                ('appointments','/appointments','calendar-clock','Lịch hẹn'),
+                ('pt_groups','/pt-groups','users-round','Nhóm PT'),
+                ('packages','/packages','badge-dollar-sign','Gói tập'),
+                ('employees','/employees','id-card','Nhân viên'),
+                ('commissions','/commissions','hand-coins','Hoa hồng'),
+                ('reports','/reports/revenue','chart-no-axes-combined','Báo cáo'),
+                ('devices','/devices','cpu','Thiết bị'),
+                ('sync','/sync','refresh-cw','Sync & lỗi')
+            ] %}
+            <nav class="nav-list">
+                {% for key, href, icon, label in nav %}
+                    <a class="nav-item {{ 'active' if active == key else '' }}" href="{{ href }}">
+                        <i data-lucide="{{ icon }}"></i>
+                        <span>{{ label }}</span>
+                    </a>
+                {% endfor %}
+            </nav>
+            <div class="sidebar-footer">
+                <div class="status-dot"></div>
+                <span>SQLite local - DAH-1017 tạm hoãn</span>
+            </div>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">PulseFit Studio</p>
+                    <h1>{% block title %}{% endblock %}</h1>
+                </div>
+                <div class="top-actions"></div>
+            </header>
+            <section class="content-wrap">
+                {% block content %}{% endblock %}
+            </section>
+        </main>
+    </div>
+    <script>
+        lucide.createIcons();
+        const toast = document.querySelector('[data-toast]');
+        if (toast) {
+            const closeToast = () => toast.classList.add('closing');
+            toast.querySelector('[data-toast-close]')?.addEventListener('click', closeToast);
+            window.setTimeout(closeToast, 4200);
+        }
+
+        window.showToast = (message, type = 'success') => {
+            document.querySelector('[data-toast]')?.remove();
+            const wrap = document.createElement('div');
+            wrap.className = 'toast-wrap';
+            wrap.dataset.toast = '';
+            wrap.innerHTML = `
+                <div class="toast-card ${type === 'error' ? 'error' : 'success'}">
+                    <div class="toast-icon"><i data-lucide="${type === 'error' ? 'circle-alert' : 'circle-check'}"></i></div>
+                    <div class="toast-content">
+                        <strong>${type === 'error' ? 'Có lỗi xảy ra' : 'Thành công'}</strong>
+                        <span>${message}</span>
+                    </div>
+                    <button class="toast-close" type="button" aria-label="Đóng thông báo"><i data-lucide="x"></i></button>
+                </div>`;
+            document.body.appendChild(wrap);
+            lucide.createIcons();
+            const close = () => wrap.classList.add('closing');
+            wrap.querySelector('.toast-close')?.addEventListener('click', close);
+            window.setTimeout(close, 4200);
+        };
+
+        window.initAppUi = (root = document) => {
+            root.querySelectorAll('[data-open-modal]:not([data-ui-bound])').forEach((button) => {
+                button.dataset.uiBound = 'true';
+                button.addEventListener('click', () => {
+                    const modal = document.getElementById(button.dataset.openModal);
+                    modal?.classList.add('open');
+                    modal?.setAttribute('aria-hidden', 'false');
+                    modal?.querySelector('input, select, button')?.focus();
+                });
+            });
+            root.querySelectorAll('[data-close-modal]:not([data-ui-bound])').forEach((button) => {
+                button.dataset.uiBound = 'true';
+                button.addEventListener('click', () => {
+                    const modal = document.getElementById(button.dataset.closeModal);
+                    modal?.classList.remove('open');
+                    modal?.setAttribute('aria-hidden', 'true');
+                });
+            });
+            root.querySelectorAll('.modal-backdrop:not([data-ui-bound])').forEach((modal) => {
+                modal.dataset.uiBound = 'true';
+                modal.addEventListener('click', (event) => {
+                    if (event.target === modal) {
+                        modal.classList.remove('open');
+                        modal.setAttribute('aria-hidden', 'true');
+                    }
+                });
+            });
+
+            root.querySelectorAll('select[data-combobox]:not([data-combobox-ready])').forEach((select) => {
+                select.dataset.comboboxReady = 'true';
+                const wrapper = document.createElement('div');
+                wrapper.className = 'combobox';
+                select.parentNode.insertBefore(wrapper, select);
+                wrapper.appendChild(select);
+                select.style.display = 'none';
+                const input = document.createElement('input');
+                input.className = 'form-control combobox-input';
+                input.type = 'search';
+                input.autocomplete = 'off';
+                input.placeholder = select.dataset.placeholder || 'Tìm kiếm...';
+                const menu = document.createElement('div');
+                menu.className = 'combobox-menu';
+                wrapper.append(input, menu);
+
+                const options = [...select.options].map((option) => ({
+                    value: option.value,
+                    label: option.textContent.trim(),
+                    search: `${option.textContent} ${option.dataset.search || ''}`.toLowerCase(),
+                    meta: option.dataset.meta || '',
+                }));
+                const selected = options.find((option) => option.value === select.value);
+                if (selected && selected.value) input.value = selected.label;
+
+                const render = () => {
+                    const term = input.value.trim().toLowerCase();
+                    const matches = options.filter((option) => !term || option.search.includes(term)).slice(0, 40);
+                    menu.innerHTML = matches.length ? matches.map((option) => `
+                        <button class="combobox-option" type="button" data-value="${option.value}">
+                            <strong>${option.label || 'Không chọn'}</strong>
+                            ${option.meta ? `<span>${option.meta}</span>` : ''}
+                        </button>`).join('') : '<div class="combobox-empty">Không tìm thấy kết quả phù hợp.</div>';
+                    menu.querySelectorAll('[data-value]').forEach((button) => {
+                        button.addEventListener('click', () => {
+                            select.value = button.dataset.value;
+                            input.value = options.find((option) => option.value === select.value)?.label || '';
+                            select.dispatchEvent(new Event('change', { bubbles: true }));
+                            wrapper.classList.remove('open');
+                        });
+                    });
+                };
+                input.addEventListener('focus', () => { render(); wrapper.classList.add('open'); });
+                input.addEventListener('input', () => { select.value = ''; render(); wrapper.classList.add('open'); });
+                input.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape') wrapper.classList.remove('open');
+                });
+                document.addEventListener('click', (event) => {
+                    if (!wrapper.contains(event.target)) wrapper.classList.remove('open');
+                });
+            });
+
+            root.querySelectorAll('form[data-ajax-form]:not([data-ajax-ready])').forEach((form) => {
+                form.dataset.ajaxReady = 'true';
+                form.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    const submitter = event.submitter || form.querySelector('[type="submit"]');
+                    const message = submitter?.dataset.confirm || form.dataset.confirm;
+                    if (message && !window.confirm(message)) return;
+                    submitter?.classList.add('button-loading');
+                    submitter?.setAttribute('disabled', 'disabled');
+                    try {
+                        const response = await fetch(form.action || window.location.href, {
+                            method: form.method || 'post',
+                            body: new FormData(form),
+                            headers: { 'X-Requested-With': 'fetch' },
+                        });
+                        const payload = await response.json();
+                        if (!response.ok || !payload.ok) throw new Error(payload.message || 'Thao tác chưa thành công.');
+                        if (payload.fragment && payload.target) {
+                            const target = document.querySelector(payload.target);
+                            if (target) {
+                                target.innerHTML = payload.fragment;
+                                window.initAppUi(target);
+                                lucide.createIcons();
+                            }
+                        }
+                        if (form.dataset.closeOnSuccess) {
+                            document.getElementById(form.dataset.closeOnSuccess)?.classList.remove('open');
+                        }
+                        if (form.dataset.resetOnSuccess === 'true') form.reset();
+                        window.showToast(payload.message || 'Đã lưu thay đổi.');
+                    } catch (error) {
+                        window.showToast(error.message || 'Thao tác chưa thành công.', 'error');
+                    } finally {
+                        submitter?.classList.remove('button-loading');
+                        submitter?.removeAttribute('disabled');
+                    }
+                });
+            });
+        };
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                document.querySelectorAll('.modal-backdrop.open').forEach((modal) => {
+                    modal.classList.remove('open');
+                    modal.setAttribute('aria-hidden', 'true');
+                });
+            }
+        });
+        window.initAppUi();
+    </script>
+</body>
+</html>

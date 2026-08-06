@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Gói tập{% endblock %}
+{% block content %}
+<section class="form-panel mb-4">
+    <div class="panel-title"><div><h2>Thêm gói mới</h2><p>Fitness, Yoga, Dance, PT hoặc dịch vụ khác.</p></div></div>
+    <form class="form-grid" method="post">
+        <div class="form-field"><label>Tên gói</label><input class="form-control" name="name" required></div>
+        <div class="form-field"><label>Loại</label><input class="form-control" name="category" value="Fitness"></div>
+        <div class="form-field"><label>Kiểu gói</label><select class="form-control" name="package_type"><option value="time">Theo thời gian</option><option value="sessions">Theo buổi</option></select></div>
+        <div class="form-field"><label>Gia</label><input class="form-control" name="price" type="number" value="0"></div>
+        <div class="form-field"><label>Số ngày</label><input class="form-control" name="duration_days" type="number"></div>
+        <div class="form-field"><label>Số buổi</label><input class="form-control" name="session_count" type="number"></div>
+        <div class="form-field flex items-end"><button class="submit-btn w-full">Tạo gói</button></div>
+    </form>
+</section>
+<section class="table-panel"><div class="table-scroll"><table class="data-table">
+    <thead><tr><th>Mã</th><th>Tên gói</th><th>Loại</th><th>Kiểu</th><th>Ngày</th><th>Buổi</th><th>Giá</th><th>PT</th></tr></thead>
+    <tbody>{% for p in packages %}<tr><td class="font-bold">{{ p.code }}</td><td>{{ p.name }}</td><td>{{ p.category }}</td><td><span class="badge blue">{{ p.package_type }}</span></td><td>{{ p.duration_days or "-" }}</td><td>{{ p.session_count or "-" }}</td><td>{{ "{:,.0f}".format(p.price) }}</td><td>{{ "Yes" if p.is_pt else "No" }}</td></tr>{% endfor %}</tbody>
+</table></div></section>
+{% endblock %}

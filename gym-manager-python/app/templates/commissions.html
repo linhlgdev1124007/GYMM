@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Hoa hồng & KPI{% endblock %}
+{% block content %}
+<section class="table-panel">
+    <div class="panel-title"><div><h2>Hoa hồng lễ tân, sale và PT</h2><p>Nền tảng cho file lương: nhảy phần lương tự động từ gói đã bán.</p></div><span class="badge green">{{ "{:,.0f}".format(total) }}</span></div>
+    <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Ngày</th><th>Nhân viên</th><th>Vai trò</th><th>Khách hàng</th><th>Doanh số nền</th><th>Tỷ lệ</th><th>Hoa hồng</th><th>Trạng thái</th></tr></thead>
+        <tbody>{% for c in commissions %}<tr>
+            <td>{{ c.earned_at.strftime("%d/%m/%Y") }}</td><td class="font-bold">{{ c.employee.person.display_name }}</td><td><span class="badge blue">{{ c.role }}</span></td>
+            <td>{{ c.membership.customer.person.display_name if c.membership else "-" }}</td><td>{{ "{:,.0f}".format(c.base_amount or 0) }}</td><td>{{ c.rate_percent }}%</td><td>{{ "{:,.0f}".format(c.commission_amount or 0) }}</td><td><span class="badge yellow">{{ c.status }}</span></td>
+        </tr>{% endfor %}</tbody>
+    </table></div>
+</section>
+{% endblock %}

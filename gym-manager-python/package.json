@@ -1,0 +1,16 @@
+{
+  "name": "gym-manager-python",
+  "version": "1.0.0",
+  "description": "FastAPI + SQLite + Jinja + Tailwind implementation of the gym management app.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node debug-ui.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
