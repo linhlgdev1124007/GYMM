@@ -17,6 +17,7 @@ env/
 *.sqlite
 *.sqlite3
 *.db
+!gym.sqlite3
 
 # Environment and secrets
 .env
