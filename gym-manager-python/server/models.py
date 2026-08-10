@@ -226,7 +226,7 @@ class PtEnrollment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    coach_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     group_type: Mapped[str] = mapped_column(String(20), default="1:1", index=True)
     starts_at: Mapped[date] = mapped_column(Date, default=date.today)
     expires_at: Mapped[date | None] = mapped_column(Date)
@@ -237,6 +237,17 @@ class PtEnrollment(Base):
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
 
     customer: Mapped[Customer] = relationship()
+    coach_assignments: Mapped[list["PtEnrollmentCoach"]] = relationship(back_populates="enrollment", cascade="all, delete-orphan")
+
+
+class PtEnrollmentCoach(Base):
+    __tablename__ = "pt_enrollment_coaches"
+
+    enrollment_id: Mapped[int] = mapped_column(ForeignKey("pt_enrollments.id", ondelete="CASCADE"), primary_key=True)
+    coach_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), primary_key=True)
+    assigned_at: Mapped[date] = mapped_column(Date, default=date.today)
+
+    enrollment: Mapped[PtEnrollment] = relationship(back_populates="coach_assignments")
     coach: Mapped[Employee] = relationship()
 
 

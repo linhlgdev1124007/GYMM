@@ -12,7 +12,13 @@ import {
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../services/api";
-import { dateTime, initials, money, shortDate } from "../../utils/format";
+import {
+  dateTime,
+  formatPhone,
+  initials,
+  money,
+  shortDate,
+} from "../../utils/format";
 import { Drawer } from "../../components/ui/Drawer";
 import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -74,8 +80,16 @@ export function MemberQuickDrawer({
     onError: (e) => setFormError(e.message),
   });
   const deadlineSave = useMutation({
-    mutationFn: (payload) => api(`/api/memberships/${current.id}/debt-due-date`, { method: "PATCH", body: payload }),
-    onSuccess: () => { refresh(); setDialog(null); toast.success("Đã lưu hạn thanh toán."); },
+    mutationFn: (payload) =>
+      api(`/api/memberships/${current.id}/debt-due-date`, {
+        method: "PATCH",
+        body: payload,
+      }),
+    onSuccess: () => {
+      refresh();
+      setDialog(null);
+      toast.success("Đã lưu hạn thanh toán.");
+    },
     onError: (e) => setFormError(e.message),
   });
   const trainingSave = useMutation({
@@ -105,6 +119,7 @@ export function MemberQuickDrawer({
   });
   const current = member?.memberships[0];
   const training = member?.training.find((row) => row.status === "active");
+  const trainingCoaches = training?.coaches || [];
   const lastCheckin = member?.checkins[0];
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
@@ -243,7 +258,20 @@ export function MemberQuickDrawer({
                     <TriangleAlert size={15} />
                     Chưa đăng ký PT
                   </span>
-                  <button onClick={() => openDialog("training")}>Gán PT</button>
+                  <button onClick={() => openDialog("training")}>
+                    Đăng ký PT
+                  </button>
+                </div>
+              )}
+              {training && !trainingCoaches.length && (
+                <div className="detail-alert">
+                  <span className="flex items-center gap-2">
+                    <TriangleAlert size={15} />
+                    Đăng ký PT chưa có Coach
+                  </span>
+                  <button onClick={() => openDialog("training")}>
+                    Phân công
+                  </button>
                 </div>
               )}
               <h3 className="detail-section-title">Gói tập</h3>
@@ -297,7 +325,22 @@ export function MemberQuickDrawer({
                   {current.debtAmount > 0 && (
                     <div className="inline-field">
                       <dt>Hạn thanh toán</dt>
-                      <dd><button className={current.debtDueDate && new Date(`${current.debtDueDate}T23:59:59`) < new Date() ? "font-medium text-red-700 hover:underline" : "font-medium text-blue-700 hover:underline"} onClick={() => openDialog("deadline")}>{current.debtDueDate ? `${shortDate(current.debtDueDate)} · Đổi hạn` : "+ Đặt hạn"}</button></dd>
+                      <dd>
+                        <button
+                          className={
+                            current.debtDueDate &&
+                            new Date(`${current.debtDueDate}T23:59:59`) <
+                              new Date()
+                              ? "font-medium text-red-700 hover:underline"
+                              : "font-medium text-blue-700 hover:underline"
+                          }
+                          onClick={() => openDialog("deadline")}
+                        >
+                          {current.debtDueDate
+                            ? `${shortDate(current.debtDueDate)} · Đổi hạn`
+                            : "+ Đặt hạn"}
+                        </button>
+                      </dd>
                     </div>
                   )}
                 </dl>
@@ -329,7 +372,7 @@ export function MemberQuickDrawer({
                   <dt>PT hiện tại</dt>
                   <dd>
                     {training ? (
-                      `${training.coach?.name} · ${training.type}`
+                      `${trainingCoaches.map((coach) => coach.name).join(", ") || "Chưa phân công"} · ${training.type}`
                     ) : (
                       <button
                         className="text-xs font-medium text-blue-700"
@@ -356,6 +399,8 @@ export function MemberQuickDrawer({
                 <InlineEditField
                   label="Điện thoại"
                   value={member.phone}
+                  type="tel"
+                  displayValue={formatPhone(member.phone)}
                   onSave={(phone) => update.mutateAsync({ phone })}
                   pending={update.isPending}
                 />

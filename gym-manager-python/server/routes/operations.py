@@ -29,8 +29,8 @@ def delete_trainer(trainer_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/training")
-def training(type: str = "1:1", q: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
-    return operations_controller.list_pt(db, group_type=type, q=q, page=page, page_size=page_size)
+def training(type: str = "1:1", q: str = "", assignment: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
+    return operations_controller.list_pt(db, group_type=type, q=q, assignment=assignment, page=page, page_size=page_size)
 
 
 @router.post("/members/{member_id}/training", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])

@@ -8,9 +8,11 @@ export function SearchableSelect({
   placeholder = "Chọn…",
   searchPlaceholder = "Tìm kiếm…",
   ariaLabel,
+  clearable = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
   const root = useRef(null);
   useEffect(() => {
     const close = (event) => {
@@ -30,6 +32,7 @@ export function SearchableSelect({
       )
       .slice(0, 50);
   }, [options, query]);
+  useEffect(() => setActive(0), [query, open]);
   return (
     <div className="combobox" ref={root}>
       <button
@@ -38,6 +41,7 @@ export function SearchableSelect({
         onClick={() => setOpen(!open)}
         aria-label={ariaLabel}
         aria-expanded={open}
+        aria-haspopup="listbox"
       >
         <span className={selected ? "" : "text-slate-400"}>
           {selected?.label || placeholder}
@@ -58,14 +62,47 @@ export function SearchableSelect({
                   e.stopPropagation();
                   setOpen(false);
                 }
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setActive((value) =>
+                    Math.min(value + 1, filtered.length - 1),
+                  );
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setActive((value) => Math.max(value - 1, 0));
+                }
+                if (e.key === "Enter" && filtered[active]) {
+                  e.preventDefault();
+                  onChange(String(filtered[active].value));
+                  setOpen(false);
+                  setQuery("");
+                }
               }}
             />
           </div>
-          <div className="combobox-options">
-            {filtered.map((item) => (
+          <div className="combobox-options" role="listbox">
+            {clearable && value && (
+              <button
+                type="button"
+                className="text-slate-500"
+                onClick={() => {
+                  onChange("");
+                  setOpen(false);
+                  setQuery("");
+                }}
+              >
+                Không chọn
+              </button>
+            )}
+            {filtered.map((item, index) => (
               <button
                 type="button"
                 key={item.value}
+                role="option"
+                aria-selected={String(item.value) === String(value)}
+                className={index === active ? "bg-slate-50" : ""}
+                onMouseEnter={() => setActive(index)}
                 onClick={() => {
                   onChange(String(item.value));
                   setOpen(false);

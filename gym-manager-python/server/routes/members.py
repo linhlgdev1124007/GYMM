@@ -9,8 +9,8 @@ router = APIRouter(prefix="/api", tags=["members"], dependencies=[Depends(curren
 
 
 @router.get("/members")
-def list_members(q: str = "", status: str = "all", expiring_days: int = Query(14, ge=1, le=365, alias="expiringDays"), view: str = "all", package_id: int | None = Query(None, alias="packageId"), trainer_id: int | None = Query(None, alias="trainerId"), sort: str = "newest", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
-    return members_controller.list_members(db, q=q, member_status=status, expiring_days=expiring_days, view=view, package_id=package_id, trainer_id=trainer_id, sort=sort, page=page, page_size=page_size)
+def list_members(q: str = "", status: str = "all", expiring_days: int = Query(14, ge=1, le=365, alias="expiringDays"), payment_status: str = Query("all", alias="paymentStatus"), overdue_days: int = Query(7, ge=1, le=365, alias="overdueDays"), view: str = "all", package_id: int | None = Query(None, alias="packageId"), trainer_id: int | None = Query(None, alias="trainerId"), sort: str = "newest", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
+    return members_controller.list_members(db, q=q, member_status=status, expiring_days=expiring_days, payment_status=payment_status, overdue_days=overdue_days, view=view, package_id=package_id, trainer_id=trainer_id, sort=sort, page=page, page_size=page_size)
 
 
 @router.get("/members/options")

@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from .database import Base, ROOT_DIR, SessionLocal, engine
+from .database import Base, ROOT_DIR, SessionLocal, engine, migrate_pt_coaches
 from .routes import auth, insights, members, operations
 from .security import ensure_admin_user
 from .middleware.security_headers import SecurityHeadersMiddleware
@@ -21,7 +21,13 @@ app.add_middleware(SecurityHeadersMiddleware)
 def startup():
     if os.getenv("VERCEL"):
         return
+    migrate_pt_coaches()
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""
+            INSERT OR IGNORE INTO pt_enrollment_coaches (enrollment_id, coach_id, assigned_at)
+            SELECT id, coach_id, date('now') FROM pt_enrollments WHERE coach_id IS NOT NULL
+        """)
     db = SessionLocal()
     try:
         ensure_admin_user(db)

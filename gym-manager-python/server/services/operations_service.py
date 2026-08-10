@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, Branch, CashShift, CommissionLedger,
-    Customer, Device, Employee, Membership, Payment, Person, PtEnrollment, PtGroup,
+    Customer, Device, Employee, Membership, Payment, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
     ServicePackage,
 )
 from .serializers import employee_data, pagination, payment_data, pt_data
@@ -27,8 +27,8 @@ def list_trainers(db: Session, q: str, page: int, page_size: int):
     if q: query = query.join(Employee.person).filter(or_(Person.display_name.contains(q), Person.phone.contains(q), Employee.employee_code.contains(q), Employee.job_title.contains(q)))
     total = query.count(); rows = query.order_by(Employee.id.desc()).offset((page-1)*page_size).limit(page_size).all()
     ids = [row.id for row in rows]
-    counts = dict(db.query(PtEnrollment.coach_id, func.count(PtEnrollment.id)).filter(PtEnrollment.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollment.coach_id).all()) if ids else {}
-    sessions = dict(db.query(PtEnrollment.coach_id, func.sum(PtEnrollment.remaining_sessions)).filter(PtEnrollment.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollment.coach_id).all()) if ids else {}
+    counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollmentCoach.enrollment_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
+    sessions = dict(db.query(PtEnrollmentCoach.coach_id, func.sum(PtEnrollment.remaining_sessions)).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
     items=[]
     for row in rows:
         item=employee_data(row); item["activeClients"]=counts.get(row.id,0); item["ptSessions"]=sessions.get(row.id,0) or 0; items.append(item)
@@ -62,7 +62,7 @@ def delete_trainer(db: Session, trainer_id: int):
     references=sum([
         db.query(Customer).filter(Customer.sales_employee_id==trainer_id).count(),
         db.query(Membership).filter(or_(Membership.sale_online_employee_id==trainer_id,Membership.direct_sales_employee_id==trainer_id,Membership.pt_converter_employee_id==trainer_id)).count(),
-        db.query(PtEnrollment).filter(PtEnrollment.coach_id==trainer_id).count(),
+        db.query(PtEnrollmentCoach).filter(PtEnrollmentCoach.coach_id==trainer_id).count(),
         db.query(PtGroup).filter(PtGroup.coach_id==trainer_id).count(),
         db.query(Appointment).filter(or_(Appointment.employee_id==trainer_id,Appointment.support_employee_id==trainer_id)).count(),
         db.query(AttendanceSession).filter(AttendanceSession.employee_id==trainer_id).count(),
@@ -74,33 +74,44 @@ def delete_trainer(db: Session, trainer_id: int):
     person=row.person;db.delete(row);db.flush();db.delete(person);db.commit();return {"deleted":True,"archived":False}
 
 
-def list_pt(db: Session, group_type: str, q: str, page: int, page_size: int):
+def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, page_size: int):
     if group_type not in ("1:1","1:2","1:3"): group_type="1:1"
-    query=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach).joinedload(Employee.person)).filter(PtEnrollment.group_type==group_type)
+    query=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.group_type==group_type)
     if q: query=query.join(PtEnrollment.customer).join(Customer.person).filter(or_(Person.display_name.contains(q),Person.phone.contains(q),Customer.customer_code.contains(q)))
+    if assignment=="unassigned": query=query.filter(~PtEnrollment.coach_assignments.any())
+    elif assignment=="assigned": query=query.filter(PtEnrollment.coach_assignments.any())
     total=query.count();rows=query.order_by(PtEnrollment.status,PtEnrollment.id.desc()).offset((page-1)*page_size).limit(page_size).all()
     counts={kind:db.query(PtEnrollment).filter(PtEnrollment.group_type==kind).count() for kind in ("1:1","1:2","1:3")}
     return {"items":[pt_data(row) for row in rows],"counts":counts,"pagination":pagination(page,page_size,total)}
 
 
 def create_pt(db: Session, member_id: int, payload: dict):
-    member=db.get(Customer,member_id);coach=db.get(Employee,_as_int(payload.get("coachId")))
-    if not member or not coach or coach.status!="active": raise HTTPException(422,"Hội viên hoặc coach không hợp lệ.")
+    member=db.get(Customer,member_id)
+    if not member: raise HTTPException(422,"Hội viên không hợp lệ.")
     if db.query(PtEnrollment).filter(PtEnrollment.customer_id==member_id,PtEnrollment.status=="active").first(): raise HTTPException(409,"Hội viên đang có đăng ký PT hoạt động.")
+    coach_ids=list(dict.fromkeys(_as_int(value) for value in (payload.get("coachIds") or ([payload.get("coachId")] if payload.get("coachId") else []))))
+    coach_ids=[value for value in coach_ids if value]
+    coaches=db.query(Employee).filter(Employee.id.in_(coach_ids),Employee.status=="active").all() if coach_ids else []
+    if len(coaches)!=len(coach_ids): raise HTTPException(422,"Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
     kind=payload.get("type") if payload.get("type") in ("1:1","1:2","1:3") else "1:1";sessions=max(_as_int(payload.get("totalSessions"),12),1)
-    row=PtEnrollment(customer_id=member_id,coach_id=coach.id,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or date.today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_days=", ".join(payload.get("scheduleDays") or []) or None,schedule_time=payload.get("scheduleTime") or None,status="active")
+    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or date.today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_days=", ".join(payload.get("scheduleDays") or []) or None,schedule_time=payload.get("scheduleTime") or None,status="active")
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
-    db.add(row);member.status="active";db.commit()
-    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach).joinedload(Employee.person)).get(row.id);return pt_data(row)
+    db.add(row);db.flush()
+    row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
+    member.status="active";db.commit()
+    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).get(row.id);return pt_data(row)
 
 
 def update_pt(db: Session, enrollment_id: int, payload: dict):
-    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
+    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy đăng ký PT.")
-    if payload.get("coachId"):
-        coach=db.get(Employee,_as_int(payload["coachId"]));
-        if not coach or coach.status!="active": raise HTTPException(422,"Coach không hợp lệ.")
-        row.coach_id=coach.id
+    if "coachIds" in payload or "coachId" in payload:
+        raw_ids=payload.get("coachIds") if "coachIds" in payload else ([payload.get("coachId")] if payload.get("coachId") else [])
+        coach_ids=list(dict.fromkeys(value for value in (_as_int(value) for value in (raw_ids or [])) if value))
+        coaches=db.query(Employee).filter(Employee.id.in_(coach_ids),Employee.status=="active").all() if coach_ids else []
+        if len(coaches)!=len(coach_ids): raise HTTPException(422,"Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
+        row.coach_id=coach_ids[0] if coach_ids else None
+        row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
     if payload.get("type") in ("1:1","1:2","1:3"): row.group_type=payload["type"]
     if "startsAt" in payload: row.starts_at=_as_date(payload["startsAt"]) or row.starts_at
     if "expiresAt" in payload: row.expires_at=_as_date(payload["expiresAt"])

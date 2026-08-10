@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 import { Field, Input, Select, Textarea } from "../ui/Form";
 import { Modal } from "../ui/Modal";
+import { DateOfBirthInput, PhoneInput } from "../ui/SmartInputs";
+import { SearchableSelect } from "../ui/SearchableSelect";
+import { normalizePhone } from "../../utils/format";
 
 export function MemberEditForm({
   member,
@@ -13,9 +16,11 @@ export function MemberEditForm({
   error,
 }) {
   const [form, setForm] = useState({});
+  const [initial, setInitial] = useState({});
+  const [validation, setValidation] = useState("");
   useEffect(() => {
-    if (member)
-      setForm({
+    if (member) {
+      const next = {
         name: member.name || "",
         phone: member.phone || "",
         email: member.email || "",
@@ -26,7 +31,11 @@ export function MemberEditForm({
         salesEmployeeId: member.salesEmployeeId || "",
         status: member.status || "active",
         notes: member.notes || "",
-      });
+      };
+      setForm(next);
+      setInitial(next);
+      setValidation("");
+    }
   }, [member, open]);
   return (
     <Modal
@@ -34,12 +43,24 @@ export function MemberEditForm({
       onClose={onClose}
       title="Chỉnh sửa hội viên"
       description={member?.code}
-      size="lg"
+      dirty={JSON.stringify(form) !== JSON.stringify(initial)}
     >
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          onSubmit(form);
+          if (!form.name.trim()) {
+            setValidation("Họ tên không được để trống.");
+            return;
+          }
+          if (form.phone && normalizePhone(form.phone).length !== 10) {
+            setValidation("Số điện thoại cần đủ 10 chữ số.");
+            return;
+          }
+          onSubmit({
+            ...form,
+            name: form.name.trim(),
+            email: form.email.trim(),
+          });
         }}
       >
         <div className="modal-body">
@@ -51,9 +72,9 @@ export function MemberEditForm({
               />
             </Field>
             <Field label="Điện thoại">
-              <Input
+              <PhoneInput
                 value={form.phone || ""}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                onChange={(phone) => setForm({ ...form, phone })}
               />
             </Field>
             <Field label="Email">
@@ -75,12 +96,9 @@ export function MemberEditForm({
               </Select>
             </Field>
             <Field label="Ngày sinh">
-              <Input
-                type="date"
+              <DateOfBirthInput
                 value={form.dateOfBirth || ""}
-                onChange={(e) =>
-                  setForm({ ...form, dateOfBirth: e.target.value })
-                }
+                onChange={(dateOfBirth) => setForm({ ...form, dateOfBirth })}
               />
             </Field>
             <Field label="Mã MBS">
@@ -90,19 +108,22 @@ export function MemberEditForm({
               />
             </Field>
             <Field label="Nhân viên phụ trách">
-              <Select
+              <SearchableSelect
                 value={form.salesEmployeeId || ""}
-                onChange={(e) =>
-                  setForm({ ...form, salesEmployeeId: e.target.value })
+                onChange={(salesEmployeeId) =>
+                  setForm({ ...form, salesEmployeeId })
                 }
-              >
-                <option value="">Chưa gán</option>
-                {options?.employees?.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </Select>
+                clearable
+                placeholder="Chưa phân công"
+                searchPlaceholder="Tên hoặc mã nhân viên…"
+                options={
+                  options?.employees?.map((row) => ({
+                    value: row.id,
+                    label: row.name,
+                    meta: `${row.code} · ${row.title || "Nhân viên"}`,
+                  })) || []
+                }
+              />
             </Field>
             <Field label="Trạng thái">
               <Select
@@ -123,10 +144,12 @@ export function MemberEditForm({
               />
             </Field>
           </div>
-          {error && <div className="inline-error mt-4">{error}</div>}
+          {(validation || error) && (
+            <div className="inline-error mt-4">{validation || error}</div>
+          )}
         </div>
         <div className="form-actions">
-          <Button variant="secondary" onClick={onClose}>
+          <Button data-modal-close variant="secondary" onClick={onClose}>
             Hủy
           </Button>
           <Button type="submit" disabled={pending}>

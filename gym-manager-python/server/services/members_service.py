@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, aliased, joinedload
 from ..database import ROOT_DIR
 from ..models import (
     AttendanceSession, BankAccount, Branch, Customer, Employee, Membership,
-    Payment, Person, PtEnrollment, ServicePackage,
+    Payment, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage,
 )
 from .serializers import membership_data, package_data, pagination, person_data, pt_data, payment_data
 
@@ -50,7 +50,7 @@ async def save_receipt(upload: UploadFile | None) -> str | None:
     return f"/uploads/receipts/{filename}"
 
 
-def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None, expiring_days: int = 14):
+def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None, expiring_days: int = 14, payment_status: str = "all", overdue_days: int = 7):
     query = db.query(Customer).options(
         joinedload(Customer.person),
         joinedload(Customer.sales_employee).joinedload(Employee.person),
@@ -78,6 +78,13 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         query = query.filter(latest_status_exists(status_membership.status == "frozen"))
     elif member_status == "inactive":
         query = query.filter(or_(Customer.status == "inactive", latest_status_exists(status_membership.status == "cancelled")))
+    if payment_status == "overdue":
+        query = query.filter(latest_status_exists(
+            status_membership.debt_amount > 0,
+            status_membership.debt_due_date != None,
+            status_membership.debt_due_date < date.today(),
+            status_membership.debt_due_date >= date.today() - timedelta(days=overdue_days),
+        ))
     if view == "active":
         query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= date.today())))
     elif view == "expiring":
@@ -89,7 +96,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     if package_id:
         query = query.filter(latest_status_exists(status_membership.package_id == package_id))
     if trainer_id:
-        query = query.filter(db.query(PtEnrollment.id).filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.coach_id == trainer_id, PtEnrollment.status == "active").exists())
+        query = query.filter(db.query(PtEnrollmentCoach.enrollment_id).join(PtEnrollment).filter(PtEnrollment.customer_id == Customer.id, PtEnrollmentCoach.coach_id == trainer_id, PtEnrollment.status == "active").exists())
     total = query.count()
     ordering = Person.display_name.asc() if sort == "name" else (Customer.status.asc() if sort == "status" else Customer.id.desc())
     rows = query.order_by(ordering).offset((page - 1) * page_size).limit(page_size).all()
@@ -100,9 +107,12 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id.in_(ids)).order_by(AttendanceSession.checked_in_at.desc()).all()
         for checkin in checkins:
             last_checkins.setdefault(checkin.customer_id, checkin.checked_in_at.isoformat())
-        training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").all()
+        training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").all()
         for training in training_rows:
-            trainers.setdefault(training.customer_id, {"id": training.coach.id, "name": training.coach.person.display_name})
+            assigned = trainers.setdefault(training.customer_id, [])
+            for assignment in training.coach_assignments:
+                if not any(item["id"] == assignment.coach.id for item in assigned):
+                    assigned.append({"id": assignment.coach.id, "name": assignment.coach.person.display_name})
     items = []
     for member in rows:
         regular = [m for m in member.memberships if not m.package.is_pt]
@@ -114,7 +124,8 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             **person_data(member.person),
             "source": member.source,
             "status": member.status,
-            "trainer": trainers.get(member.id),
+            "trainer": (trainers.get(member.id) or [None])[0],
+            "trainers": trainers.get(member.id, []),
             "membership": membership_data(current) if current else None,
             "lastCheckin": last_checkins.get(member.id),
         })
@@ -145,7 +156,7 @@ def get_member(db: Session, member_id: int):
         joinedload(Membership.sale_online_employee).joinedload(Employee.person),
         joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
     ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
-    pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
+    pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
     checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id == member_id).order_by(AttendanceSession.checked_in_at.desc()).limit(100).all()
     payments = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package)).filter(Payment.customer_id == member_id).order_by(Payment.paid_at.desc()).all()
     return {

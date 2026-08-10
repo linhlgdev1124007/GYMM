@@ -19,10 +19,18 @@ import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { Field, Input, Select, Textarea } from "../../components/ui/Form";
 import { Modal } from "../../components/ui/Modal";
+import { DateOfBirthInput, PhoneInput } from "../../components/ui/SmartInputs";
+import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { MemberQuickDrawer } from "./MemberQuickDrawer";
-import { initials, money, shortDate } from "../../utils/format";
+import {
+  formatPhone,
+  initials,
+  money,
+  normalizePhone,
+  shortDate,
+} from "../../utils/format";
 
 const initialForm = {
   name: "",
@@ -34,6 +42,7 @@ const initialForm = {
   source: "Walk-in",
   salesEmployeeId: "",
   notes: "",
+  status: "active",
 };
 const views = [
   ["all", "Tất cả"],
@@ -49,6 +58,14 @@ const statusFilters = {
   expiring: "Sắp hết hạn",
   frozen: "Bảo lưu",
   inactive: "Tạm ngừng",
+};
+const paramDefaults = {
+  view: "all",
+  status: "all",
+  expiringDays: "14",
+  paymentStatus: "all",
+  overdueDays: "7",
+  sort: "newest",
 };
 
 export function MembersPage() {
@@ -75,6 +92,8 @@ export function MembersPage() {
   const q = useDebouncedValue(search);
   const status = params.get("status") || "all";
   const expiringDays = Number(params.get("expiringDays") || 14);
+  const paymentStatus = params.get("paymentStatus") || "all";
+  const overdueDays = Number(params.get("overdueDays") || 7);
   const view = params.get("view") || "all";
   const sort = params.get("sort") || "newest";
   const packageId = params.get("packageId") || "";
@@ -96,10 +115,22 @@ export function MembersPage() {
     [setParams],
   );
   const members = useQuery({
-    queryKey: ["members", q, status, expiringDays, view, packageId, trainerId, sort, page],
+    queryKey: [
+      "members",
+      q,
+      status,
+      expiringDays,
+      paymentStatus,
+      overdueDays,
+      view,
+      packageId,
+      trainerId,
+      sort,
+      page,
+    ],
     queryFn: () =>
       api(
-        `/api/members?${queryString({ q, status, expiringDays, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
+        `/api/members?${queryString({ q, status, expiringDays, paymentStatus, overdueDays, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
       ),
   });
   const options = useQuery({
@@ -157,6 +188,8 @@ export function MembersPage() {
         q: "",
         status: "",
         expiringDays: "",
+        paymentStatus: "",
+        overdueDays: "",
         packageId: "",
         trainerId: "",
         page: "",
@@ -190,7 +223,12 @@ export function MembersPage() {
           </button>
         ),
       },
-      { key: "phone", label: "Điện thoại", className: "max-[640px]:hidden", render: (row) => row.phone || "—" },
+      {
+        key: "phone",
+        label: "Điện thoại",
+        className: "max-[640px]:hidden",
+        render: (row) => formatPhone(row.phone) || "—",
+      },
       {
         key: "membership",
         label: "Gói & hết hạn",
@@ -212,7 +250,25 @@ export function MembersPage() {
         key: "debt",
         label: "Công nợ",
         className: "text-right",
-        render: (row) => row.membership?.debtAmount ? <div><button className="font-medium text-red-700 hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "payment"); }}>{money(row.membership.debtAmount)}</button><div className="cell-secondary hidden max-[640px]:block">Hạn {shortDate(row.membership.debtDueDate)}</div></div> : "—",
+        render: (row) =>
+          row.membership?.debtAmount ? (
+            <div>
+              <button
+                className="font-medium text-red-700 hover:underline"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openMember(row, "payment");
+                }}
+              >
+                {money(row.membership.debtAmount)}
+              </button>
+              <div className="cell-secondary hidden max-[640px]:block">
+                Hạn {shortDate(row.membership.debtDueDate)}
+              </div>
+            </div>
+          ) : (
+            "—"
+          ),
       },
       {
         key: "debtDueDate",
@@ -220,9 +276,38 @@ export function MembersPage() {
         className: "max-[640px]:hidden",
         render: (row) => {
           if (!row.membership?.debtAmount) return "—";
-          if (!row.membership.debtDueDate) return <button className="font-medium text-blue-700 hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "deadline"); }}>+ Đặt hạn</button>;
-          const overdue = new Date(`${row.membership.debtDueDate}T23:59:59`) < new Date();
-          return <button className="text-left hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "deadline"); }}><span className={overdue ? "font-medium text-red-700" : ""}>{shortDate(row.membership.debtDueDate)}</span><div className={`cell-secondary ${overdue ? "!text-red-600" : ""}`}>{overdue ? "Quá hạn · Đổi hạn" : "Chưa đến hạn · Đổi hạn"}</div></button>;
+          if (!row.membership.debtDueDate)
+            return (
+              <button
+                className="font-medium text-blue-700 hover:underline"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openMember(row, "deadline");
+                }}
+              >
+                + Đặt hạn
+              </button>
+            );
+          const overdue =
+            new Date(`${row.membership.debtDueDate}T23:59:59`) < new Date();
+          return (
+            <button
+              className="text-left hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "deadline");
+              }}
+            >
+              <span className={overdue ? "font-medium text-red-700" : ""}>
+                {shortDate(row.membership.debtDueDate)}
+              </span>
+              <div
+                className={`cell-secondary ${overdue ? "!text-red-600" : ""}`}
+              >
+                {overdue ? "Quá hạn · Đổi hạn" : "Chưa đến hạn · Đổi hạn"}
+              </div>
+            </button>
+          );
         },
       },
       {
@@ -230,7 +315,18 @@ export function MembersPage() {
         label: "PT",
         className: "max-[640px]:hidden",
         render: (row) =>
-          row.trainer?.name || (
+          row.trainers?.length ? (
+            <div className="flex max-w-48 flex-wrap gap-1">
+              {row.trainers.map((trainer) => (
+                <span
+                  key={trainer.id}
+                  className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700"
+                >
+                  {trainer.name}
+                </span>
+              ))}
+            </div>
+          ) : (
             <button
               className="text-xs font-medium text-blue-700"
               onClick={(event) => {
@@ -303,7 +399,18 @@ export function MembersPage() {
     [checkin, openMember],
   );
   const activeFilters = [
-    status !== "all" && ["Trạng thái", status === "expiring" ? `${statusFilters[status]} trong ${expiringDays} ngày` : statusFilters[status], "status"],
+    status !== "all" && [
+      "Trạng thái",
+      status === "expiring"
+        ? `${statusFilters[status]} trong ${expiringDays} ngày`
+        : statusFilters[status],
+      "status",
+    ],
+    paymentStatus === "overdue" && [
+      "Thanh toán",
+      `Quá hạn trong ${overdueDays} ngày`,
+      "paymentStatus",
+    ],
     packageId && [
       "Gói",
       options.data?.plans.find((row) => String(row.id) === packageId)?.name,
@@ -348,6 +455,11 @@ export function MembersPage() {
     URL.revokeObjectURL(url);
     toast.success(`Đã xuất ${rows.length} hội viên.`);
   };
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setForm(initialForm);
+    setError("");
+  };
   const saveView = (event) => {
     event.preventDefault();
     const name = viewName.trim();
@@ -357,7 +469,16 @@ export function MembersPage() {
       {
         id: Date.now(),
         name,
-        filters: { view, status, expiringDays: String(expiringDays), packageId, trainerId, sort },
+        filters: {
+          view,
+          status,
+          expiringDays: String(expiringDays),
+          paymentStatus,
+          overdueDays: String(overdueDays),
+          packageId,
+          trainerId,
+          sort,
+        },
         hiddenColumns,
         density,
       },
@@ -394,21 +515,23 @@ export function MembersPage() {
         {savedViews.map((saved) => {
           const active = Object.entries(saved.filters).every(
             ([key, value]) =>
-              (params.get(key) ||
-                (key === "view"
-                  ? "all"
-                  : key === "status"
-                    ? "all"
-                    : key === "sort"
-                      ? "newest"
-                      : "")) === value,
+              (params.get(key) || paramDefaults[key] || "") === value,
           );
           return (
             <button
               key={saved.id}
               className={`workspace-view ${active ? "active" : ""}`}
               onClick={() => {
-                updateParams({ ...saved.filters, page: "" });
+                updateParams({
+                  status: "",
+                  expiringDays: "",
+                  paymentStatus: "",
+                  overdueDays: "",
+                  packageId: "",
+                  trainerId: "",
+                  ...saved.filters,
+                  page: "",
+                });
                 setHiddenColumns(saved.hiddenColumns || []);
                 setDensity(saved.density || "standard");
               }}
@@ -428,11 +551,7 @@ export function MembersPage() {
       {selection.length ? (
         <div className="bulk-bar">
           <strong>{selection.length} hội viên đã chọn</strong>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={exportSelected}
-          >
+          <Button size="sm" variant="secondary" onClick={exportSelected}>
             Xuất danh sách
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelection([])}>
@@ -453,7 +572,13 @@ export function MembersPage() {
           <Select
             className="input w-48"
             value={status}
-            onChange={(e) => updateParams({ status: e.target.value, expiringDays: e.target.value === "expiring" ? expiringDays : "", page: "" })}
+            onChange={(e) =>
+              updateParams({
+                status: e.target.value,
+                expiringDays: e.target.value === "expiring" ? expiringDays : "",
+                page: "",
+              })
+            }
           >
             <option value="all">Tất cả</option>
             <option value="active">Đang hoạt động</option>
@@ -462,7 +587,69 @@ export function MembersPage() {
             <option value="frozen">Bảo lưu</option>
             <option value="inactive">Tạm ngừng</option>
           </Select>
-          {status === "expiring" && <label className="expiry-days-field"><span>Trong</span><Input type="number" min="1" max="365" value={expiringDays} onChange={(event) => updateParams({ expiringDays: Math.min(Math.max(Number(event.target.value) || 1, 1), 365), page: "" }, { replace: true })}/><span>ngày</span></label>}
+          {status === "expiring" && (
+            <label className="expiry-days-field">
+              <span>Trong</span>
+              <Input
+                type="number"
+                min="1"
+                max="365"
+                value={expiringDays}
+                onChange={(event) =>
+                  updateParams(
+                    {
+                      expiringDays: Math.min(
+                        Math.max(Number(event.target.value) || 1, 1),
+                        365,
+                      ),
+                      page: "",
+                    },
+                    { replace: true },
+                  )
+                }
+              />
+              <span>ngày</span>
+            </label>
+          )}
+          <Select
+            className="input w-52"
+            value={paymentStatus}
+            onChange={(event) =>
+              updateParams({
+                paymentStatus: event.target.value,
+                overdueDays:
+                  event.target.value === "overdue" ? overdueDays : "",
+                page: "",
+              })
+            }
+          >
+            <option value="all">Mọi hạn thanh toán</option>
+            <option value="overdue">Quá hạn thanh toán trong X ngày</option>
+          </Select>
+          {paymentStatus === "overdue" && (
+            <label className="expiry-days-field">
+              <span>Trong</span>
+              <Input
+                type="number"
+                min="1"
+                max="365"
+                value={overdueDays}
+                onChange={(event) =>
+                  updateParams(
+                    {
+                      overdueDays: Math.min(
+                        Math.max(Number(event.target.value) || 1, 1),
+                        365,
+                      ),
+                      page: "",
+                    },
+                    { replace: true },
+                  )
+                }
+              />
+              <span>ngày</span>
+            </label>
+          )}
           <Select
             className="input w-44"
             value={packageId}
@@ -572,7 +759,14 @@ export function MembersPage() {
             <button
               key={key}
               className="filter-chip"
-              onClick={() => updateParams({ [key]: "", page: "" })}
+              onClick={() =>
+                updateParams({
+                  [key]: "",
+                  ...(key === "status" ? { expiringDays: "" } : {}),
+                  ...(key === "paymentStatus" ? { overdueDays: "" } : {}),
+                  page: "",
+                })
+              }
             >
               {label}: {value} ×
             </button>
@@ -583,6 +777,8 @@ export function MembersPage() {
               updateParams({
                 status: "",
                 expiringDays: "",
+                paymentStatus: "",
+                overdueDays: "",
                 packageId: "",
                 trainerId: "",
                 page: "",
@@ -642,7 +838,11 @@ export function MembersPage() {
             </Field>
           </div>
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setSaveViewOpen(false)}>
+            <Button
+              data-modal-close
+              variant="secondary"
+              onClick={() => setSaveViewOpen(false)}
+            >
               Hủy
             </Button>
             <Button type="submit" disabled={!viewName.trim()}>
@@ -653,16 +853,25 @@ export function MembersPage() {
       </Modal>
       <Modal
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={closeCreate}
+        dirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
         title="Thêm hội viên"
         description="Tạo hồ sơ cơ bản; gói tập và PT có thể thêm ngay sau đó."
-        size="lg"
       >
         <form
           onSubmit={(event) => {
             event.preventDefault();
             setError("");
-            create.mutate(form);
+            if (normalizePhone(form.phone).length !== 10) {
+              setError("Số điện thoại cần đủ 10 chữ số.");
+              return;
+            }
+            create.mutate({
+              ...form,
+              name: form.name.trim(),
+              phone: normalizePhone(form.phone),
+              email: form.email.trim(),
+            });
           }}
         >
           <div className="modal-body space-y-5">
@@ -672,21 +881,22 @@ export function MembersPage() {
                 <Field label="Họ tên" required>
                   <Input
                     autoFocus
+                    autoComplete="name"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                   />
                 </Field>
                 <Field label="Điện thoại" required>
-                  <Input
+                  <PhoneInput
+                    required
                     value={form.phone}
-                    onChange={(e) =>
-                      setForm({ ...form, phone: e.target.value })
-                    }
+                    onChange={(phone) => setForm({ ...form, phone })}
                   />
                 </Field>
                 <Field label="Email">
                   <Input
                     type="email"
+                    autoComplete="email"
                     value={form.email}
                     onChange={(e) =>
                       setForm({ ...form, email: e.target.value })
@@ -707,11 +917,10 @@ export function MembersPage() {
                   </Select>
                 </Field>
                 <Field label="Ngày sinh">
-                  <Input
-                    type="date"
+                  <DateOfBirthInput
                     value={form.dateOfBirth}
-                    onChange={(e) =>
-                      setForm({ ...form, dateOfBirth: e.target.value })
+                    onChange={(dateOfBirth) =>
+                      setForm({ ...form, dateOfBirth })
                     }
                   />
                 </Field>
@@ -737,19 +946,22 @@ export function MembersPage() {
                   />
                 </Field>
                 <Field label="Nhân viên phụ trách">
-                  <Select
+                  <SearchableSelect
                     value={form.salesEmployeeId}
-                    onChange={(e) =>
-                      setForm({ ...form, salesEmployeeId: e.target.value })
+                    onChange={(salesEmployeeId) =>
+                      setForm({ ...form, salesEmployeeId })
                     }
-                  >
-                    <option value="">Chưa gán</option>
-                    {options.data?.employees.map((row) => (
-                      <option value={row.id} key={row.id}>
-                        {row.name} · {row.title}
-                      </option>
-                    ))}
-                  </Select>
+                    clearable
+                    placeholder="Chưa phân công"
+                    searchPlaceholder="Tên hoặc mã nhân viên…"
+                    options={
+                      options.data?.employees.map((row) => ({
+                        value: row.id,
+                        label: row.name,
+                        meta: `${row.code} · ${row.title || "Nhân viên"}`,
+                      })) || []
+                    }
+                  />
                 </Field>
                 <Field className="form-span" label="Ghi chú">
                   <Textarea
@@ -764,7 +976,7 @@ export function MembersPage() {
             {error && <div className="inline-error">{error}</div>}
           </div>
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+            <Button data-modal-close variant="secondary" onClick={closeCreate}>
               Hủy
             </Button>
             <Button type="submit" disabled={create.isPending}>

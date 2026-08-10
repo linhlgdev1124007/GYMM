@@ -78,6 +78,7 @@ def membership_data(membership, include_payments=False):
 
 
 def pt_data(enrollment):
+    coaches = [employee_data(assignment.coach) for assignment in enrollment.coach_assignments]
     return {
         "id": enrollment.id,
         "memberId": enrollment.customer_id,
@@ -86,7 +87,8 @@ def pt_data(enrollment):
             "code": enrollment.customer.customer_code,
             **person_data(enrollment.customer.person),
         } if getattr(enrollment, "customer", None) else None,
-        "coach": employee_data(enrollment.coach),
+        "coach": coaches[0] if coaches else None,
+        "coaches": coaches,
         "type": enrollment.group_type,
         "startsAt": iso(enrollment.starts_at),
         "expiresAt": iso(enrollment.expires_at),

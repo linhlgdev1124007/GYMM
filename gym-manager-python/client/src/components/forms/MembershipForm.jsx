@@ -5,6 +5,7 @@ import { Field, Input, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import { money } from "../../utils/format";
+import { DateInput, MoneyInput } from "../ui/SmartInputs";
 
 export function MembershipForm({
   memberId,
@@ -18,38 +19,38 @@ export function MembershipForm({
 }) {
   const today = format(new Date(), "yyyy-MM-dd");
   const [form, setForm] = useState({});
+  const [initial, setInitial] = useState({});
+  const [localError, setLocalError] = useState("");
   useEffect(() => {
-    const plan = options?.plans?.[0];
-    setForm(
-      membership
-        ? {
-            startsAt: membership.startsAt || today,
-            expiresAt: membership.expiresAt || "",
-            finalPrice: membership.finalPrice || 0,
-            paidAmount: membership.paidAmount || 0,
-            debtDueDate: membership.debtDueDate || "",
-            paymentMethod: membership.payments?.[0]?.method || "cash",
-            bankAccountId: "",
-            status: membership.status || "active",
-            receipt: null,
-          }
-        : {
-            memberId,
-            planId: plan?.id || "",
-            startsAt: today,
-            expiresAt: plan?.durationDays
-              ? format(addDays(new Date(), plan.durationDays), "yyyy-MM-dd")
-              : "",
-            finalPrice: plan?.price || 0,
-            paidAmount: 0,
-            debtDueDate: "",
-            paymentMethod: "cash",
-            bankAccountId: "",
-            saleOnlineEmployeeId: "",
-            directSaleEmployeeId: "",
-            receipt: null,
-          },
-    );
+    const next = membership
+      ? {
+          startsAt: membership.startsAt || today,
+          expiresAt: membership.expiresAt || "",
+          finalPrice: membership.finalPrice || 0,
+          paidAmount: membership.paidAmount || 0,
+          debtDueDate: membership.debtDueDate || "",
+          paymentMethod: membership.payments?.[0]?.method || "cash",
+          bankAccountId: "",
+          status: membership.status || "active",
+          receipt: null,
+        }
+      : {
+          memberId,
+          planId: "",
+          startsAt: today,
+          expiresAt: "",
+          finalPrice: 0,
+          paidAmount: 0,
+          debtDueDate: "",
+          paymentMethod: "cash",
+          bankAccountId: "",
+          saleOnlineEmployeeId: "",
+          directSaleEmployeeId: "",
+          receipt: null,
+        };
+    setForm(next);
+    setInitial(next);
+    setLocalError("");
   }, [membership, memberId, options, open]);
   const planChange = (id) => {
     const plan = options?.plans?.find((row) => String(row.id) === String(id));
@@ -65,8 +66,30 @@ export function MembershipForm({
         : "",
     });
   };
+  const startChange = (startsAt) => {
+    const plan = options?.plans?.find(
+      (row) => String(row.id) === String(form.planId),
+    );
+    setForm({
+      ...form,
+      startsAt,
+      expiresAt:
+        !membership && plan?.durationDays && startsAt
+          ? format(
+              addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays),
+              "yyyy-MM-dd",
+            )
+          : form.expiresAt,
+    });
+  };
   const submit = (event) => {
     event.preventDefault();
+    if (Number(form.paidAmount) > Number(form.finalPrice)) {
+      setLocalError(
+        "Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.",
+      );
+      return;
+    }
     const data = new FormData();
     Object.entries(form).forEach(
       ([key, value]) => value != null && data.append(key, value),
@@ -81,7 +104,7 @@ export function MembershipForm({
       description={
         membership?.package.name || "Thông tin hội viên đã được điền sẵn"
       }
-      size="lg"
+      dirty={JSON.stringify(form) !== JSON.stringify(initial)}
     >
       <form onSubmit={submit}>
         <div className="modal-body space-y-5">
@@ -105,21 +128,18 @@ export function MembershipForm({
                   />
                 </Field>
                 <Field label="Ngày bắt đầu">
-                  <Input
-                    type="date"
+                  <DateInput
                     value={form.startsAt || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, startsAt: e.target.value })
-                    }
+                    onChange={startChange}
                   />
                 </Field>
-                <Field label="Ngày hết hạn">
-                  <Input
-                    type="date"
+                <Field
+                  label="Ngày hết hạn"
+                  hint="Tự động theo thời hạn gói; có thể thay đổi."
+                >
+                  <DateInput
                     value={form.expiresAt || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, expiresAt: e.target.value })
-                    }
+                    onChange={(expiresAt) => setForm({ ...form, expiresAt })}
                   />
                 </Field>
               </div>
@@ -128,21 +148,12 @@ export function MembershipForm({
           {membership && (
             <div className="form-grid">
               <Field label="Ngày bắt đầu">
-                <Input
-                  type="date"
-                  value={form.startsAt || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, startsAt: e.target.value })
-                  }
-                />
+                <DateInput value={form.startsAt || ""} onChange={startChange} />
               </Field>
               <Field label="Ngày hết hạn">
-                <Input
-                  type="date"
+                <DateInput
                   value={form.expiresAt || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, expiresAt: e.target.value })
-                  }
+                  onChange={(expiresAt) => setForm({ ...form, expiresAt })}
                 />
               </Field>
             </div>
@@ -151,39 +162,57 @@ export function MembershipForm({
             <h3 className="form-section-title">Thanh toán</h3>
             <div className="form-grid">
               <Field label="Tổng tiền">
-                <Input
-                  type="number"
+                <MoneyInput
                   min="0"
                   value={form.finalPrice || 0}
-                  onChange={(e) =>
-                    setForm({ ...form, finalPrice: e.target.value })
-                  }
+                  onChange={(finalPrice) => setForm({ ...form, finalPrice })}
                 />
               </Field>
               <Field label="Đã thanh toán">
-                <Input
-                  type="number"
+                <MoneyInput
                   min="0"
+                  max={Number(form.finalPrice) || 0}
                   value={form.paidAmount || 0}
-                  onChange={(e) =>
-                    setForm({ ...form, paidAmount: e.target.value })
-                  }
+                  onChange={(paidAmount) => setForm({ ...form, paidAmount })}
                 />
               </Field>
-              <Field label="Hạn công nợ">
-                <Input
-                  type="date"
-                  value={form.debtDueDate || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, debtDueDate: e.target.value })
+              <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
+                <span className="text-[11px] text-slate-500">Còn lại</span>
+                <strong
+                  className={
+                    Number(form.finalPrice) - Number(form.paidAmount) > 0
+                      ? "mt-0.5 text-sm text-red-700"
+                      : "mt-0.5 text-sm text-emerald-700"
                   }
-                />
-              </Field>
+                >
+                  {money(
+                    Math.max(
+                      Number(form.finalPrice) - Number(form.paidAmount),
+                      0,
+                    ),
+                  )}
+                </strong>
+              </div>
+              {Number(form.finalPrice) - Number(form.paidAmount) > 0 && (
+                <Field label="Hạn công nợ">
+                  <DateInput
+                    value={form.debtDueDate || ""}
+                    onChange={(debtDueDate) =>
+                      setForm({ ...form, debtDueDate })
+                    }
+                  />
+                </Field>
+              )}
               <Field label="Phương thức">
                 <Select
                   value={form.paymentMethod || "cash"}
                   onChange={(e) =>
-                    setForm({ ...form, paymentMethod: e.target.value })
+                    setForm({
+                      ...form,
+                      paymentMethod: e.target.value,
+                      bankAccountId:
+                        e.target.value === "cash" ? "" : form.bankAccountId,
+                    })
                   }
                 >
                   <option value="cash">Tiền mặt</option>
@@ -191,30 +220,34 @@ export function MembershipForm({
                   <option value="card">Thẻ</option>
                 </Select>
               </Field>
-              <Field label="Tài khoản nhận">
-                <Select
-                  value={form.bankAccountId || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, bankAccountId: e.target.value })
-                  }
-                >
-                  <option value="">Không áp dụng</option>
-                  {options?.bankAccounts?.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Ảnh phiếu thu">
-                <Input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) =>
-                    setForm({ ...form, receipt: e.target.files[0] })
-                  }
-                />
-              </Field>
+              {form.paymentMethod !== "cash" && (
+                <Field label="Tài khoản nhận">
+                  <Select
+                    value={form.bankAccountId || ""}
+                    onChange={(e) =>
+                      setForm({ ...form, bankAccountId: e.target.value })
+                    }
+                  >
+                    <option value="">Không áp dụng</option>
+                    {options?.bankAccounts?.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {Number(form.paidAmount) > 0 && (
+                <Field label="Ảnh phiếu thu">
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(e) =>
+                      setForm({ ...form, receipt: e.target.files[0] })
+                    }
+                  />
+                </Field>
+              )}
               {membership && (
                 <Field label="Trạng thái">
                   <Select
@@ -231,13 +264,18 @@ export function MembershipForm({
               )}
             </div>
           </section>
-          {error && <div className="inline-error">{error}</div>}
+          {(localError || error) && (
+            <div className="inline-error">{localError || error}</div>
+          )}
         </div>
         <div className="form-actions">
-          <Button variant="secondary" onClick={onClose}>
+          <Button data-modal-close variant="secondary" onClick={onClose}>
             Hủy
           </Button>
-          <Button type="submit" disabled={pending}>
+          <Button
+            type="submit"
+            disabled={pending || (!membership && !form.planId)}
+          >
             {pending
               ? "Đang lưu…"
               : membership

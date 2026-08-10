@@ -87,18 +87,21 @@
   .field-error { @apply text-[11px] text-red-600; }
   .input { @apply h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-[13px] text-slate-900 placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10 disabled:bg-slate-50 disabled:text-slate-400; }
   textarea.input { @apply h-auto py-2.5; }
-  .form-grid { @apply grid grid-cols-2 gap-x-4 gap-y-4; }
-  .form-section { @apply border-t border-slate-200 pt-5 first:border-0 first:pt-0; }
-  .form-section-title { @apply mb-4 text-sm font-semibold text-slate-900; }
+  .form-grid { @apply grid grid-cols-2 gap-x-4 gap-y-3.5; }
+  .form-section { @apply border-t border-slate-200 pt-4 first:border-0 first:pt-0; }
+  .form-section-title { @apply mb-3 text-[13px] font-semibold text-slate-900; }
   .form-span { @apply col-span-2; }
-  .form-actions { @apply flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4; }
-  .modal-layer { @apply fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 p-4; animation: fade-in 150ms ease-out; }
-  .modal { @apply max-h-[90vh] w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-popover; animation: modal-in 170ms ease-out; }
-  .modal-sm { @apply max-w-md; } .modal-md { @apply max-w-xl; } .modal-lg { @apply max-w-3xl; }
-  .modal-header { @apply flex items-start justify-between border-b border-slate-200 px-5 py-4; }
-  .modal-header h2 { @apply text-base font-semibold; }
-  .modal-header p { @apply mt-1 text-xs text-slate-500; }
-  .modal-body { @apply px-5 py-5; }
+  .form-actions { @apply flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/70 px-5 py-3; }
+  .modal-layer { @apply fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[1px]; animation: fade-in 150ms ease-out; }
+  .modal { @apply flex max-h-[min(82vh,720px)] w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-popover; animation: modal-in 170ms ease-out; }
+  .modal > form { @apply flex min-h-0 flex-1 flex-col; }
+  .modal-header { @apply flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-3.5; }
+  .modal-header h2 { @apply text-[15px] font-semibold text-slate-950; }
+  .modal-header p { @apply mt-0.5 text-[11px] leading-4 text-slate-500; }
+  .modal-body { @apply min-h-0 flex-1 overflow-y-auto px-5 py-4; }
+  .smart-input { @apply relative; }
+  .input-unit { @apply pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-400; }
+  .input-action { @apply absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md text-slate-400 hover:bg-slate-50 hover:text-slate-700; }
   .toolbar { @apply mb-4 flex flex-wrap items-center gap-2; }
   .toolbar-spacer { @apply flex-1; }
   .search-input { @apply flex h-9 min-w-60 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-slate-400 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/10; }
@@ -279,6 +282,11 @@
   .global-search-trigger { max-width: 240px; }
 }
 @media (max-width: 640px) {
+  .modal-layer { align-items: flex-end; padding: 0; }
+  .modal { max-height: 86vh; max-width: none; border-radius: 14px 14px 0 0; border-bottom: 0; }
+  .modal-header { padding: 13px 16px; }
+  .modal-body { padding: 16px; }
+  .form-actions { padding: 11px 16px; }
   .topbar { padding: 0 16px; }
   .topbar-context > span, .topbar-context > svg, .user-menu > div:nth-child(2), .text-button { display: none; }
   .global-search-trigger { margin: 0 8px; width: auto; flex: 1; }

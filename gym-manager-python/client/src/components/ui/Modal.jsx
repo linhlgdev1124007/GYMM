@@ -1,13 +1,114 @@
-import { X } from 'lucide-react'
-import { useEffect } from 'react'
+import { X } from "lucide-react";
+import { useEffect, useId, useRef } from "react";
 
-export function Modal({ open, onClose, title, description, children, size = 'md' }) {
-  useEffect(() => { if (!open) return; const close = (event) => event.key === 'Escape' && onClose(); document.addEventListener('keydown', close); return () => document.removeEventListener('keydown', close) }, [open, onClose])
-  if (!open) return null
-  return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <section className={`modal modal-${size}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <header className="modal-header"><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" onClick={onClose} aria-label="Đóng"><X size={18} /></button></header>
-      {children}
-    </section>
-  </div>
+const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl" };
+
+export function Modal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  size = "md",
+  dirty = false,
+}) {
+  const panel = useRef(null);
+  const returnFocus = useRef(null);
+  const dirtyRef = useRef(dirty);
+  const closeRef = useRef(onClose);
+  dirtyRef.current = dirty;
+  closeRef.current = onClose;
+  const titleId = useId();
+  const descriptionId = useId();
+  const requestClose = () => {
+    if (
+      dirtyRef.current &&
+      !window.confirm("Bạn có thay đổi chưa lưu. Đóng biểu mẫu?")
+    )
+      return;
+    closeRef.current();
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    returnFocus.current = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const keydown = (event) => {
+      if (event.key === "Escape") requestClose();
+      if (event.key !== "Tab") return;
+      const focusable = [
+        ...(panel.current?.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ) || []),
+      ];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      }
+      if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    requestAnimationFrame(() => {
+      const target =
+        panel.current?.querySelector("[autofocus]") ||
+        panel.current?.querySelector(
+          "input:not([type='hidden']):not([tabindex='-1']), select, textarea",
+        ) ||
+        panel.current?.querySelector("button");
+      target?.focus();
+    });
+    return () => {
+      document.removeEventListener("keydown", keydown);
+      document.body.style.overflow = previousOverflow;
+      returnFocus.current?.focus?.();
+    };
+  }, [open]);
+  if (!open) return null;
+  return (
+    <div
+      className="modal-layer"
+      role="presentation"
+      onMouseDown={(event) =>
+        event.target === event.currentTarget && requestClose()
+      }
+    >
+      <section
+        ref={panel}
+        className={`modal ${modalSizes[size] || modalSizes.md}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        onClickCapture={(event) => {
+          if (event.target.closest("[data-modal-close]")) {
+            event.preventDefault();
+            event.stopPropagation();
+            requestClose();
+          }
+        }}
+      >
+        <header className="modal-header">
+          <div>
+            <h2 id={titleId}>{title}</h2>
+            {description && <p id={descriptionId}>{description}</p>}
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={requestClose}
+            aria-label="Đóng"
+          >
+            <X size={17} />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
 }

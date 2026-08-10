@@ -23,7 +23,13 @@ import { MembershipForm } from "../../components/forms/MembershipForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
-import { dateTime, initials, money, shortDate } from "../../utils/format";
+import {
+  dateTime,
+  formatPhone,
+  initials,
+  money,
+  shortDate,
+} from "../../utils/format";
 
 const tabs = [
   ["overview", "Tổng quan"],
@@ -84,8 +90,17 @@ export function MemberDetailPage() {
     onError: (e) => setFormError(e.message),
   });
   const saveDeadline = useMutation({
-    mutationFn: ({ membership, payload }) => api(`/api/memberships/${membership.id}/debt-due-date`, { method: "PATCH", body: payload }),
-    onSuccess: () => { refresh(); setDialog(null); setSelectedMembership(null); toast.success("Đã lưu hạn thanh toán."); },
+    mutationFn: ({ membership, payload }) =>
+      api(`/api/memberships/${membership.id}/debt-due-date`, {
+        method: "PATCH",
+        body: payload,
+      }),
+    onSuccess: () => {
+      refresh();
+      setDialog(null);
+      setSelectedMembership(null);
+      toast.success("Đã lưu hạn thanh toán.");
+    },
     onError: (e) => setFormError(e.message),
   });
   const saveTraining = useMutation({
@@ -128,6 +143,7 @@ export function MemberDetailPage() {
     return <div className="inline-error">{memberQuery.error.message}</div>;
   const current = member.memberships[0];
   const activeTraining = member.training.find((row) => row.status === "active");
+  const activeTrainingCoaches = activeTraining?.coaches || [];
   const lastCheckin = member.checkins[0];
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
@@ -192,7 +208,16 @@ export function MemberDetailPage() {
   ];
   const trainingColumns = [
     { key: "type", label: "Hình thức" },
-    { key: "coach", label: "Coach", render: (r) => r.coach?.name || "—" },
+    {
+      key: "coach",
+      label: "Coach",
+      render: (r) =>
+        r.coaches?.length ? (
+          r.coaches.map((coach) => coach.name).join(", ")
+        ) : (
+          <span className="font-medium text-amber-700">Chưa phân công</span>
+        ),
+    },
     {
       key: "schedule",
       label: "Lịch tập",
@@ -313,7 +338,12 @@ export function MemberDetailPage() {
         </div>
         <div className="summary-item">
           <span>PT hiện tại</span>
-          <strong>{activeTraining?.coach?.name || "Chưa đăng ký"}</strong>
+          <strong>
+            {activeTraining
+              ? activeTrainingCoaches.map((coach) => coach.name).join(", ") ||
+                "Chưa phân công"
+              : "Chưa đăng ký"}
+          </strong>
         </div>
       </div>
       <div className="tabs mt-5">
@@ -361,9 +391,20 @@ export function MemberDetailPage() {
               <div className="detail-alert">
                 <span className="flex items-center gap-2">
                   <TriangleAlert size={15} />
-                  Chưa có PT phụ trách
+                  Chưa đăng ký PT
                 </span>
-                <button onClick={() => open("training")}>Gán PT</button>
+                <button onClick={() => open("training")}>Đăng ký PT</button>
+              </div>
+            )}
+            {activeTraining && !activeTrainingCoaches.length && (
+              <div className="detail-alert">
+                <span className="flex items-center gap-2">
+                  <TriangleAlert size={15} />
+                  Đăng ký PT đang chờ phân công Coach
+                </span>
+                <button onClick={() => open("training", activeTraining)}>
+                  Phân công
+                </button>
               </div>
             )}
             <div className="definition-list mt-4">
@@ -411,7 +452,20 @@ export function MemberDetailPage() {
               </div>
               <div>
                 <dt>Hạn thanh toán</dt>
-                <dd>{current?.debtAmount ? <button className="font-medium text-blue-700 hover:underline" onClick={() => open("deadline", current)}>{current.debtDueDate ? `${shortDate(current.debtDueDate)} · Đổi hạn` : "+ Đặt hạn"}</button> : "—"}</dd>
+                <dd>
+                  {current?.debtAmount ? (
+                    <button
+                      className="font-medium text-blue-700 hover:underline"
+                      onClick={() => open("deadline", current)}
+                    >
+                      {current.debtDueDate
+                        ? `${shortDate(current.debtDueDate)} · Đổi hạn`
+                        : "+ Đặt hạn"}
+                    </button>
+                  ) : (
+                    "—"
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Check-in gần nhất</dt>
@@ -430,7 +484,10 @@ export function MemberDetailPage() {
                 <dd>
                   {activeTraining ? (
                     <>
-                      {activeTraining.coach?.name} · {activeTraining.type}
+                      {activeTrainingCoaches
+                        .map((coach) => coach.name)
+                        .join(", ") || "Chưa phân công Coach"}{" "}
+                      · {activeTraining.type}
                       <span className="cell-secondary">
                         {activeTraining.scheduleDays.join(", ") ||
                           "Chưa chọn thứ"}{" "}
@@ -468,6 +525,8 @@ export function MemberDetailPage() {
               <InlineEditField
                 label="Điện thoại"
                 value={member.phone}
+                type="tel"
+                displayValue={formatPhone(member.phone)}
                 onSave={(phone) => updateMember.mutateAsync({ phone })}
                 pending={updateMember.isPending}
               />
@@ -609,14 +668,12 @@ export function MemberDetailPage() {
                 title: `Thanh toán ${money(row.amount)}`,
                 meta: row.description,
               })),
-              ...member.checkins
-                .slice(0, 15)
-                .map((row) => ({
-                  id: `c${row.id}`,
-                  time: row.checkedInAt,
-                  title: "Check-in tại quầy",
-                  meta: row.source,
-                })),
+              ...member.checkins.slice(0, 15).map((row) => ({
+                id: `c${row.id}`,
+                time: row.checkedInAt,
+                title: "Check-in tại quầy",
+                meta: row.source,
+              })),
             ]
               .sort((a, b) => new Date(b.time) - new Date(a.time))
               .map((item) => (
@@ -672,8 +729,16 @@ export function MemberDetailPage() {
       <DebtDeadlineForm
         membership={selectedMembership || current}
         open={dialog === "deadline"}
-        onClose={() => { setDialog(null); setSelectedMembership(null); }}
-        onSubmit={(payload) => saveDeadline.mutate({ membership: selectedMembership || current, payload })}
+        onClose={() => {
+          setDialog(null);
+          setSelectedMembership(null);
+        }}
+        onSubmit={(payload) =>
+          saveDeadline.mutate({
+            membership: selectedMembership || current,
+            payload,
+          })
+        }
         pending={saveDeadline.isPending}
         error={formError}
       />
