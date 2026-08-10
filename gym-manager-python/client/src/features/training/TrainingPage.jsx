@@ -1,0 +1,13 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { api, queryString } from '../../services/api'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { PageHeader } from '../../components/common/PageHeader'
+import { SearchInput } from '../../components/common/SearchInput'
+import { DataTable } from '../../components/ui/DataTable'
+import { Pagination } from '../../components/ui/Pagination'
+import { StatusBadge } from '../../components/ui/StatusBadge'
+import { shortDate } from '../../utils/format'
+
+export function TrainingPage(){const[type,setType]=useState('1:1');const[search,setSearch]=useState('');const q=useDebouncedValue(search);const[page,setPage]=useState(1);const query=useQuery({queryKey:['training',type,q,page],queryFn:()=>api(`/api/training?${queryString({type,q,page,pageSize:20})}`)});const columns=[{key:'member',label:'Hội viên',render:(r)=><Link to={`/members/${r.memberId}`} className="cell-primary hover:underline">{r.member.name}<div className="cell-secondary">{r.member.code} · {r.member.phone}</div></Link>},{key:'coach',label:'Coach',render:(r)=>r.coach?.name||'—'},{key:'schedule',label:'Lịch tập',render:(r)=><div>{r.scheduleDays.join(', ')||'Chưa chọn thứ'}<div className="cell-secondary">{r.scheduleTime||'Chưa chọn giờ'}</div></div>},{key:'period',label:'Thời hạn',render:(r)=>`${shortDate(r.startsAt)} → ${shortDate(r.expiresAt)}`},{key:'sessions',label:'Số buổi',render:(r)=>`${r.remainingSessions}/${r.totalSessions}`},{key:'status',label:'Trạng thái',render:(r)=><StatusBadge status={r.status}/>},{key:'action',label:'',render:(r)=><Link className="text-xs font-medium text-navy-700 hover:underline" to={`/members/${r.memberId}`}>Xem hồ sơ</Link>}];return <><PageHeader eyebrow="Quản lý" title="Khách PT" description="Danh sách đăng ký PT trực tiếp theo hình thức, không gom nhóm."/><div className="tabs mb-4">{['1:1','1:2','1:3'].map((value)=><button key={value} className={`tab ${type===value?'active':''}`} onClick={()=>{setType(value);setPage(1)}}>{value} <span className="ml-1 text-[11px] text-slate-400">{query.data?.counts?.[value]||0}</span></button>)}</div><div className="toolbar"><SearchInput value={search} onChange={(v)=>{setSearch(v);setPage(1)}} placeholder="Tên, điện thoại hoặc mã hội viên…"/></div><DataTable rows={query.data?.items} columns={columns} loading={query.isLoading} emptyTitle={`Chưa có khách PT ${type}`} emptyDescription="Đăng ký PT từ hồ sơ hội viên để khách xuất hiện tại đây."/><Pagination data={query.data?.pagination} onPage={setPage}/></>}

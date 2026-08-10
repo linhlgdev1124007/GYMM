@@ -1,4 +1,10 @@
 {
+  "buildCommand": "npm run build",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "client/dist/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",

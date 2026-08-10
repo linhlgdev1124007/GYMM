@@ -1,16 +1,17 @@
 {
-  "name": "gym-manager-python",
-  "version": "1.0.0",
-  "description": "FastAPI + SQLite + Jinja + Tailwind implementation of the gym management app.",
-  "main": "index.js",
+  "name": "pulsefit-gym-management",
+  "version": "2.0.0",
+  "private": true,
   "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,cyan \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "python -m uvicorn server.main:app --host 127.0.0.1 --port 8100 --reload",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "python -m uvicorn server.main:app --host 0.0.0.0 --port 8100",
     "test": "node debug-ui.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "@playwright/test": "^1.62.1"
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "concurrently": "^9.2.0"
   }
 }

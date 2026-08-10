@@ -1,0 +1,235 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  BarChart3,
+  CheckCircle2,
+  ChevronRight,
+  CreditCard,
+  Dumbbell,
+  LayoutDashboard,
+  Menu,
+  Package,
+  Settings,
+  UserRoundCog,
+  Users,
+  X,
+} from "lucide-react";
+import { useAuth } from "../../app/AuthContext";
+import { initials } from "../../utils/format";
+import { GlobalSearch } from "../common/GlobalSearch";
+import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
+import { api } from "../../services/api";
+
+const groups = [
+  {
+    label: "Tổng quan",
+    items: [{ to: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
+    label: "Quản lý",
+    items: [
+      { to: "/members", label: "Hội viên", icon: Users },
+      { to: "/memberships", label: "Đăng ký gói", icon: CreditCard },
+      {
+        to: "/plans",
+        label: "Gói tập",
+        icon: Package,
+        roles: ["admin", "manager"],
+      },
+      {
+        to: "/trainers",
+        label: "Nhân viên",
+        icon: UserRoundCog,
+        roles: ["admin", "manager"],
+      },
+      { to: "/training", label: "Khách PT", icon: Dumbbell },
+    ],
+  },
+  {
+    label: "Vận hành",
+    items: [
+      { to: "/check-in", label: "Check-in", icon: CheckCircle2 },
+      { to: "/payments", label: "Thanh toán", icon: CreditCard },
+    ],
+  },
+  {
+    label: "Phân tích",
+    items: [
+      {
+        to: "/reports",
+        label: "Báo cáo",
+        icon: BarChart3,
+        roles: ["admin", "manager"],
+      },
+    ],
+  },
+  {
+    label: "Hệ thống",
+    items: [
+      {
+        to: "/settings",
+        label: "Cài đặt & thiết bị",
+        icon: Settings,
+        roles: ["admin"],
+      },
+    ],
+  },
+];
+
+function Sidebar({ open, close, role }) {
+  return (
+    <>
+      <div
+        className={`sidebar-overlay ${open ? "open" : ""}`}
+        onClick={close}
+      />
+      <aside className={`sidebar ${open ? "open" : ""}`}>
+        <div className="brand">
+          <div className="brand-mark">
+            <Dumbbell size={19} />
+          </div>
+          <div>
+            <strong>PulseFit</strong>
+            <span>Gym Management</span>
+          </div>
+          <button
+            className="sidebar-close"
+            onClick={close}
+            aria-label="Đóng menu"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <nav>
+          {groups.map((group) => {
+            const items = group.items.filter(
+              (item) => !item.roles || item.roles.includes(role),
+            );
+            return items.length ? (
+              <div className="nav-group" key={group.label}>
+                <span className="nav-label">{group.label}</span>
+                {items.map(({ to, label, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={close}
+                    className={({ isActive }) =>
+                      `nav-link ${isActive ? "active" : ""}`
+                    }
+                  >
+                    <Icon size={17} />
+                    <span>{label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            ) : null;
+          })}
+        </nav>
+        <div className="sidebar-status">
+          <span />
+          <div>
+            <strong>Hệ thống hoạt động</strong>
+            <small>SQLite · Local server</small>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+export function AppLayout() {
+  const [open, setOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const business = useQuery({
+    queryKey: ["member-options"],
+    queryFn: () => api("/api/members/options"),
+    staleTime: 300000,
+  });
+  const current = groups
+    .flatMap((group) => group.items)
+    .sort((a, b) => b.to.length - a.to.length)
+    .find((item) => location.pathname.startsWith(item.to));
+  const quickMember = !location.pathname.startsWith("/members")
+    ? params.get("member")
+    : null;
+  const interceptMemberLink = (event) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    const anchor = event.target.closest("a");
+    const match = anchor?.getAttribute("href")?.match(/^\/members\/(\d+)$/);
+    if (!match) return;
+    event.preventDefault();
+    const next = new URLSearchParams(params);
+    next.set("member", match[1]);
+    navigate(`${location.pathname}?${next}`);
+  };
+  const closeQuickMember = () =>
+    setParams((currentParams) => {
+      const next = new URLSearchParams(currentParams);
+      next.delete("member");
+      return next;
+    });
+  return (
+    <div className="app-layout" onClickCapture={interceptMemberLink}>
+      <Sidebar open={open} close={() => setOpen(false)} role={user?.role} />
+      <div className="app-main">
+        <header className="topbar">
+          <div className="topbar-context">
+            <button
+              className="menu-button"
+              onClick={() => setOpen(true)}
+              aria-label="Mở menu"
+            >
+              <Menu size={20} />
+            </button>
+            <span>PulseFit</span>
+            <ChevronRight size={14} />
+            <strong>{current?.label || "Dashboard"}</strong>
+          </div>
+          <GlobalSearch />
+          <div className="branch-context">
+            <span>Phạm vi</span>
+            <strong>
+              {business.data?.branches.length > 1
+                ? `Toàn hệ thống · ${business.data.branches.length} chi nhánh`
+                : business.data?.branches[0]?.name || "Đang tải…"}
+            </strong>
+          </div>
+          <div className="user-menu">
+            <div className="avatar avatar-sm">
+              {initials(user?.displayName)}
+            </div>
+            <div>
+              <strong>{user?.displayName}</strong>
+              <span>{user?.role}</span>
+            </div>
+            <button className="text-button" onClick={logout}>
+              Đăng xuất
+            </button>
+          </div>
+        </header>
+        <main className="main-content">
+          <Outlet />
+        </main>
+      </div>
+      <MemberQuickDrawer memberId={quickMember} onClose={closeQuickMember} />
+    </div>
+  );
+}

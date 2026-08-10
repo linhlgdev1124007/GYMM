@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Thiết bị{% endblock %}
-{% block content %}
-<section class="table-panel"><div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Mã</th><th>Tên máy</th><th>Model</th><th>IP</th><th>Chi nhánh</th><th>Mục đích</th><th>Jobs</th><th>Lỗi 24h</th><th>Trạng thái</th></tr></thead>
-    <tbody>{% for d in devices %}<tr><td class="font-bold">{{ d.code }}</td><td>{{ d.name }}</td><td>{{ d.model }}</td><td>{{ d.ip_address }}</td><td>{{ d.branch.name if d.branch else "-" }}</td><td><span class="badge blue">{{ d.purpose }}</span></td><td>{{ d.pending_jobs }}</td><td>{{ d.errors_24h }}</td><td><span class="badge {{ 'green' if d.status == 'online' else ('yellow' if d.status == 'maintenance' else 'red') }}">{{ d.status }}</span></td></tr>{% endfor %}</tbody>
-</table></div></section>
-{% endblock %}

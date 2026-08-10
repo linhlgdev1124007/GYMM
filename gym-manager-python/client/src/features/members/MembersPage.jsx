@@ -1,0 +1,752 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  BookmarkPlus,
+  CalendarPlus,
+  CheckCircle2,
+  CreditCard,
+  Pencil,
+  Plus,
+  SlidersHorizontal,
+} from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { api, queryString } from "../../services/api";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { PageHeader } from "../../components/common/PageHeader";
+import { SearchInput } from "../../components/common/SearchInput";
+import { Button } from "../../components/ui/Button";
+import { DataTable } from "../../components/ui/DataTable";
+import { Field, Input, Select, Textarea } from "../../components/ui/Form";
+import { Modal } from "../../components/ui/Modal";
+import { Pagination } from "../../components/ui/Pagination";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import { MemberQuickDrawer } from "./MemberQuickDrawer";
+import { initials, money, shortDate } from "../../utils/format";
+
+const initialForm = {
+  name: "",
+  phone: "",
+  email: "",
+  gender: "",
+  dateOfBirth: "",
+  mbsCode: "",
+  source: "Walk-in",
+  salesEmployeeId: "",
+  notes: "",
+};
+const views = [
+  ["all", "Tất cả"],
+  ["active", "Đang hoạt động"],
+  ["expiring", "Sắp hết hạn"],
+  ["debt", "Có công nợ"],
+  ["no_pt", "Chưa có PT"],
+];
+
+export function MembersPage() {
+  const client = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [savedViews, setSavedViews] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("pulsefit-member-views") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [density, setDensity] = useState(
+    () => localStorage.getItem("pulsefit-table-density") || "standard",
+  );
+  const [hiddenColumns, setHiddenColumns] = useState([]);
+  const [form, setForm] = useState(initialForm);
+  const [error, setError] = useState("");
+  const [selection, setSelection] = useState([]);
+  const search = params.get("q") || "";
+  const q = useDebouncedValue(search);
+  const status = params.get("status") || "all";
+  const view = params.get("view") || "all";
+  const sort = params.get("sort") || "newest";
+  const packageId = params.get("packageId") || "";
+  const trainerId = params.get("trainerId") || "";
+  const page = Number(params.get("page") || 1);
+  const memberId = params.get("member");
+  const action = params.get("action");
+  const updateParams = useCallback(
+    (changes, options = {}) =>
+      setParams((current) => {
+        const next = new URLSearchParams(current);
+        Object.entries(changes).forEach(([key, value]) =>
+          value === "" || value == null || (value === "all" && key !== "view")
+            ? next.delete(key)
+            : next.set(key, value),
+        );
+        return next;
+      }, options),
+    [setParams],
+  );
+  const members = useQuery({
+    queryKey: ["members", q, status, view, packageId, trainerId, sort, page],
+    queryFn: () =>
+      api(
+        `/api/members?${queryString({ q, status, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
+      ),
+  });
+  const options = useQuery({
+    queryKey: ["member-options"],
+    queryFn: () => api("/api/members/options"),
+    staleTime: 5 * 60_000,
+  });
+  const create = useMutation({
+    mutationFn: (payload) =>
+      api("/api/members", { method: "POST", body: payload }),
+    onSuccess: (member) => {
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      setCreateOpen(false);
+      setForm(initialForm);
+      updateParams({ member: member.id });
+      toast.success("Đã tạo hội viên.");
+    },
+    onError: (reason) => setError(reason.message),
+  });
+  const checkin = useMutation({
+    mutationFn: (id) =>
+      api("/api/checkins", { method: "POST", body: { memberId: id } }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Check-in thành công.");
+    },
+    onError: (reason) => toast.error(reason.message),
+  });
+  useEffect(() => {
+    const focus = (event) => {
+      if (
+        event.key === "/" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(
+          document.activeElement?.tagName,
+        )
+      ) {
+        event.preventDefault();
+        document.querySelector(".members-search input")?.focus();
+      }
+    };
+    document.addEventListener("keydown", focus);
+    return () => document.removeEventListener("keydown", focus);
+  }, []);
+  const openMember = useCallback(
+    (row, nextAction) =>
+      updateParams({ member: row.id, action: nextAction || "" }),
+    [updateParams],
+  );
+  const clearMemberAction = useCallback(
+    () => updateParams({ action: "" }, { replace: true }),
+    [updateParams],
+  );
+  const columns = useMemo(
+    () => [
+      {
+        key: "member",
+        label: "Hội viên",
+        render: (row) => (
+          <button
+            className="member-cell text-left"
+            onClick={(event) => {
+              event.stopPropagation();
+              openMember(row);
+            }}
+          >
+            <div className="avatar avatar-md">{initials(row.name)}</div>
+            <div>
+              <div className="cell-primary hover:text-blue-700">{row.name}</div>
+              <div className="cell-secondary">{row.code}</div>
+            </div>
+          </button>
+        ),
+      },
+      { key: "phone", label: "Điện thoại", className: "max-[640px]:hidden", render: (row) => row.phone || "—" },
+      {
+        key: "membership",
+        label: "Gói & hết hạn",
+        render: (row) =>
+          row.membership ? (
+            <div>
+              <span className="cell-primary">
+                {row.membership.package.name}
+              </span>
+              <div className="cell-secondary">
+                {shortDate(row.membership.expiresAt)}
+              </div>
+            </div>
+          ) : (
+            <span className="text-slate-400">Chưa có gói</span>
+          ),
+      },
+      {
+        key: "debt",
+        label: "Công nợ",
+        className: "text-right",
+        render: (row) =>
+          row.membership?.debtAmount ? (
+            <button
+              className="font-medium text-red-700 hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "payment");
+              }}
+            >
+              {money(row.membership.debtAmount)}
+            </button>
+          ) : (
+            "—"
+          ),
+      },
+      {
+        key: "trainer",
+        label: "PT",
+        className: "max-[640px]:hidden",
+        render: (row) =>
+          row.trainer?.name || (
+            <button
+              className="text-xs font-medium text-blue-700"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "training");
+              }}
+            >
+              + Gán PT
+            </button>
+          ),
+      },
+      {
+        key: "status",
+        label: "Trạng thái",
+        className: "max-[640px]:hidden",
+        render: (row) => (
+          <StatusBadge status={row.membership?.status || row.status} />
+        ),
+      },
+      {
+        key: "actions",
+        label: "Thao tác nhanh",
+        className: "member-quick-cell",
+        render: (row) => (
+          <div className="member-row-actions">
+            <button
+              title="Check-in"
+              aria-label={`Check-in ${row.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                checkin.mutate(row.id);
+              }}
+            >
+              <CheckCircle2 size={15} />
+            </button>
+            <button
+              title="Thu tiền"
+              aria-label={`Thu tiền ${row.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "payment");
+              }}
+            >
+              <CreditCard size={15} />
+            </button>
+            <button
+              title="Gia hạn"
+              aria-label={`Gia hạn ${row.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "renew");
+              }}
+            >
+              <CalendarPlus size={15} />
+            </button>
+            <button
+              title="Chỉnh sửa"
+              aria-label={`Chỉnh sửa ${row.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "edit");
+              }}
+            >
+              <Pencil size={15} />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [checkin, openMember],
+  );
+  const activeFilters = [
+    status !== "all" && ["Trạng thái", status, "status"],
+    packageId && [
+      "Gói",
+      options.data?.plans.find((row) => String(row.id) === packageId)?.name,
+      "packageId",
+    ],
+    trainerId && [
+      "PT",
+      options.data?.employees.find((row) => String(row.id) === trainerId)?.name,
+      "trainerId",
+    ],
+  ].filter(Boolean);
+  const displayColumns = columns.filter(
+    (column) => !hiddenColumns.includes(column.key),
+  );
+  const exportSelected = () => {
+    const rows =
+      members.data?.items.filter((row) => selection.includes(row.id)) || [];
+    const csv = [
+      "Mã hội viên,Họ tên,Điện thoại,Gói tập,Công nợ,PT,Trạng thái",
+      ...rows.map((row) =>
+        [
+          row.code,
+          row.name,
+          row.phone || "",
+          row.membership?.package.name || "",
+          row.membership?.debtAmount || 0,
+          row.trainer?.name || "",
+          row.status,
+        ]
+          .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+          .join(","),
+      ),
+    ].join("\n");
+    const url = URL.createObjectURL(
+      new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "pulsefit-members.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Đã xuất ${rows.length} hội viên.`);
+  };
+  const saveView = (event) => {
+    event.preventDefault();
+    const name = viewName.trim();
+    if (!name) return;
+    const next = [
+      ...savedViews,
+      {
+        id: Date.now(),
+        name,
+        filters: { view, status, packageId, trainerId, sort },
+        hiddenColumns,
+        density,
+      },
+    ];
+    setSavedViews(next);
+    localStorage.setItem("pulsefit-member-views", JSON.stringify(next));
+    setViewName("");
+    setSaveViewOpen(false);
+    toast.success("Đã lưu chế độ xem cá nhân.");
+  };
+  return (
+    <>
+      <PageHeader
+        eyebrow="Quản lý"
+        title="Hội viên"
+        description="Không gian vận hành hội viên — xem và xử lý mà không rời danh sách."
+        action={
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus size={16} />
+            Thêm hội viên
+          </Button>
+        }
+      />
+      <div className="workspace-views">
+        {views.map(([key, label]) => (
+          <button
+            key={key}
+            className={`workspace-view ${view === key ? "active" : ""}`}
+            onClick={() => updateParams({ view: key, page: "" })}
+          >
+            {label}
+          </button>
+        ))}
+        {savedViews.map((saved) => {
+          const active = Object.entries(saved.filters).every(
+            ([key, value]) =>
+              (params.get(key) ||
+                (key === "view"
+                  ? "all"
+                  : key === "status"
+                    ? "all"
+                    : key === "sort"
+                      ? "newest"
+                      : "")) === value,
+          );
+          return (
+            <button
+              key={saved.id}
+              className={`workspace-view ${active ? "active" : ""}`}
+              onClick={() => {
+                updateParams({ ...saved.filters, page: "" });
+                setHiddenColumns(saved.hiddenColumns || []);
+                setDensity(saved.density || "standard");
+              }}
+            >
+              {saved.name}
+            </button>
+          );
+        })}
+        <button
+          className="workspace-view ml-auto inline-flex items-center gap-1"
+          onClick={() => setSaveViewOpen(true)}
+        >
+          <BookmarkPlus size={13} />
+          Lưu chế độ xem
+        </button>
+      </div>
+      {selection.length ? (
+        <div className="bulk-bar">
+          <strong>{selection.length} hội viên đã chọn</strong>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={exportSelected}
+          >
+            Xuất danh sách
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelection([])}>
+            Bỏ chọn
+          </Button>
+        </div>
+      ) : (
+        <div className="toolbar">
+          <div className="members-search">
+            <SearchInput
+              value={search}
+              onChange={(value) =>
+                updateParams({ q: value, page: "" }, { replace: true })
+              }
+              placeholder="Tên, điện thoại, mã hội viên…  /"
+            />
+          </div>
+          <Select
+            className="input w-40"
+            value={status}
+            onChange={(e) => updateParams({ status: e.target.value, page: "" })}
+          >
+            <option value="all">Mọi trạng thái</option>
+            <option value="active">Đang hoạt động</option>
+            <option value="lead">Tiềm năng</option>
+            <option value="frozen">Tạm dừng</option>
+            <option value="blocked">Đã khóa</option>
+            <option value="inactive">Ngừng</option>
+          </Select>
+          <Select
+            className="input w-44"
+            value={packageId}
+            onChange={(e) =>
+              updateParams({ packageId: e.target.value, page: "" })
+            }
+          >
+            <option value="">Mọi gói tập</option>
+            {options.data?.plans.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            className="input w-40"
+            value={trainerId}
+            onChange={(e) =>
+              updateParams({ trainerId: e.target.value, page: "" })
+            }
+          >
+            <option value="">Mọi PT</option>
+            {options.data?.employees
+              .filter((row) => /coach|pt/i.test(row.title || ""))
+              .map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+          </Select>
+          <Select
+            className="input w-36"
+            value={sort}
+            onChange={(e) => updateParams({ sort: e.target.value, page: "" })}
+          >
+            <option value="newest">Mới nhất</option>
+            <option value="name">Tên A–Z</option>
+            <option value="status">Trạng thái</option>
+          </Select>
+          <details className="table-options">
+            <summary>
+              <SlidersHorizontal size={14} />
+              Hiển thị
+            </summary>
+            <div className="table-options-panel">
+              <strong>Mật độ bảng</strong>
+              <label>
+                <input
+                  type="radio"
+                  name="density"
+                  checked={density === "standard"}
+                  onChange={() => {
+                    setDensity("standard");
+                    localStorage.setItem("pulsefit-table-density", "standard");
+                  }}
+                />
+                Tiêu chuẩn
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="density"
+                  checked={density === "compact"}
+                  onChange={() => {
+                    setDensity("compact");
+                    localStorage.setItem("pulsefit-table-density", "compact");
+                  }}
+                />
+                Thu gọn
+              </label>
+              <hr />
+              <strong>Cột hiển thị</strong>
+              {[
+                ["phone", "Điện thoại"],
+                ["membership", "Gói & hết hạn"],
+                ["debt", "Công nợ"],
+                ["trainer", "PT"],
+                ["status", "Trạng thái"],
+              ].map(([key, label]) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={!hiddenColumns.includes(key)}
+                    onChange={() =>
+                      setHiddenColumns((current) =>
+                        current.includes(key)
+                          ? current.filter((item) => item !== key)
+                          : [...current, key],
+                      )
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </details>
+          <div className="toolbar-spacer" />
+          <span className="text-xs text-slate-400">
+            {members.data?.pagination.total || 0} hội viên
+          </span>
+        </div>
+      )}
+      {!!activeFilters.length && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {activeFilters.map(([label, value, key]) => (
+            <button
+              key={key}
+              className="filter-chip"
+              onClick={() => updateParams({ [key]: "", page: "" })}
+            >
+              {label}: {value} ×
+            </button>
+          ))}
+          <button
+            className="text-xs text-slate-500 hover:text-slate-900"
+            onClick={() =>
+              updateParams({
+                status: "",
+                packageId: "",
+                trainerId: "",
+                page: "",
+              })
+            }
+          >
+            Xóa bộ lọc
+          </button>
+        </div>
+      )}
+      <DataTable
+        columns={displayColumns}
+        rows={members.data?.items}
+        loading={members.isLoading}
+        error={members.error}
+        selection={selection}
+        onSelectionChange={setSelection}
+        onRowClick={openMember}
+        selectedRowId={Number(memberId)}
+        density={density}
+        emptyTitle={
+          search || activeFilters.length || view !== "all"
+            ? "Không có hội viên phù hợp"
+            : "Chưa có hội viên"
+        }
+        emptyDescription={
+          search || activeFilters.length || view !== "all"
+            ? "Xóa bớt bộ lọc hoặc thử từ khóa khác."
+            : "Thêm hội viên đầu tiên để bắt đầu vận hành."
+        }
+      />
+      <Pagination
+        data={members.data?.pagination}
+        onPage={(value) => updateParams({ page: value })}
+      />
+      <MemberQuickDrawer
+        memberId={memberId}
+        onClose={() => updateParams({ member: "", action: "" })}
+        initialAction={action}
+        onActionConsumed={clearMemberAction}
+      />
+      <Modal
+        open={saveViewOpen}
+        onClose={() => setSaveViewOpen(false)}
+        title="Lưu chế độ xem"
+        description="Lưu bộ lọc và thứ tự hiện tại cho lần làm việc sau."
+      >
+        <form onSubmit={saveView}>
+          <div className="modal-body">
+            <Field label="Tên chế độ xem" required>
+              <Input
+                autoFocus
+                value={viewName}
+                onChange={(event) => setViewName(event.target.value)}
+                placeholder="Ví dụ: Khách cần gọi hôm nay"
+              />
+            </Field>
+          </div>
+          <div className="form-actions">
+            <Button variant="secondary" onClick={() => setSaveViewOpen(false)}>
+              Hủy
+            </Button>
+            <Button type="submit" disabled={!viewName.trim()}>
+              Lưu
+            </Button>
+          </div>
+        </form>
+      </Modal>
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Thêm hội viên"
+        description="Tạo hồ sơ cơ bản; gói tập và PT có thể thêm ngay sau đó."
+        size="lg"
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError("");
+            create.mutate(form);
+          }}
+        >
+          <div className="modal-body space-y-5">
+            <section className="form-section">
+              <h3 className="form-section-title">Thông tin cá nhân</h3>
+              <div className="form-grid">
+                <Field label="Họ tên" required>
+                  <Input
+                    autoFocus
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  />
+                </Field>
+                <Field label="Điện thoại" required>
+                  <Input
+                    value={form.phone}
+                    onChange={(e) =>
+                      setForm({ ...form, phone: e.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Email">
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) =>
+                      setForm({ ...form, email: e.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Giới tính">
+                  <Select
+                    value={form.gender}
+                    onChange={(e) =>
+                      setForm({ ...form, gender: e.target.value })
+                    }
+                  >
+                    <option value="">Chưa chọn</option>
+                    <option>Nam</option>
+                    <option>Nữ</option>
+                    <option>Khác</option>
+                  </Select>
+                </Field>
+                <Field label="Ngày sinh">
+                  <Input
+                    type="date"
+                    value={form.dateOfBirth}
+                    onChange={(e) =>
+                      setForm({ ...form, dateOfBirth: e.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Mã thẻ MBS">
+                  <Input
+                    value={form.mbsCode}
+                    onChange={(e) =>
+                      setForm({ ...form, mbsCode: e.target.value })
+                    }
+                  />
+                </Field>
+              </div>
+            </section>
+            <section className="form-section">
+              <h3 className="form-section-title">Nguồn và phụ trách</h3>
+              <div className="form-grid">
+                <Field label="Nguồn khách">
+                  <Input
+                    value={form.source}
+                    onChange={(e) =>
+                      setForm({ ...form, source: e.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Nhân viên phụ trách">
+                  <Select
+                    value={form.salesEmployeeId}
+                    onChange={(e) =>
+                      setForm({ ...form, salesEmployeeId: e.target.value })
+                    }
+                  >
+                    <option value="">Chưa gán</option>
+                    {options.data?.employees.map((row) => (
+                      <option value={row.id} key={row.id}>
+                        {row.name} · {row.title}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field className="form-span" label="Ghi chú">
+                  <Textarea
+                    value={form.notes}
+                    onChange={(e) =>
+                      setForm({ ...form, notes: e.target.value })
+                    }
+                  />
+                </Field>
+              </div>
+            </section>
+            {error && <div className="inline-error">{error}</div>}
+          </div>
+          <div className="form-actions">
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              Hủy
+            </Button>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? "Đang tạo…" : "Tạo hội viên"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}

@@ -22,9 +22,11 @@ env/
 # Environment and secrets
 .env
 .env.*
+!.env.example
 
 # Node / Playwright
 node_modules/
+client/dist/
 playwright-report/
 test-results/
 
