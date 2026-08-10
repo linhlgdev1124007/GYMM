@@ -197,6 +197,25 @@ class PtGroupMember(Base):
     membership: Mapped[Membership | None] = relationship()
 
 
+class PtEnrollment(Base):
+    __tablename__ = "pt_enrollments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    coach_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    group_type: Mapped[str] = mapped_column(String(20), default="1:1", index=True)
+    starts_at: Mapped[date] = mapped_column(Date, default=date.today)
+    expires_at: Mapped[date | None] = mapped_column(Date)
+    total_sessions: Mapped[int] = mapped_column(Integer, default=12)
+    remaining_sessions: Mapped[int] = mapped_column(Integer, default=12)
+    schedule_days: Mapped[str | None] = mapped_column(String(120))
+    schedule_time: Mapped[str | None] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+
+    customer: Mapped[Customer] = relationship()
+    coach: Mapped[Employee] = relationship()
+
+
 class CommissionLedger(Base):
     __tablename__ = "commission_ledger"
 

@@ -16,7 +16,6 @@
         <div class="form-field"><label>Tài khoản nhận CK</label><select class="form-control" name="bank_account_id"><option value="">Không áp dụng</option>{% for a in bank_accounts %}<option value="{{ a.id }}">{{ a.bank_name }} - {{ a.visibility }}</option>{% endfor %}</select></div>
         <div class="form-field"><label>Sale online</label><select class="form-control" name="sale_online_employee_id"><option value="">Không có</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.person.display_name }}</option>{% endfor %}</select></div>
         <div class="form-field"><label>Chốt trực tiếp</label><select class="form-control" name="direct_sales_employee_id"><option value="">Không có</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.person.display_name }}</option>{% endfor %}</select></div>
-        <div class="form-field"><label>PT chuyển đổi</label><select class="form-control" name="pt_converter_employee_id"><option value="">Không có</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.person.display_name }}</option>{% endfor %}</select></div>
         <div class="form-field"><label>Ảnh phiếu thu</label><input class="form-control file-control" type="file" name="receipt_image" accept="image/*"></div>
         <div class="form-field flex items-end"><button class="submit-btn w-full">Đăng ký gói</button></div>
     </form>
@@ -29,7 +28,6 @@
         <td class="text-xs text-zinc-600">
             Online: {{ m.sale_online_employee.person.display_name if m.sale_online_employee else "-" }}<br>
             Chốt: {{ m.direct_sales_employee.person.display_name if m.direct_sales_employee else "-" }}<br>
-            PT: {{ m.pt_converter_employee.person.display_name if m.pt_converter_employee else "-" }}
         </td>
         <td><span class="badge {{ 'green' if m.status == 'active' else 'yellow' }}">{{ m.status }}</span></td>
     </tr>{% endfor %}</tbody>

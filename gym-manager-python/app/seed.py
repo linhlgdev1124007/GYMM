@@ -25,15 +25,14 @@ def seed_database(db: Session) -> None:
 
     packages = [
         ServicePackage(code="FIT-1M", name="Fitness Unlimited 1 tháng", category="Fitness", package_type="time", duration_days=30, session_count=None, price=500000, is_pt=False),
-        ServicePackage(code="FIT-12S", name="Fitness 12 buổi", category="Fitness", package_type="sessions", duration_days=None, session_count=12, price=700000, is_pt=False),
-        ServicePackage(code="PT-10", name="Huấn luyện cá nhân 10 buổi", category="PT", package_type="sessions", duration_days=90, session_count=10, price=3000000, is_pt=True),
+        ServicePackage(code="FIT-12S", name="Fitness 12 buổi", category="Fitness", package_type="time", duration_days=60, session_count=None, price=700000, is_pt=False),
     ]
     db.add_all(packages)
     db.flush()
 
     customer_rows = [
         ("CUST-0001", "Nguyễn Minh Anh", "0901112222", "Facebook", "active", packages[0], 30, 500000, 500000),
-        ("CUST-0002", "Trần Bảo Châu", "0903334444", "Giới thiệu", "active", packages[2], 8, 3000000, 1500000),
+        ("CUST-0002", "Trần Bảo Châu", "0903334444", "Giới thiệu", "active", packages[0], None, 500000, 250000),
         ("CUST-0003", "Lê Quang Huy", "0905556666", "Khách vãng lai", "lead", packages[1], 12, 700000, 0),
         ("CUST-0004", "Phạm Khánh Linh", "0907778888", "Zalo", "blocked", packages[0], None, 500000, 500000),
     ]

@@ -43,9 +43,9 @@
 
 <section class="table-panel">
     <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Mã</th><th>Họ tên</th><th>Điện thoại</th><th>MBS</th><th>Chi nhánh</th><th>Sale</th><th>Nguồn</th><th>Note</th><th>Trạng thái</th><th></th></tr></thead>
+        <thead><tr><th>Mã</th><th>Họ tên</th><th>Điện thoại</th><th>MBS</th><th>Chi nhánh</th><th>Sale</th><th>Nguồn</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody>{% for c in customers %}<tr>
-            <td class="font-bold">{{ c.customer_code }}</td><td>{{ c.person.display_name }}</td><td>{{ c.person.phone or "-" }}</td><td>{{ c.mbs_card_code or "-" }}</td><td>{{ c.branch.name if c.branch else "-" }}</td><td>{{ c.sales_employee.person.display_name if c.sales_employee else "-" }}</td><td>{{ c.source or "-" }}</td><td class="max-w-48 truncate">{{ c.notes or "-" }}</td>
+            <td class="font-bold">{{ c.customer_code }}</td><td>{{ c.person.display_name }}</td><td>{{ c.person.phone or "-" }}</td><td>{{ c.mbs_card_code or "-" }}</td><td>{{ c.branch.name if c.branch else "-" }}</td><td>{{ c.sales_employee.person.display_name if c.sales_employee else "-" }}</td><td>{{ c.source or "-" }}</td>
             <td><span class="badge {{ 'green' if c.status == 'active' else ('red' if c.status == 'blocked' else 'yellow') }}">{{ c.status }}</span></td>
             <td><a class="ghost-btn inline-flex items-center" href="/customers/{{ c.id }}">Xem</a></td>
         </tr>{% endfor %}</tbody>

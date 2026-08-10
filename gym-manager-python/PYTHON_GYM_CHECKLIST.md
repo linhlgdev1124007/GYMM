@@ -87,6 +87,11 @@ Nguyên tắc:
 - [x] Verify server vẫn chạy sau nhiều request.
 
 ## Implementation Notes
+- 2026-08-10: Bỏ phân hệ Lịch hẹn khỏi route/navigation; lịch hẹn được quản lý độc lập bằng Google Sheet. Bảng SQLite cũ được giữ để bảo toàn lịch sử.
+- 2026-08-10: Bỏ Hoa hồng khỏi route/navigation và ngừng sinh bút toán hoa hồng mới; dữ liệu cũ vẫn được giữ.
+- 2026-08-10: Thay quản lý nhóm PT bằng đăng ký PT trực tiếp theo khách, chia ba tab 1:1/1:2/1:3; hỗ trợ coach, số buổi, thời hạn, thứ và giờ tập.
+- 2026-08-10: Hồ sơ khách ẩn lịch hẹn/thanh toán riêng, thêm chi tiết gói và cập nhật ảnh phiếu thu; danh sách khách bỏ cột Note.
+- 2026-08-10: Gói tập thường được tách khỏi PT; nhân viên bỏ chi nhánh/lương/trạng thái trên UI và có sửa/xóa an toàn.
 - 2026-08-05: Laravel version duoc giu lai de tham chieu, Python app moi se la huong chinh.
 - 2026-08-05: App FastAPI chay tai `http://127.0.0.1:8100`.
 - 2026-08-05: Playwright screenshots pass cho desktop 1440x1000 va netbook 1024x768. Screenshots nam trong `screenshots/`.
