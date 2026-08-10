@@ -42,6 +42,14 @@ const views = [
   ["debt", "Có công nợ"],
   ["no_pt", "Chưa có PT"],
 ];
+const statusFilters = {
+  all: "Tất cả",
+  active: "Đang hoạt động",
+  expired: "Hết hạn",
+  expiring: "Sắp hết hạn",
+  frozen: "Bảo lưu",
+  inactive: "Tạm ngừng",
+};
 
 export function MembersPage() {
   const client = useQueryClient();
@@ -66,6 +74,7 @@ export function MembersPage() {
   const search = params.get("q") || "";
   const q = useDebouncedValue(search);
   const status = params.get("status") || "all";
+  const expiringDays = Number(params.get("expiringDays") || 14);
   const view = params.get("view") || "all";
   const sort = params.get("sort") || "newest";
   const packageId = params.get("packageId") || "";
@@ -87,10 +96,10 @@ export function MembersPage() {
     [setParams],
   );
   const members = useQuery({
-    queryKey: ["members", q, status, view, packageId, trainerId, sort, page],
+    queryKey: ["members", q, status, expiringDays, view, packageId, trainerId, sort, page],
     queryFn: () =>
       api(
-        `/api/members?${queryString({ q, status, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
+        `/api/members?${queryString({ q, status, expiringDays, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
       ),
   });
   const options = useQuery({
@@ -141,6 +150,21 @@ export function MembersPage() {
       updateParams({ member: row.id, action: nextAction || "" }),
     [updateParams],
   );
+  const applySystemView = useCallback(
+    (nextView) => {
+      updateParams({
+        view: nextView,
+        q: "",
+        status: "",
+        expiringDays: "",
+        packageId: "",
+        trainerId: "",
+        page: "",
+      });
+      setSelection([]);
+    },
+    [updateParams],
+  );
   const clearMemberAction = useCallback(
     () => updateParams({ action: "" }, { replace: true }),
     [updateParams],
@@ -188,20 +212,18 @@ export function MembersPage() {
         key: "debt",
         label: "Công nợ",
         className: "text-right",
-        render: (row) =>
-          row.membership?.debtAmount ? (
-            <button
-              className="font-medium text-red-700 hover:underline"
-              onClick={(event) => {
-                event.stopPropagation();
-                openMember(row, "payment");
-              }}
-            >
-              {money(row.membership.debtAmount)}
-            </button>
-          ) : (
-            "—"
-          ),
+        render: (row) => row.membership?.debtAmount ? <div><button className="font-medium text-red-700 hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "payment"); }}>{money(row.membership.debtAmount)}</button><div className="cell-secondary hidden max-[640px]:block">Hạn {shortDate(row.membership.debtDueDate)}</div></div> : "—",
+      },
+      {
+        key: "debtDueDate",
+        label: "Hạn thanh toán",
+        className: "max-[640px]:hidden",
+        render: (row) => {
+          if (!row.membership?.debtAmount) return "—";
+          if (!row.membership.debtDueDate) return <button className="font-medium text-blue-700 hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "deadline"); }}>+ Đặt hạn</button>;
+          const overdue = new Date(`${row.membership.debtDueDate}T23:59:59`) < new Date();
+          return <button className="text-left hover:underline" onClick={(event) => { event.stopPropagation(); openMember(row, "deadline"); }}><span className={overdue ? "font-medium text-red-700" : ""}>{shortDate(row.membership.debtDueDate)}</span><div className={`cell-secondary ${overdue ? "!text-red-600" : ""}`}>{overdue ? "Quá hạn · Đổi hạn" : "Chưa đến hạn · Đổi hạn"}</div></button>;
+        },
       },
       {
         key: "trainer",
@@ -281,7 +303,7 @@ export function MembersPage() {
     [checkin, openMember],
   );
   const activeFilters = [
-    status !== "all" && ["Trạng thái", status, "status"],
+    status !== "all" && ["Trạng thái", status === "expiring" ? `${statusFilters[status]} trong ${expiringDays} ngày` : statusFilters[status], "status"],
     packageId && [
       "Gói",
       options.data?.plans.find((row) => String(row.id) === packageId)?.name,
@@ -300,7 +322,7 @@ export function MembersPage() {
     const rows =
       members.data?.items.filter((row) => selection.includes(row.id)) || [];
     const csv = [
-      "Mã hội viên,Họ tên,Điện thoại,Gói tập,Công nợ,PT,Trạng thái",
+      "Mã hội viên,Họ tên,Điện thoại,Gói tập,Công nợ,Hạn thanh toán,PT,Trạng thái",
       ...rows.map((row) =>
         [
           row.code,
@@ -308,6 +330,7 @@ export function MembersPage() {
           row.phone || "",
           row.membership?.package.name || "",
           row.membership?.debtAmount || 0,
+          row.membership?.debtDueDate || "",
           row.trainer?.name || "",
           row.status,
         ]
@@ -334,7 +357,7 @@ export function MembersPage() {
       {
         id: Date.now(),
         name,
-        filters: { view, status, packageId, trainerId, sort },
+        filters: { view, status, expiringDays: String(expiringDays), packageId, trainerId, sort },
         hiddenColumns,
         density,
       },
@@ -363,7 +386,7 @@ export function MembersPage() {
           <button
             key={key}
             className={`workspace-view ${view === key ? "active" : ""}`}
-            onClick={() => updateParams({ view: key, page: "" })}
+            onClick={() => applySystemView(key)}
           >
             {label}
           </button>
@@ -428,17 +451,18 @@ export function MembersPage() {
             />
           </div>
           <Select
-            className="input w-40"
+            className="input w-48"
             value={status}
-            onChange={(e) => updateParams({ status: e.target.value, page: "" })}
+            onChange={(e) => updateParams({ status: e.target.value, expiringDays: e.target.value === "expiring" ? expiringDays : "", page: "" })}
           >
-            <option value="all">Mọi trạng thái</option>
+            <option value="all">Tất cả</option>
             <option value="active">Đang hoạt động</option>
-            <option value="lead">Tiềm năng</option>
-            <option value="frozen">Tạm dừng</option>
-            <option value="blocked">Đã khóa</option>
-            <option value="inactive">Ngừng</option>
+            <option value="expired">Hết hạn</option>
+            <option value="expiring">Sắp hết hạn trong X ngày</option>
+            <option value="frozen">Bảo lưu</option>
+            <option value="inactive">Tạm ngừng</option>
           </Select>
+          {status === "expiring" && <label className="expiry-days-field"><span>Trong</span><Input type="number" min="1" max="365" value={expiringDays} onChange={(event) => updateParams({ expiringDays: Math.min(Math.max(Number(event.target.value) || 1, 1), 365), page: "" }, { replace: true })}/><span>ngày</span></label>}
           <Select
             className="input w-44"
             value={packageId}
@@ -515,6 +539,7 @@ export function MembersPage() {
                 ["phone", "Điện thoại"],
                 ["membership", "Gói & hết hạn"],
                 ["debt", "Công nợ"],
+                ["debtDueDate", "Hạn thanh toán"],
                 ["trainer", "PT"],
                 ["status", "Trạng thái"],
               ].map(([key, label]) => (
@@ -557,6 +582,7 @@ export function MembersPage() {
             onClick={() =>
               updateParams({
                 status: "",
+                expiringDays: "",
                 packageId: "",
                 trainerId: "",
                 page: "",

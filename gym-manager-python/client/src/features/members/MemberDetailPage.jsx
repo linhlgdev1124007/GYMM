@@ -1,44 +1,696 @@
-import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, CalendarPlus, CheckCircle2, CreditCard, Dumbbell, MoreHorizontal, Pencil, Plus, TriangleAlert } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
-import { api } from '../../services/api'
-import { Button } from '../../components/ui/Button'
-import { DataTable } from '../../components/ui/DataTable'
-import { StatusBadge } from '../../components/ui/StatusBadge'
-import { InlineEditField } from '../../components/ui/InlineEditField'
-import { MemberEditForm } from '../../components/forms/MemberEditForm'
-import { MembershipForm } from '../../components/forms/MembershipForm'
-import { TrainingForm } from '../../components/forms/TrainingForm'
-import { QuickPaymentForm } from '../../components/forms/QuickPaymentForm'
-import { dateTime, initials, money, shortDate } from '../../utils/format'
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowLeft,
+  CalendarPlus,
+  CheckCircle2,
+  CreditCard,
+  Dumbbell,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  TriangleAlert,
+} from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { api } from "../../services/api";
+import { Button } from "../../components/ui/Button";
+import { DataTable } from "../../components/ui/DataTable";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import { InlineEditField } from "../../components/ui/InlineEditField";
+import { MemberEditForm } from "../../components/forms/MemberEditForm";
+import { MembershipForm } from "../../components/forms/MembershipForm";
+import { TrainingForm } from "../../components/forms/TrainingForm";
+import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
+import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
+import { dateTime, initials, money, shortDate } from "../../utils/format";
 
-const tabs = [['overview','Tổng quan'],['memberships','Lịch sử gói'],['checkins','Lịch sử check-in'],['training','PT & lịch tập'],['notes','Ghi chú'],['activity','Hoạt động']]
+const tabs = [
+  ["overview", "Tổng quan"],
+  ["memberships", "Lịch sử gói"],
+  ["checkins", "Lịch sử check-in"],
+  ["training", "PT & lịch tập"],
+  ["notes", "Ghi chú"],
+  ["activity", "Hoạt động"],
+];
 
 export function MemberDetailPage() {
-  const { memberId } = useParams(); const client = useQueryClient(); const [tab, setTab] = useState('overview'); const [dialog, setDialog] = useState(null); const [selectedMembership, setSelectedMembership] = useState(null); const [selectedTraining, setSelectedTraining] = useState(null); const [formError, setFormError] = useState('')
-  const memberQuery = useQuery({ queryKey: ['member', memberId], queryFn: () => api(`/api/members/${memberId}`) }); const options = useQuery({ queryKey: ['member-options'], queryFn: () => api('/api/members/options'), staleTime: 300000 }); const member = memberQuery.data
-  const refresh = () => { client.invalidateQueries({ queryKey: ['member', memberId] }); client.invalidateQueries({ queryKey: ['members'] }); client.invalidateQueries({ queryKey: ['memberships'] }); client.invalidateQueries({ queryKey: ['training'] }); client.invalidateQueries({ queryKey: ['dashboard'] }) }
-  const updateMember = useMutation({ mutationFn: (payload) => api(`/api/members/${memberId}`, { method: 'PATCH', body: payload }), onSuccess: () => { refresh(); setDialog(null); toast.success('Đã cập nhật hội viên.') }, onError: (e) => setFormError(e.message) })
-  const saveMembership = useMutation({ mutationFn: ({ membership, data }) => api(membership ? `/api/memberships/${membership.id}` : '/api/memberships', { method: membership ? 'PATCH' : 'POST', body: data }), onSuccess: () => { refresh(); setDialog(null); setSelectedMembership(null); toast.success('Đã lưu giao dịch gói tập.') }, onError: (e) => setFormError(e.message) })
-  const saveTraining = useMutation({ mutationFn: ({ enrollment, payload }) => api(enrollment ? `/api/training/${enrollment.id}` : `/api/members/${memberId}/training`, { method: enrollment ? 'PATCH' : 'POST', body: payload }), onSuccess: () => { refresh(); setDialog(null); setSelectedTraining(null); toast.success('Đã lưu đăng ký PT.') }, onError: (e) => setFormError(e.message) })
-  const checkin = useMutation({ mutationFn: () => api('/api/checkins', { method: 'POST', body: { memberId: Number(memberId) } }), onSuccess: () => { refresh(); toast.success('Check-in thành công.') }, onError: (e) => toast.error(e.message) })
-  if (memberQuery.isLoading) return <div className="space-y-4"><div className="skeleton h-16 w-full"/><div className="skeleton h-14 w-full"/><div className="skeleton h-64 w-full"/></div>
-  if (memberQuery.isError) return <div className="inline-error">{memberQuery.error.message}</div>
-  const current = member.memberships.find((row) => ['active','expiring'].includes(row.status)); const activeTraining = member.training.find((row) => row.status === 'active'); const lastCheckin = member.checkins[0]; const daysLeft = current?.expiresAt ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000) : null
-  const open = (name, record = null) => { setFormError(''); if (name === 'membership' || name === 'payment') setSelectedMembership(record); if (name === 'renew') setSelectedMembership(null); if (name === 'training') setSelectedTraining(record); setDialog(name) }
-  const membershipColumns = [{key:'package',label:'Gói tập',render:(r)=><div><span className="cell-primary">{r.package.name}</span><div className="cell-secondary">{r.code}</div></div>},{key:'period',label:'Thời hạn',render:(r)=><span>{shortDate(r.startsAt)} → {shortDate(r.expiresAt)}</span>},{key:'paid',label:'Đã thanh toán',render:(r)=>money(r.paidAmount)},{key:'debt',label:'Công nợ',render:(r)=><button className={r.debtAmount?'font-medium text-red-700 hover:underline':''} onClick={()=>r.debtAmount&&open('payment',r)}>{money(r.debtAmount)}</button>},{key:'status',label:'Trạng thái',render:(r)=><StatusBadge status={r.status}/>},{key:'action',label:'',render:(r)=><Button size="sm" variant="ghost" onClick={()=>open('membership',r)}>Chi tiết</Button>}]
-  const trainingColumns = [{key:'type',label:'Hình thức'},{key:'coach',label:'Coach',render:(r)=>r.coach?.name||'—'},{key:'schedule',label:'Lịch tập',render:(r)=><span>{r.scheduleDays.join(', ')||'Chưa xếp lịch'}<span className="cell-secondary">{r.scheduleTime||'Chưa chọn giờ'}</span></span>},{key:'period',label:'Thời hạn',render:(r)=><span>{shortDate(r.startsAt)} → {shortDate(r.expiresAt)}</span>},{key:'sessions',label:'Số buổi',render:(r)=>`${r.remainingSessions}/${r.totalSessions}`},{key:'status',label:'Trạng thái',render:(r)=><StatusBadge status={r.status}/>},{key:'action',label:'',render:(r)=><Button size="sm" variant="ghost" onClick={()=>open('training',r)}>Chỉnh sửa</Button>}]
-  return <><div className="mb-4"><Link to="/members" className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900"><ArrowLeft size={14}/>Hội viên</Link></div><header className="profile-header"><div className="avatar">{initials(member.name)}</div><div className="profile-title"><div className="flex items-center gap-3"><h1>{member.name}</h1><StatusBadge status={member.status}/></div><p>{member.code} · {member.phone||'Chưa có số điện thoại'} · Tham gia từ {shortDate(member.memberships.at(-1)?.registeredAt)}</p></div><div className="flex flex-wrap gap-2"><Button onClick={()=>checkin.mutate()} disabled={checkin.isPending}><CheckCircle2 size={15}/>Check-in</Button><Button variant="secondary" onClick={()=>current?.debtAmount?open('payment',current):toast.info('Hội viên không có công nợ.')}><CreditCard size={15}/>Thu tiền</Button><Button variant="secondary" onClick={()=>open('renew')}><CalendarPlus size={15}/>Gia hạn</Button><Button variant="secondary" onClick={()=>open('edit')}><Pencil size={15}/>Sửa</Button><Button variant="ghost" aria-label="Thêm thao tác"><MoreHorizontal size={17}/></Button></div></header>
-    <div className="summary-strip mt-5"><div className="summary-item"><span>Gói hiện tại</span><strong>{current?.package.name||'Chưa có gói'}</strong></div><div className="summary-item"><span>Hết hạn</span><strong>{shortDate(current?.expiresAt)} {daysLeft != null && `· ${daysLeft >= 0 ? `${daysLeft} ngày` : 'Quá hạn'}`}</strong></div><div className="summary-item"><span>Công nợ</span><strong className={current?.debtAmount?'!text-red-700':''}>{money(current?.debtAmount)}</strong></div><div className="summary-item"><span>Check-in cuối</span><strong>{lastCheckin?shortDate(lastCheckin.checkedInAt):'Chưa có'}</strong></div><div className="summary-item"><span>PT hiện tại</span><strong>{activeTraining?.coach?.name||'Chưa đăng ký'}</strong></div></div>
-    <div className="tabs mt-5">{tabs.map(([key,label])=><button key={key} className={`tab ${tab===key?'active':''}`} onClick={()=>setTab(key)}>{label}</button>)}</div>
-    {tab === 'overview' && <div className="detail-grid"><section><div className="section-header"><div><h2>Tình trạng vận hành</h2><p>Thông tin cần biết và hành động tiếp theo</p></div></div>{daysLeft != null && daysLeft <= 14 && <div className="detail-alert"><span className="flex items-center gap-2"><TriangleAlert size={15}/>Gói {daysLeft < 0 ? 'đã hết hạn' : `hết hạn sau ${daysLeft} ngày`}</span><button onClick={()=>open('renew')}>Gia hạn</button></div>}{current?.debtAmount > 0 && <div className="detail-alert debt"><span className="flex items-center gap-2"><TriangleAlert size={15}/>Còn nợ {money(current.debtAmount)}</span><button onClick={()=>open('payment',current)}>Thu tiền</button></div>}{!activeTraining && <div className="detail-alert"><span className="flex items-center gap-2"><TriangleAlert size={15}/>Chưa có PT phụ trách</span><button onClick={()=>open('training')}>Gán PT</button></div>}<div className="definition-list mt-4"><div><dt>Gói hiện tại</dt><dd>{current ? <><strong>{current.package.name}</strong><span className="cell-secondary">{shortDate(current.startsAt)} → {shortDate(current.expiresAt)}</span></> : <button className="font-medium text-blue-700" onClick={()=>open('renew')}>+ Đăng ký gói</button>}</dd></div><div><dt>Tài chính</dt><dd>{current ? <>{money(current.paidAmount)} đã thu · <span className={current.debtAmount?'text-red-700':'text-emerald-700'}>{money(current.debtAmount)} công nợ</span></> : '—'}</dd></div><div><dt>Check-in gần nhất</dt><dd>{lastCheckin?dateTime(lastCheckin.checkedInAt):'Chưa có lượt check-in'}</dd></div><div><dt>Tổng check-in gần đây</dt><dd>{member.checkins.length} lượt</dd></div><div><dt>PT & lịch</dt><dd>{activeTraining?<>{activeTraining.coach?.name} · {activeTraining.type}<span className="cell-secondary">{activeTraining.scheduleDays.join(', ')||'Chưa chọn thứ'} · {activeTraining.scheduleTime||'Chưa chọn giờ'}</span></>:<button className="font-medium text-blue-700" onClick={()=>open('training')}>+ Gán PT</button>}</dd></div><div><dt>Ghi chú quan trọng</dt><dd>{member.notes||<button className="font-medium text-blue-700" onClick={()=>open('edit')}>+ Thêm ghi chú</button>}</dd></div></div></section><aside className="info-rail"><h3>Liên hệ & phụ trách</h3><dl><InlineEditField label="Điện thoại" value={member.phone} onSave={(phone)=>updateMember.mutateAsync({phone})} pending={updateMember.isPending}/><InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email)=>updateMember.mutateAsync({email})} pending={updateMember.isPending}/><InlineEditField label="Nguồn khách" value={member.source} onSave={(source)=>updateMember.mutateAsync({source})} pending={updateMember.isPending}/><div><dt>Mã MBS</dt><dd>{member.mbsCode||'—'}</dd></div><div><dt>Phụ trách</dt><dd>{member.salesEmployee||'Chưa gán'}</dd></div></dl></aside></div>}
-    {tab === 'memberships' && <section className="mt-5"><div className="section-header"><div><h2>Lịch sử gói tập</h2><p>Đăng ký, gia hạn, thanh toán và phiếu thu</p></div><Button size="sm" onClick={()=>open('renew')}><Plus size={14}/>Đăng ký gói</Button></div><DataTable columns={membershipColumns} rows={member.memberships}/></section>}
-    {tab === 'checkins' && <section className="mt-5"><div className="section-header"><div><h2>Lịch sử check-in</h2><p>100 lượt ra vào gần nhất</p></div></div><DataTable rows={member.checkins} columns={[{key:'checkedInAt',label:'Giờ vào',render:(r)=>dateTime(r.checkedInAt)},{key:'checkedOutAt',label:'Giờ ra',render:(r)=>dateTime(r.checkedOutAt)},{key:'source',label:'Nguồn'},{key:'result',label:'Kết quả',render:(r)=><StatusBadge status={r.result==='allowed'?'active':'pending'}/>},{key:'status',label:'Trạng thái',render:(r)=><StatusBadge status={r.status}/>}]} /></section>}
-    {tab === 'training' && <section className="mt-5"><div className="section-header"><div><h2>PT & lịch tập</h2><p>Toàn bộ lịch sử PT và số buổi</p></div><Button size="sm" onClick={()=>open('training',activeTraining)}><Dumbbell size={14}/>{activeTraining?'Chỉnh sửa PT':'Đăng ký PT'}</Button></div><DataTable rows={member.training} columns={trainingColumns} emptyTitle="Chưa đăng ký PT" emptyDescription="Đăng ký PT để thiết lập coach, số buổi và lịch tập."/></section>}
-    {tab === 'notes' && <section className="mt-5 max-w-3xl"><div className="section-header"><div><h2>Ghi chú chăm sóc</h2><p>Thông tin nội bộ dành cho nhân viên phụ trách</p></div><Button size="sm" variant="secondary" onClick={()=>open('edit')}><Pencil size={14}/>Chỉnh sửa</Button></div><div className="border-y border-slate-200 bg-white px-4 py-5 text-[13px] leading-6 text-slate-700">{member.notes||<span className="text-slate-400">Chưa có ghi chú cho hội viên này.</span>}</div></section>}
-    {tab === 'activity' && <section className="mt-5 max-w-3xl"><div className="section-header"><div><h2>Hoạt động gần đây</h2><p>Giao dịch và tương tác được ghi nhận</p></div></div><div className="activity-timeline">{[...member.payments.map((row)=>({id:`p${row.id}`,time:row.paidAt,title:`Thanh toán ${money(row.amount)}`,meta:row.description})),...member.checkins.slice(0,15).map((row)=>({id:`c${row.id}`,time:row.checkedInAt,title:'Check-in tại quầy',meta:row.source}))].sort((a,b)=>new Date(b.time)-new Date(a.time)).map((item)=><div key={item.id}><time>{dateTime(item.time)}</time><div><strong>{item.title}</strong><p>{item.meta}</p></div></div>)}</div></section>}
-    <MemberEditForm member={member} options={options.data} open={dialog==='edit'} onClose={()=>setDialog(null)} onSubmit={(payload)=>updateMember.mutate(payload)} pending={updateMember.isPending} error={formError}/><MembershipForm memberId={memberId} membership={selectedMembership} options={options.data} open={dialog==='membership'||dialog==='renew'} onClose={()=>{setDialog(null);setSelectedMembership(null)}} onSubmit={(data)=>saveMembership.mutate({membership:selectedMembership,data})} pending={saveMembership.isPending} error={formError}/><QuickPaymentForm membership={selectedMembership||current} options={options.data} open={dialog==='payment'} onClose={()=>setDialog(null)} onSubmit={(data)=>saveMembership.mutate({membership:selectedMembership||current,data})} pending={saveMembership.isPending} error={formError}/><TrainingForm enrollment={selectedTraining} options={options.data} open={dialog==='training'} onClose={()=>{setDialog(null);setSelectedTraining(null)}} onSubmit={(payload)=>saveTraining.mutate({enrollment:selectedTraining,payload})} pending={saveTraining.isPending} error={formError}/>
-  </>
+  const { memberId } = useParams();
+  const client = useQueryClient();
+  const [tab, setTab] = useState("overview");
+  const [dialog, setDialog] = useState(null);
+  const [selectedMembership, setSelectedMembership] = useState(null);
+  const [selectedTraining, setSelectedTraining] = useState(null);
+  const [formError, setFormError] = useState("");
+  const memberQuery = useQuery({
+    queryKey: ["member", memberId],
+    queryFn: () => api(`/api/members/${memberId}`),
+  });
+  const options = useQuery({
+    queryKey: ["member-options"],
+    queryFn: () => api("/api/members/options"),
+    staleTime: 300000,
+  });
+  const member = memberQuery.data;
+  const refresh = () => {
+    client.invalidateQueries({ queryKey: ["member", memberId] });
+    client.invalidateQueries({ queryKey: ["members"] });
+    client.invalidateQueries({ queryKey: ["memberships"] });
+    client.invalidateQueries({ queryKey: ["training"] });
+    client.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+  const updateMember = useMutation({
+    mutationFn: (payload) =>
+      api(`/api/members/${memberId}`, { method: "PATCH", body: payload }),
+    onSuccess: () => {
+      refresh();
+      setDialog(null);
+      toast.success("Đã cập nhật hội viên.");
+    },
+    onError: (e) => setFormError(e.message),
+  });
+  const saveMembership = useMutation({
+    mutationFn: ({ membership, data }) =>
+      api(
+        membership ? `/api/memberships/${membership.id}` : "/api/memberships",
+        { method: membership ? "PATCH" : "POST", body: data },
+      ),
+    onSuccess: () => {
+      refresh();
+      setDialog(null);
+      setSelectedMembership(null);
+      toast.success("Đã lưu giao dịch gói tập.");
+    },
+    onError: (e) => setFormError(e.message),
+  });
+  const saveDeadline = useMutation({
+    mutationFn: ({ membership, payload }) => api(`/api/memberships/${membership.id}/debt-due-date`, { method: "PATCH", body: payload }),
+    onSuccess: () => { refresh(); setDialog(null); setSelectedMembership(null); toast.success("Đã lưu hạn thanh toán."); },
+    onError: (e) => setFormError(e.message),
+  });
+  const saveTraining = useMutation({
+    mutationFn: ({ enrollment, payload }) =>
+      api(
+        enrollment
+          ? `/api/training/${enrollment.id}`
+          : `/api/members/${memberId}/training`,
+        { method: enrollment ? "PATCH" : "POST", body: payload },
+      ),
+    onSuccess: () => {
+      refresh();
+      setDialog(null);
+      setSelectedTraining(null);
+      toast.success("Đã lưu đăng ký PT.");
+    },
+    onError: (e) => setFormError(e.message),
+  });
+  const checkin = useMutation({
+    mutationFn: () =>
+      api("/api/checkins", {
+        method: "POST",
+        body: { memberId: Number(memberId) },
+      }),
+    onSuccess: () => {
+      refresh();
+      toast.success("Check-in thành công.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  if (memberQuery.isLoading)
+    return (
+      <div className="space-y-4">
+        <div className="skeleton h-16 w-full" />
+        <div className="skeleton h-14 w-full" />
+        <div className="skeleton h-64 w-full" />
+      </div>
+    );
+  if (memberQuery.isError)
+    return <div className="inline-error">{memberQuery.error.message}</div>;
+  const current = member.memberships[0];
+  const activeTraining = member.training.find((row) => row.status === "active");
+  const lastCheckin = member.checkins[0];
+  const daysLeft = current?.expiresAt
+    ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
+    : null;
+  const open = (name, record = null) => {
+    setFormError("");
+    if (name === "membership" || name === "payment" || name === "deadline")
+      setSelectedMembership(record);
+    if (name === "renew") setSelectedMembership(null);
+    if (name === "training") setSelectedTraining(record);
+    setDialog(name);
+  };
+  const membershipColumns = [
+    {
+      key: "package",
+      label: "Gói tập",
+      render: (r) => (
+        <div>
+          <span className="cell-primary">{r.package.name}</span>
+          <div className="cell-secondary">{r.code}</div>
+        </div>
+      ),
+    },
+    {
+      key: "period",
+      label: "Thời hạn",
+      render: (r) => (
+        <span>
+          {shortDate(r.startsAt)} → {shortDate(r.expiresAt)}
+        </span>
+      ),
+    },
+    { key: "paid", label: "Đã thanh toán", render: (r) => money(r.paidAmount) },
+    {
+      key: "debt",
+      label: "Công nợ",
+      render: (r) => (
+        <button
+          className={
+            r.debtAmount ? "font-medium text-red-700 hover:underline" : ""
+          }
+          onClick={() => r.debtAmount && open("payment", r)}
+        >
+          {money(r.debtAmount)}
+        </button>
+      ),
+    },
+    {
+      key: "status",
+      label: "Trạng thái",
+      render: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      key: "action",
+      label: "",
+      render: (r) => (
+        <Button size="sm" variant="ghost" onClick={() => open("membership", r)}>
+          Chi tiết
+        </Button>
+      ),
+    },
+  ];
+  const trainingColumns = [
+    { key: "type", label: "Hình thức" },
+    { key: "coach", label: "Coach", render: (r) => r.coach?.name || "—" },
+    {
+      key: "schedule",
+      label: "Lịch tập",
+      render: (r) => (
+        <span>
+          {r.scheduleDays.join(", ") || "Chưa xếp lịch"}
+          <span className="cell-secondary">
+            {r.scheduleTime || "Chưa chọn giờ"}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: "period",
+      label: "Thời hạn",
+      render: (r) => (
+        <span>
+          {shortDate(r.startsAt)} → {shortDate(r.expiresAt)}
+        </span>
+      ),
+    },
+    {
+      key: "sessions",
+      label: "Số buổi",
+      render: (r) => `${r.remainingSessions}/${r.totalSessions}`,
+    },
+    {
+      key: "status",
+      label: "Trạng thái",
+      render: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      key: "action",
+      label: "",
+      render: (r) => (
+        <Button size="sm" variant="ghost" onClick={() => open("training", r)}>
+          Chỉnh sửa
+        </Button>
+      ),
+    },
+  ];
+  return (
+    <>
+      <div className="mb-4">
+        <Link
+          to="/members"
+          className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900"
+        >
+          <ArrowLeft size={14} />
+          Hội viên
+        </Link>
+      </div>
+      <header className="profile-header">
+        <div className="avatar">{initials(member.name)}</div>
+        <div className="profile-title">
+          <div className="flex items-center gap-3">
+            <h1>{member.name}</h1>
+            <StatusBadge status={member.status} />
+          </div>
+          <p>
+            {member.code} · {member.phone || "Chưa có số điện thoại"} · Tham gia
+            từ {shortDate(member.memberships.at(-1)?.registeredAt)}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => checkin.mutate()} disabled={checkin.isPending}>
+            <CheckCircle2 size={15} />
+            Check-in
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() =>
+              current?.debtAmount
+                ? open("payment", current)
+                : toast.info("Hội viên không có công nợ.")
+            }
+          >
+            <CreditCard size={15} />
+            Thu tiền
+          </Button>
+          <Button variant="secondary" onClick={() => open("renew")}>
+            <CalendarPlus size={15} />
+            Gia hạn
+          </Button>
+          <Button variant="secondary" onClick={() => open("edit")}>
+            <Pencil size={15} />
+            Sửa
+          </Button>
+          <Button variant="ghost" aria-label="Thêm thao tác">
+            <MoreHorizontal size={17} />
+          </Button>
+        </div>
+      </header>
+      <div className="summary-strip mt-5">
+        <div className="summary-item">
+          <span>Gói hiện tại</span>
+          <strong>{current?.package.name || "Chưa có gói"}</strong>
+        </div>
+        <div className="summary-item">
+          <span>Hết hạn</span>
+          <strong>
+            {shortDate(current?.expiresAt)}{" "}
+            {daysLeft != null &&
+              `· ${daysLeft >= 0 ? `${daysLeft} ngày` : "Quá hạn"}`}
+          </strong>
+        </div>
+        <div className="summary-item">
+          <span>Công nợ</span>
+          <strong className={current?.debtAmount ? "!text-red-700" : ""}>
+            {money(current?.debtAmount)}
+          </strong>
+        </div>
+        <div className="summary-item">
+          <span>Check-in cuối</span>
+          <strong>
+            {lastCheckin ? shortDate(lastCheckin.checkedInAt) : "Chưa có"}
+          </strong>
+        </div>
+        <div className="summary-item">
+          <span>PT hiện tại</span>
+          <strong>{activeTraining?.coach?.name || "Chưa đăng ký"}</strong>
+        </div>
+      </div>
+      <div className="tabs mt-5">
+        {tabs.map(([key, label]) => (
+          <button
+            key={key}
+            className={`tab ${tab === key ? "active" : ""}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "overview" && (
+        <div className="detail-grid">
+          <section>
+            <div className="section-header">
+              <div>
+                <h2>Tình trạng vận hành</h2>
+                <p>Thông tin cần biết và hành động tiếp theo</p>
+              </div>
+            </div>
+            {daysLeft != null && daysLeft <= 14 && (
+              <div className="detail-alert">
+                <span className="flex items-center gap-2">
+                  <TriangleAlert size={15} />
+                  Gói{" "}
+                  {daysLeft < 0 ? "đã hết hạn" : `hết hạn sau ${daysLeft} ngày`}
+                </span>
+                <button onClick={() => open("renew")}>Gia hạn</button>
+              </div>
+            )}
+            {current?.debtAmount > 0 && (
+              <div className="detail-alert debt">
+                <span className="flex items-center gap-2">
+                  <TriangleAlert size={15} />
+                  Còn nợ {money(current.debtAmount)}
+                </span>
+                <button onClick={() => open("payment", current)}>
+                  Thu tiền
+                </button>
+              </div>
+            )}
+            {!activeTraining && (
+              <div className="detail-alert">
+                <span className="flex items-center gap-2">
+                  <TriangleAlert size={15} />
+                  Chưa có PT phụ trách
+                </span>
+                <button onClick={() => open("training")}>Gán PT</button>
+              </div>
+            )}
+            <div className="definition-list mt-4">
+              <div>
+                <dt>Gói hiện tại</dt>
+                <dd>
+                  {current ? (
+                    <>
+                      <strong>{current.package.name}</strong>
+                      <span className="cell-secondary">
+                        {shortDate(current.startsAt)} →{" "}
+                        {shortDate(current.expiresAt)}
+                      </span>
+                    </>
+                  ) : (
+                    <button
+                      className="font-medium text-blue-700"
+                      onClick={() => open("renew")}
+                    >
+                      + Đăng ký gói
+                    </button>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Tài chính</dt>
+                <dd>
+                  {current ? (
+                    <>
+                      {money(current.paidAmount)} đã thu ·{" "}
+                      <span
+                        className={
+                          current.debtAmount
+                            ? "text-red-700"
+                            : "text-emerald-700"
+                        }
+                      >
+                        {money(current.debtAmount)} công nợ
+                      </span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Hạn thanh toán</dt>
+                <dd>{current?.debtAmount ? <button className="font-medium text-blue-700 hover:underline" onClick={() => open("deadline", current)}>{current.debtDueDate ? `${shortDate(current.debtDueDate)} · Đổi hạn` : "+ Đặt hạn"}</button> : "—"}</dd>
+              </div>
+              <div>
+                <dt>Check-in gần nhất</dt>
+                <dd>
+                  {lastCheckin
+                    ? dateTime(lastCheckin.checkedInAt)
+                    : "Chưa có lượt check-in"}
+                </dd>
+              </div>
+              <div>
+                <dt>Tổng check-in gần đây</dt>
+                <dd>{member.checkins.length} lượt</dd>
+              </div>
+              <div>
+                <dt>PT & lịch</dt>
+                <dd>
+                  {activeTraining ? (
+                    <>
+                      {activeTraining.coach?.name} · {activeTraining.type}
+                      <span className="cell-secondary">
+                        {activeTraining.scheduleDays.join(", ") ||
+                          "Chưa chọn thứ"}{" "}
+                        · {activeTraining.scheduleTime || "Chưa chọn giờ"}
+                      </span>
+                    </>
+                  ) : (
+                    <button
+                      className="font-medium text-blue-700"
+                      onClick={() => open("training")}
+                    >
+                      + Gán PT
+                    </button>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Ghi chú quan trọng</dt>
+                <dd>
+                  {member.notes || (
+                    <button
+                      className="font-medium text-blue-700"
+                      onClick={() => open("edit")}
+                    >
+                      + Thêm ghi chú
+                    </button>
+                  )}
+                </dd>
+              </div>
+            </div>
+          </section>
+          <aside className="info-rail">
+            <h3>Liên hệ & phụ trách</h3>
+            <dl>
+              <InlineEditField
+                label="Điện thoại"
+                value={member.phone}
+                onSave={(phone) => updateMember.mutateAsync({ phone })}
+                pending={updateMember.isPending}
+              />
+              <InlineEditField
+                label="Email"
+                value={member.email}
+                type="email"
+                emptyAction="+ Thêm email"
+                onSave={(email) => updateMember.mutateAsync({ email })}
+                pending={updateMember.isPending}
+              />
+              <InlineEditField
+                label="Nguồn khách"
+                value={member.source}
+                onSave={(source) => updateMember.mutateAsync({ source })}
+                pending={updateMember.isPending}
+              />
+              <div>
+                <dt>Mã MBS</dt>
+                <dd>{member.mbsCode || "—"}</dd>
+              </div>
+              <div>
+                <dt>Phụ trách</dt>
+                <dd>{member.salesEmployee || "Chưa gán"}</dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      )}
+      {tab === "memberships" && (
+        <section className="mt-5">
+          <div className="section-header">
+            <div>
+              <h2>Lịch sử gói tập</h2>
+              <p>Đăng ký, gia hạn, thanh toán và phiếu thu</p>
+            </div>
+            <Button size="sm" onClick={() => open("renew")}>
+              <Plus size={14} />
+              Đăng ký gói
+            </Button>
+          </div>
+          <DataTable columns={membershipColumns} rows={member.memberships} />
+        </section>
+      )}
+      {tab === "checkins" && (
+        <section className="mt-5">
+          <div className="section-header">
+            <div>
+              <h2>Lịch sử check-in</h2>
+              <p>100 lượt ra vào gần nhất</p>
+            </div>
+          </div>
+          <DataTable
+            rows={member.checkins}
+            columns={[
+              {
+                key: "checkedInAt",
+                label: "Giờ vào",
+                render: (r) => dateTime(r.checkedInAt),
+              },
+              {
+                key: "checkedOutAt",
+                label: "Giờ ra",
+                render: (r) => dateTime(r.checkedOutAt),
+              },
+              { key: "source", label: "Nguồn" },
+              {
+                key: "result",
+                label: "Kết quả",
+                render: (r) => (
+                  <StatusBadge
+                    status={r.result === "allowed" ? "active" : "pending"}
+                  />
+                ),
+              },
+              {
+                key: "status",
+                label: "Trạng thái",
+                render: (r) => <StatusBadge status={r.status} />,
+              },
+            ]}
+          />
+        </section>
+      )}
+      {tab === "training" && (
+        <section className="mt-5">
+          <div className="section-header">
+            <div>
+              <h2>PT & lịch tập</h2>
+              <p>Toàn bộ lịch sử PT và số buổi</p>
+            </div>
+            <Button size="sm" onClick={() => open("training", activeTraining)}>
+              <Dumbbell size={14} />
+              {activeTraining ? "Chỉnh sửa PT" : "Đăng ký PT"}
+            </Button>
+          </div>
+          <DataTable
+            rows={member.training}
+            columns={trainingColumns}
+            emptyTitle="Chưa đăng ký PT"
+            emptyDescription="Đăng ký PT để thiết lập coach, số buổi và lịch tập."
+          />
+        </section>
+      )}
+      {tab === "notes" && (
+        <section className="mt-5 max-w-3xl">
+          <div className="section-header">
+            <div>
+              <h2>Ghi chú chăm sóc</h2>
+              <p>Thông tin nội bộ dành cho nhân viên phụ trách</p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => open("edit")}>
+              <Pencil size={14} />
+              Chỉnh sửa
+            </Button>
+          </div>
+          <div className="border-y border-slate-200 bg-white px-4 py-5 text-[13px] leading-6 text-slate-700">
+            {member.notes || (
+              <span className="text-slate-400">
+                Chưa có ghi chú cho hội viên này.
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+      {tab === "activity" && (
+        <section className="mt-5 max-w-3xl">
+          <div className="section-header">
+            <div>
+              <h2>Hoạt động gần đây</h2>
+              <p>Giao dịch và tương tác được ghi nhận</p>
+            </div>
+          </div>
+          <div className="activity-timeline">
+            {[
+              ...member.payments.map((row) => ({
+                id: `p${row.id}`,
+                time: row.paidAt,
+                title: `Thanh toán ${money(row.amount)}`,
+                meta: row.description,
+              })),
+              ...member.checkins
+                .slice(0, 15)
+                .map((row) => ({
+                  id: `c${row.id}`,
+                  time: row.checkedInAt,
+                  title: "Check-in tại quầy",
+                  meta: row.source,
+                })),
+            ]
+              .sort((a, b) => new Date(b.time) - new Date(a.time))
+              .map((item) => (
+                <div key={item.id}>
+                  <time>{dateTime(item.time)}</time>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.meta}</p>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+      <MemberEditForm
+        member={member}
+        options={options.data}
+        open={dialog === "edit"}
+        onClose={() => setDialog(null)}
+        onSubmit={(payload) => updateMember.mutate(payload)}
+        pending={updateMember.isPending}
+        error={formError}
+      />
+      <MembershipForm
+        memberId={memberId}
+        membership={selectedMembership}
+        options={options.data}
+        open={dialog === "membership" || dialog === "renew"}
+        onClose={() => {
+          setDialog(null);
+          setSelectedMembership(null);
+        }}
+        onSubmit={(data) =>
+          saveMembership.mutate({ membership: selectedMembership, data })
+        }
+        pending={saveMembership.isPending}
+        error={formError}
+      />
+      <QuickPaymentForm
+        membership={selectedMembership || current}
+        options={options.data}
+        open={dialog === "payment"}
+        onClose={() => setDialog(null)}
+        onSubmit={(data) =>
+          saveMembership.mutate({
+            membership: selectedMembership || current,
+            data,
+          })
+        }
+        pending={saveMembership.isPending}
+        error={formError}
+      />
+      <DebtDeadlineForm
+        membership={selectedMembership || current}
+        open={dialog === "deadline"}
+        onClose={() => { setDialog(null); setSelectedMembership(null); }}
+        onSubmit={(payload) => saveDeadline.mutate({ membership: selectedMembership || current, payload })}
+        pending={saveDeadline.isPending}
+        error={formError}
+      />
+      <TrainingForm
+        enrollment={selectedTraining}
+        options={options.data}
+        open={dialog === "training"}
+        onClose={() => {
+          setDialog(null);
+          setSelectedTraining(null);
+        }}
+        onSubmit={(payload) =>
+          saveTraining.mutate({ enrollment: selectedTraining, payload })
+        }
+        pending={saveTraining.isPending}
+        error={formError}
+      />
+    </>
+  );
 }

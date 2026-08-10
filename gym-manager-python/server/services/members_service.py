@@ -4,7 +4,7 @@ import secrets
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..database import ROOT_DIR
 from ..models import (
@@ -50,7 +50,7 @@ async def save_receipt(upload: UploadFile | None) -> str | None:
     return f"/uploads/receipts/{filename}"
 
 
-def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None):
+def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None, expiring_days: int = 14):
     query = db.query(Customer).options(
         joinedload(Customer.person),
         joinedload(Customer.sales_employee).joinedload(Employee.person),
@@ -62,18 +62,32 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             Person.display_name.contains(term), Person.phone.contains(term),
             Person.email.contains(term), Customer.customer_code.contains(term), Customer.mbs_card_code.contains(term),
         ))
-    if member_status and member_status != "all":
-        query = query.filter(Customer.status == member_status)
+    latest_regular_id = db.query(Membership.id).join(ServicePackage).filter(
+        Membership.customer_id == Customer.id, ServicePackage.is_pt == False
+    ).order_by(Membership.registered_at.desc(), Membership.id.desc()).limit(1).correlate(Customer).scalar_subquery()
+    status_membership = aliased(Membership)
+    def latest_status_exists(*conditions):
+        return db.query(status_membership.id).filter(status_membership.id == latest_regular_id, *conditions).exists()
+    if member_status == "active":
+        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= date.today())))
+    elif member_status == "expired":
+        query = query.filter(latest_status_exists(status_membership.expires_at < date.today()))
+    elif member_status == "expiring":
+        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= date.today(), status_membership.expires_at <= date.today() + timedelta(days=expiring_days)))
+    elif member_status == "frozen":
+        query = query.filter(latest_status_exists(status_membership.status == "frozen"))
+    elif member_status == "inactive":
+        query = query.filter(or_(Customer.status == "inactive", latest_status_exists(status_membership.status == "cancelled")))
     if view == "active":
-        query = query.filter(Customer.status == "active")
+        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= date.today())))
     elif view == "expiring":
-        query = query.filter(Customer.memberships.any(and_(Membership.expires_at >= date.today(), Membership.expires_at <= date.today() + timedelta(days=14), Membership.status == "active")))
+        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= date.today(), status_membership.expires_at <= date.today() + timedelta(days=14)))
     elif view == "debt":
-        query = query.filter(Customer.memberships.any(Membership.debt_amount > 0))
+        query = query.filter(latest_status_exists(status_membership.debt_amount > 0))
     elif view == "no_pt":
         query = query.filter(~db.query(PtEnrollment.id).filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.status == "active").exists())
     if package_id:
-        query = query.filter(Customer.memberships.any(Membership.package_id == package_id))
+        query = query.filter(latest_status_exists(status_membership.package_id == package_id))
     if trainer_id:
         query = query.filter(db.query(PtEnrollment.id).filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.coach_id == trainer_id, PtEnrollment.status == "active").exists())
     total = query.count()
@@ -92,7 +106,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     items = []
     for member in rows:
         regular = [m for m in member.memberships if not m.package.is_pt]
-        current = sorted(regular, key=lambda row: row.registered_at or date.min, reverse=True)[0] if regular else None
+        current = sorted(regular, key=lambda row: (row.registered_at or date.min, row.id), reverse=True)[0] if regular else None
         items.append({
             "id": member.id,
             "code": member.customer_code,
@@ -130,7 +144,7 @@ def get_member(db: Session, member_id: int):
         joinedload(Membership.package), joinedload(Membership.payments).joinedload(Payment.bank_account),
         joinedload(Membership.sale_online_employee).joinedload(Employee.person),
         joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
-    ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc()).all()
+    ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
     pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
     checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id == member_id).order_by(AttendanceSession.checked_in_at.desc()).limit(100).all()
     payments = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package)).filter(Payment.customer_id == member_id).order_by(Payment.paid_at.desc()).all()
@@ -263,6 +277,21 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
         payment.amount = row.paid_amount; payment.method = form.get("paymentMethod") or payment.method; payment.bank_account_id = _int(form.get("bankAccountId"))
         receipt_path = await save_receipt(receipt)
         if receipt_path: payment.receipt_image_path = receipt_path
+    db.commit()
+    row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
+    return membership_data(row)
+
+
+def update_debt_due_date(db: Session, membership_id: int, payload: dict):
+    row = db.query(Membership).options(joinedload(Membership.package)).filter(Membership.id == membership_id).first()
+    if not row or row.package.is_pt:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký gói.")
+    if not row.debt_amount or row.debt_amount <= 0:
+        raise HTTPException(status_code=422, detail="Gói này hiện không có công nợ.")
+    due_date = _parse_date(payload.get("debtDueDate"))
+    if not due_date:
+        raise HTTPException(status_code=422, detail="Vui lòng chọn hạn thanh toán.")
+    row.debt_due_date = due_date
     db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
     return membership_data(row)

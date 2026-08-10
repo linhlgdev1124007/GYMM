@@ -14,3 +14,4 @@ def update_plan(db: Session, plan_id: int, payload: dict): return members_servic
 def list_memberships(db: Session, **params): return members_service.list_memberships(db, **params)
 async def create_membership(db: Session, form: dict, receipt): return await members_service.create_membership(db, form, receipt)
 async def update_membership(db: Session, membership_id: int, form: dict, receipt): return await members_service.update_membership(db, membership_id, form, receipt)
+def update_debt_due_date(db: Session, membership_id: int, payload: dict): return members_service.update_debt_due_date(db, membership_id, payload)
