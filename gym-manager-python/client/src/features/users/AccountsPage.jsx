@@ -18,6 +18,9 @@ export function AccountsPage() {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
+  const [passwordTarget, setPasswordTarget] = useState(null);
+  const [passwordForm, setPasswordForm] = useState({ password: "", confirmPassword: "" });
+  const [passwordError, setPasswordError] = useState("");
   const query = useQuery({ queryKey: ["users"], queryFn: () => api("/api/users") });
   useEffect(() => {
     setForm(
@@ -52,6 +55,22 @@ export function AccountsPage() {
     },
     onError: (reason) => setError(reason.message),
   });
+  const changePassword = useMutation({
+    mutationFn: (payload) =>
+      api(`/api/users/${passwordTarget.id}/password`, {
+        method: "PATCH",
+        body: payload,
+      }),
+    onSuccess: (result) => {
+      client.invalidateQueries({ queryKey: ["audit-logs"] });
+      setPasswordTarget(null);
+      setPasswordForm({ password: "", confirmPassword: "" });
+      notify.success(
+        `Đã đổi mật khẩu cho @${result.username}.${result.sessionsRevoked ? " Các phiên đăng nhập cũ đã được đăng xuất." : ""}`,
+      );
+    },
+    onError: (reason) => setPasswordError(reason.message),
+  });
   const edit = (row) => {
     setSelected(row);
     setError("");
@@ -70,8 +89,22 @@ export function AccountsPage() {
       employeeId: form.employeeId || null,
       role: form.role,
       active: form.active,
-      ...(form.password ? { password: form.password } : {}),
+      ...(!selected ? { password: form.password } : {}),
     });
+  };
+  const openPassword = (row) => {
+    setPasswordTarget(row);
+    setPasswordForm({ password: "", confirmPassword: "" });
+    setPasswordError("");
+  };
+  const submitPassword = (event) => {
+    event.preventDefault();
+    setPasswordError("");
+    if (passwordForm.password !== passwordForm.confirmPassword) {
+      setPasswordError("Xác nhận mật khẩu không khớp.");
+      return;
+    }
+    changePassword.mutate(passwordForm);
   };
   return (
     <>
@@ -104,7 +137,7 @@ export function AccountsPage() {
           { key: "employee", label: "Nhân viên liên kết", render: (row) => row.employee?.name || "Tài khoản độc lập" },
           { key: "role", label: "Vai trò", render: (row) => <span className="role-badge">{row.role}</span> },
           { key: "status", label: "Trạng thái", render: (row) => <StatusBadge status={row.active ? "active" : "inactive"} /> },
-          { key: "action", label: "", render: (row) => <Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); edit(row); }}><Pencil size={13} /> Chỉnh sửa</Button> },
+          { key: "action", label: "", render: (row) => <div className="flex justify-end gap-1"><Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); openPassword(row); }}><KeyRound size={13} /> Đổi mật khẩu</Button><Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); edit(row); }}><Pencil size={13} /> Chỉnh sửa</Button></div> },
         ]}
       />
       <Modal
@@ -132,9 +165,11 @@ export function AccountsPage() {
               <Field label="Tên đăng nhập" required hint="Chữ thường, số, dấu . _ -">
                 <Input disabled={!!selected} autoComplete="off" value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value.toLowerCase() })} />
               </Field>
-              <Field label={selected ? "Đặt mật khẩu mới" : "Mật khẩu"} required={!selected} hint={selected ? "Để trống nếu không đổi" : "Tối thiểu 8 ký tự"}>
-                <Input type="password" autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
-              </Field>
+              {!selected && (
+                <Field label="Mật khẩu" required hint="Tối thiểu 8 ký tự">
+                  <Input type="password" minLength={8} autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+                </Field>
+              )}
               <Field className="form-span" label="Vai trò" required>
                 <Select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
                   {query.data?.roles?.map((role) => <option key={role.value} value={role.value}>{role.label} — {role.description}</option>)}
@@ -154,6 +189,41 @@ export function AccountsPage() {
           <div className="form-actions">
             <Button data-modal-close variant="secondary" onClick={() => setOpen(false)}>Hủy</Button>
             <Button type="submit" loading={save.isPending} loadingText="Đang lưu…"><KeyRound size={14} />{selected ? "Lưu tài khoản" : "Tạo tài khoản"}</Button>
+          </div>
+        </form>
+      </Modal>
+      <Modal
+        open={!!passwordTarget}
+        onClose={() => setPasswordTarget(null)}
+        title="Đổi mật khẩu tài khoản"
+        description={passwordTarget ? `${passwordTarget.displayName} · @${passwordTarget.username}` : ""}
+        dirty={Boolean(passwordForm.password || passwordForm.confirmPassword)}
+      >
+        <form onSubmit={submitPassword}>
+          <div className="modal-body space-y-4">
+            <Field label="Mật khẩu mới" required hint="Tối thiểu 8 ký tự">
+              <Input
+                type="password"
+                minLength={8}
+                autoComplete="new-password"
+                value={passwordForm.password}
+                onChange={(event) => setPasswordForm({ ...passwordForm, password: event.target.value })}
+              />
+            </Field>
+            <Field label="Xác nhận mật khẩu" required>
+              <Input
+                type="password"
+                minLength={8}
+                autoComplete="new-password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })}
+              />
+            </Field>
+            {passwordError && <div className="inline-error">{passwordError}</div>}
+          </div>
+          <div className="form-actions">
+            <Button data-modal-close variant="secondary" onClick={() => setPasswordTarget(null)}>Hủy</Button>
+            <Button type="submit" loading={changePassword.isPending} loadingText="Đang đổi…"><KeyRound size={14} /> Đổi mật khẩu</Button>
           </div>
         </form>
       </Modal>

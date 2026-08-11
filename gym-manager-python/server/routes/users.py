@@ -22,3 +22,8 @@ def create_user(payload: dict, db: Session = Depends(get_db), actor: User = Depe
 @router.patch("/{user_id}")
 def update_user(user_id: int, payload: dict, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))):
     return users_controller.update_user(db, user_id, payload, actor)
+
+
+@router.patch("/{user_id}/password")
+def update_password(user_id: int, payload: dict, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))):
+    return users_controller.update_password(db, user_id, payload, actor)

@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-The previous application was a server-rendered FastAPI/Jinja MVP. It contained useful gym business data and working CRUD flows, but all routing, validation, seeding, reporting and mutations lived in one large module. The redesign preserves the SQLite data and operational features while replacing the delivery architecture with a React SPA and a layered REST server.
+The previous application was a server-rendered FastAPI/Jinja MVP. It contained useful gym business data and working CRUD flows, but all routing, validation, seeding, reporting and mutations lived in one large module. The redesign preserves the original data, now migrated from SQLite to MySQL, while replacing the delivery architecture with a React SPA and a layered REST server.
 
 | Current feature | Current problem | Proposed improvement | Implementation direction |
 |---|---|---|---|
@@ -32,7 +32,7 @@ The previous application was a server-rendered FastAPI/Jinja MVP. It contained u
 - Check-in/check-out
 - Payments and cash/bank reporting
 - Branches, bank accounts and device status
-- Existing SQLite records, including archived legacy appointment and commission tables
+- Existing records migrated to MySQL, including archived legacy appointment and commission tables
 
 Appointments and commission UI remain intentionally retired based on the approved operating workflow. Historical database tables are not destructively removed.
 
@@ -49,7 +49,7 @@ server/controllers
         ↓
 server/services
         ↓
-server/models.py + SQLite
+server/models.py + MySQL/MariaDB
 ```
 
 React Query owns loading, error, caching and mutation invalidation. FastAPI remains the source of truth for authentication, role checks, validation and gym business rules.

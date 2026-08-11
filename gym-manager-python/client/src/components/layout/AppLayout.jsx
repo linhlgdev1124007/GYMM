@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   NavLink,
   Outlet,
@@ -29,7 +28,6 @@ import { GlobalSearch } from "../common/GlobalSearch";
 import { NetworkStatusBanner } from "../common/NetworkStatusBanner";
 import { AlertCenter } from "../common/AlertCenter";
 import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
-import { api } from "../../services/api";
 
 const groups = [
   {
@@ -152,7 +150,7 @@ function Sidebar({ open, close, role }) {
           <span />
           <div>
             <strong>Hệ thống hoạt động</strong>
-            <small>SQLite · Local server</small>
+            <small>MySQL · Local server</small>
           </div>
         </div>
       </aside>
@@ -166,11 +164,6 @@ export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const business = useQuery({
-    queryKey: ["member-options"],
-    queryFn: () => api("/api/members/options"),
-    staleTime: 300000,
-  });
   const current = groups
     .flatMap((group) => group.items)
     .sort((a, b) => b.to.length - a.to.length)
@@ -222,14 +215,6 @@ export function AppLayout() {
           </div>
           <GlobalSearch />
           <AlertCenter />
-          <div className="branch-context">
-            <span>Phạm vi</span>
-            <strong>
-              {business.data?.branches.length > 1
-                ? `Toàn hệ thống · ${business.data.branches.length} chi nhánh`
-                : business.data?.branches[0]?.name || "Đang tải…"}
-            </strong>
-          </div>
           <div className="user-menu">
             <div className="avatar avatar-sm">
               {initials(user?.displayName)}

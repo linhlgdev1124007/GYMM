@@ -6,12 +6,13 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
-    Appointment, AttendanceSession, BankAccount, Branch, CashShift, CommissionLedger,
+    Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
     Customer, Device, Employee, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
     ServicePackage, User,
 )
 from .audit_service import record_audit
 from .serializers import employee_data, pagination, payment_data, pt_data
+from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
 
 
@@ -42,8 +43,7 @@ def create_trainer(db: Session, payload: dict, actor: User | None = None):
     if not name: raise HTTPException(422,"Tên nhân viên là bắt buộc.")
     person=Person(display_name=name,phone=payload.get("phone") or None,email=payload.get("email") or None,status="active",biometric_consent_status="not_requested")
     db.add(person);db.flush()
-    branch_id=db.query(Branch.id).order_by(Branch.id).scalar()
-    row=Employee(person_id=person.id,branch_id=branch_id,employee_code=f"TMP-{secrets.token_hex(4)}",job_title=payload.get("title") or "Coach",base_salary=0,status="active")
+    row=Employee(person_id=person.id,employee_code=f"TMP-{secrets.token_hex(4)}",job_title=payload.get("title") or "Coach",base_salary=0,status="active")
     db.add(row);db.flush();row.employee_code=f"EMP-{row.id:05d}"
     record_audit(db, actor, "create", "employee", row.id, f"Thêm nhân viên {name}", details={"code": row.employee_code, "title": row.job_title})
     db.commit();db.refresh(row)
@@ -103,7 +103,8 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
     coaches=db.query(Employee).filter(Employee.id.in_(coach_ids),Employee.status=="active").all() if coach_ids else []
     if len(coaches)!=len(coach_ids): raise HTTPException(422,"Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
     kind=payload.get("type") if payload.get("type") in ("1:1","1:2","1:3") else "1:1";sessions=max(_as_int(payload.get("totalSessions"),12),1)
-    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or date.today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_days=", ".join(payload.get("scheduleDays") or []) or None,schedule_time=payload.get("scheduleTime") or None,status="active")
+    schedule_json,schedule_days,schedule_time=schedule_storage(normalize_schedule(payload))
+    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or date.today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_json=schedule_json,schedule_days=schedule_days,schedule_time=schedule_time,status="active")
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     db.add(row);db.flush()
     row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
@@ -128,8 +129,8 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
     if "expiresAt" in payload: row.expires_at=_as_date(payload["expiresAt"])
     if "totalSessions" in payload: row.total_sessions=max(_as_int(payload["totalSessions"],1),1)
     if "remainingSessions" in payload: row.remaining_sessions=min(max(_as_int(payload["remainingSessions"],0),0),row.total_sessions)
-    if "scheduleDays" in payload: row.schedule_days=", ".join(payload["scheduleDays"] or []) or None
-    if "scheduleTime" in payload: row.schedule_time=payload["scheduleTime"] or None
+    if any(key in payload for key in ("schedule", "scheduleDays", "scheduleTime")):
+        row.schedule_json,row.schedule_days,row.schedule_time=schedule_storage(normalize_schedule(payload))
     if payload.get("status") in ("active","completed","inactive"): row.status=payload["status"]
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     record_audit(db, actor, "update", "pt_enrollment", row.id, "Cập nhật đăng ký PT", customer_id=row.customer_id, details={"fields": list(payload.keys()), "coachIds": [assignment.coach_id for assignment in row.coach_assignments]})
@@ -184,5 +185,5 @@ def list_payments(db: Session, q: str, method: str, date_from: str, date_to: str
 
 
 def settings(db: Session):
-    devices=db.query(Device).options(joinedload(Device.branch)).order_by(Device.id).all();accounts=db.query(BankAccount).order_by(BankAccount.id).all();branches=db.query(Branch).order_by(Branch.id).all()
-    return {"branches":[{"id":r.id,"code":r.code,"name":r.name,"address":r.address,"status":r.status} for r in branches],"bankAccounts":[{"id":r.id,"bank":r.bank_name,"accountName":r.account_name,"accountNumber":r.account_number,"visibility":r.visibility,"status":r.status} for r in accounts],"devices":[{"id":r.id,"code":r.code,"name":r.name,"model":r.model,"ip":r.ip_address,"purpose":r.purpose,"status":r.status,"pendingJobs":r.pending_jobs,"errors24h":r.errors_24h,"branch":r.branch.name if r.branch else None,"lastHeartbeat":r.last_heartbeat_at.isoformat() if r.last_heartbeat_at else None} for r in devices]}
+    devices=db.query(Device).order_by(Device.id).all();accounts=db.query(BankAccount).order_by(BankAccount.id).all()
+    return {"bankAccounts":[{"id":r.id,"bank":r.bank_name,"accountName":r.account_name,"accountNumber":r.account_number,"visibility":r.visibility,"status":r.status} for r in accounts],"devices":[{"id":r.id,"code":r.code,"name":r.name,"model":r.model,"ip":r.ip_address,"purpose":r.purpose,"status":r.status,"pendingJobs":r.pending_jobs,"errors24h":r.errors_24h,"lastHeartbeat":r.last_heartbeat_at.isoformat() if r.last_heartbeat_at else None} for r in devices]}

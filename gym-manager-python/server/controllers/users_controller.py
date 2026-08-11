@@ -13,3 +13,7 @@ def create_user(db: Session, payload: dict, actor):
 
 def update_user(db: Session, user_id: int, payload: dict, actor):
     return users_service.update_user(db, user_id, payload, actor)
+
+
+def update_password(db: Session, user_id: int, payload: dict, actor):
+    return users_service.update_password(db, user_id, payload, actor)

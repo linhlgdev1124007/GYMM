@@ -1,0 +1,77 @@
+name: pulsefit
+
+services:
+  database:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${PULSEFIT_DB_NAME:-pulsefit_gym}
+      MARIADB_USER: ${PULSEFIT_DB_USER:-pulsefit}
+      MARIADB_PASSWORD: ${PULSEFIT_DB_PASSWORD:-PulseFitDb@2026}
+      MARIADB_ROOT_PASSWORD: ${PULSEFIT_DB_ROOT_PASSWORD:-PulseFitRoot@2026}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "127.0.0.1:33306:3306"
+    volumes:
+      - database_data:/var/lib/mysql
+      - ./tools/database-backup.sql:/docker-entrypoint-initdb.d/01-pulsefit.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p$${MARIADB_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - backend
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      GYM_ENV: ${GYM_ENV:-development}
+      GYM_DB_HOST: database
+      GYM_DB_PORT: 3306
+      GYM_DB_USER: ${PULSEFIT_DB_USER:-pulsefit}
+      GYM_DB_PASSWORD: ${PULSEFIT_DB_PASSWORD:-PulseFitDb@2026}
+      GYM_DB_NAME: ${PULSEFIT_DB_NAME:-pulsefit_gym}
+      GYM_ADMIN_USERNAME: ${GYM_ADMIN_USERNAME:-admin}
+      GYM_ADMIN_PASSWORD: ${GYM_ADMIN_PASSWORD:-PulseFitAdmin@2026}
+      GYM_SECURE_COOKIES: ${GYM_SECURE_COOKIES:-0}
+      GYM_ALLOWED_HOSTS: ${GYM_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      GYM_ALLOWED_ORIGINS: ${GYM_ALLOWED_ORIGINS:-http://localhost:3333,http://127.0.0.1:3333}
+      GYM_TRUST_PROXY_HEADERS: ${GYM_TRUST_PROXY_HEADERS:-0}
+      GYM_METRICS_TOKEN: ${GYM_METRICS_TOKEN:-docker-local-metrics-token-change-me-2026}
+      GYM_LOG_LEVEL: ${GYM_LOG_LEVEL:-INFO}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "3333:8100"
+    volumes:
+      - uploads_data:/app/server/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/api/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+volumes:
+  database_data:
+    name: pulsefit_database_data
+  uploads_data:
+    name: pulsefit_uploads_data
+
+networks:
+  backend:
+    name: pulsefit_backend

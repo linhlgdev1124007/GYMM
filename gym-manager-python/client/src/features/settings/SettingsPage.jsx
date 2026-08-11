@@ -16,42 +16,9 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="Hệ thống"
         title="Cài đặt & thiết bị"
-        description="Thông tin chi nhánh, tài khoản nhận tiền và trạng thái thiết bị."
+        description="Tài khoản nhận tiền và trạng thái thiết bị vận hành."
       />
-      <div className="section-grid">
-        <section>
-          <div className="section-header">
-            <div>
-              <h2>Chi nhánh</h2>
-              <p>Thông tin vận hành hiện tại</p>
-            </div>
-          </div>
-          <DataTable
-            rows={data?.branches}
-            loading={query.isLoading}
-            error={query.error}
-            onRetry={query.refetch}
-            columns={[
-              {
-                key: "name",
-                label: "Chi nhánh",
-                render: (r) => (
-                  <div>
-                    <span className="cell-primary">{r.name}</span>
-                    <div className="cell-secondary">{r.code}</div>
-                  </div>
-                ),
-              },
-              { key: "address", label: "Địa chỉ" },
-              {
-                key: "status",
-                label: "Trạng thái",
-                render: (r) => <StatusBadge status={r.status} />,
-              },
-            ]}
-          />
-        </section>
-        <section>
+      <section>
           <div className="section-header">
             <div>
               <h2>Tài khoản nhận tiền</h2>
@@ -78,8 +45,7 @@ export function SettingsPage() {
               { key: "visibility", label: "Phạm vi" },
             ]}
           />
-        </section>
-      </div>
+      </section>
       <section className="mt-7">
         <div className="section-header">
           <div>
@@ -105,7 +71,6 @@ export function SettingsPage() {
                 </div>
               ),
             },
-            { key: "branch", label: "Chi nhánh" },
             { key: "ip", label: "IP" },
             {
               key: "pendingJobs",

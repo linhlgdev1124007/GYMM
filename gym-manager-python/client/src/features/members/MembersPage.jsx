@@ -21,6 +21,10 @@ import { DateOfBirthInput, PhoneInput } from "../../components/ui/SmartInputs";
 import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import {
+  emptyTrainingForm,
+  TrainingFields,
+} from "../../components/forms/TrainingForm";
 import { MemberQuickDrawer } from "./MemberQuickDrawer";
 import { useAuth } from "../../app/AuthContext";
 import {
@@ -42,6 +46,8 @@ const initialForm = {
   salesEmployeeId: "",
   notes: "",
   status: "active",
+  registerPt: false,
+  pt: emptyTrainingForm(),
 };
 const views = [
   ["all", "Tất cả"],
@@ -866,7 +872,7 @@ export function MembersPage() {
         onClose={closeCreate}
         dirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
         title="Thêm hội viên"
-        description="Tạo hồ sơ cơ bản; gói tập và PT có thể thêm ngay sau đó."
+        description="Tạo hồ sơ và có thể đăng ký lịch PT ngay trong một lần lưu."
       >
         <form
           onSubmit={(event) => {
@@ -876,11 +882,13 @@ export function MembersPage() {
               setError("Số điện thoại cần đủ 10 chữ số.");
               return;
             }
+            const { registerPt, pt, ...memberForm } = form;
             create.mutate({
-              ...form,
+              ...memberForm,
               name: form.name.trim(),
               phone: normalizePhone(form.phone),
               email: form.email.trim(),
+              ptEnrollment: registerPt ? pt : undefined,
             });
           }}
         >
@@ -982,6 +990,35 @@ export function MembersPage() {
                   />
                 </Field>
               </div>
+            </section>
+            <section className="form-section">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-navy-900"
+                  checked={form.registerPt}
+                  onChange={(event) =>
+                    setForm({ ...form, registerPt: event.target.checked })
+                  }
+                />
+                <span>
+                  <strong className="block text-sm text-slate-800">
+                    Đăng ký PT cho hội viên này
+                  </strong>
+                  <small className="mt-0.5 block text-xs text-slate-500">
+                    Hồ sơ hội viên và đăng ký PT sẽ được lưu cùng lúc.
+                  </small>
+                </span>
+              </label>
+              {form.registerPt && (
+                <div className="mt-4">
+                  <TrainingFields
+                    form={form.pt}
+                    setForm={(pt) => setForm((current) => ({ ...current, pt }))}
+                    options={options.data}
+                  />
+                </div>
+              )}
             </section>
             {error && <div className="inline-error">{error}</div>}
           </div>

@@ -1,7 +1,6 @@
 from pathlib import Path
 from contextlib import asynccontextmanager
 import hmac
-import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,8 +11,10 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import text
 
 from .config import settings
-from .database import Base, ROOT_DIR, SessionLocal, engine, migrate_pt_coaches
-from .models import AuthSession
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .models import (
+    AuthSession, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
+)
 from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, insights, members, operations, users
 from .security import ensure_admin_user
@@ -23,41 +24,45 @@ from .middleware.request_security import RequestSecurityMiddleware, RequestSizeL
 from .middleware.security_headers import SecurityHeadersMiddleware
 
 def initialize_database():
-    if os.getenv("VERCEL"):
-        return
     migrate_pt_coaches()
-    with engine.connect() as connection:
-        user_columns = {
-            column["name"]
-            for column in connection.exec_driver_sql("PRAGMA table_info(users)").mappings()
-        }
-    # A fresh database has no users table yet; create_all below will create the
-    # current schema. Only ALTER an existing legacy table.
-    if user_columns and "employee_id" not in user_columns:
-        with engine.begin() as connection:
-            connection.exec_driver_sql(
-                "ALTER TABLE users ADD COLUMN employee_id INTEGER REFERENCES employees(id)"
-            )
-            connection.exec_driver_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_employee_id ON users(employee_id)"
-            )
+    migrate_remove_branches()
+    migrate_pt_schedule()
+    if IS_SQLITE:
+        with engine.connect() as connection:
+            user_columns = {
+                column["name"]
+                for column in connection.exec_driver_sql("PRAGMA table_info(users)").mappings()
+            }
+        # Keep compatibility with the legacy local SQLite database. MySQL starts
+        # from the current schema and future schema changes should use migrations.
+        if user_columns and "employee_id" not in user_columns:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE users ADD COLUMN employee_id INTEGER REFERENCES employees(id)"
+                )
+                connection.exec_driver_sql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_employee_id ON users(employee_id)"
+                )
     Base.metadata.create_all(bind=engine)
-    with engine.begin() as connection:
-        connection.exec_driver_sql("""
-            INSERT OR IGNORE INTO pt_enrollment_coaches (enrollment_id, coach_id, assigned_at)
-            SELECT id, coach_id, date('now') FROM pt_enrollments WHERE coach_id IS NOT NULL
-        """)
-        connection.exec_driver_sql("""
-            INSERT INTO payment_receipts (payment_id, file_path, original_name, uploaded_at)
-            SELECT payments.id, payments.receipt_image_path, 'Chứng từ cũ', payments.paid_at
-            FROM payments
-            WHERE payments.receipt_image_path IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM payment_receipts WHERE payment_receipts.payment_id = payments.id
-              )
-        """)
     db = SessionLocal()
     try:
+        assigned_enrollments = {
+            enrollment_id for (enrollment_id,) in db.query(PtEnrollmentCoach.enrollment_id).distinct()
+        }
+        for enrollment in db.query(PtEnrollment).filter(PtEnrollment.coach_id.is_not(None)):
+            if enrollment.id not in assigned_enrollments:
+                db.add(PtEnrollmentCoach(enrollment_id=enrollment.id, coach_id=enrollment.coach_id))
+        receipt_payment_ids = {
+            payment_id for (payment_id,) in db.query(PaymentReceipt.payment_id).distinct()
+        }
+        for payment in db.query(Payment).filter(Payment.receipt_image_path.is_not(None)):
+            if payment.id not in receipt_payment_ids:
+                db.add(PaymentReceipt(
+                    payment_id=payment.id,
+                    file_path=payment.receipt_image_path,
+                    original_name="Chứng từ cũ",
+                    uploaded_at=payment.paid_at,
+                ))
         now = utc_now()
         db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
         db.commit()

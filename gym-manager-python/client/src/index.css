@@ -156,15 +156,6 @@
   .global-search-trigger kbd {
     @apply rounded border border-slate-200 bg-white px-1.5 py-0.5 font-sans text-[10px] text-slate-400;
   }
-  .branch-context {
-    @apply hidden min-w-32 flex-col border-l border-slate-200 pl-4 min-[1180px]:flex;
-  }
-  .branch-context span {
-    @apply text-[9px] font-semibold uppercase tracking-wide text-slate-400;
-  }
-  .branch-context strong {
-    @apply max-w-44 truncate text-[11px] font-medium text-slate-700;
-  }
   .command-layer {
     @apply fixed inset-0 z-[100] flex items-start justify-center bg-slate-950/30 px-4 pt-[12vh];
   }

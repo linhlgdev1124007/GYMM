@@ -34,7 +34,7 @@ const commands = [
   { id: "payments", label: "Mở Thanh toán", description: "Đối soát phiếu thu và chứng từ", path: "/payments", icon: CreditCard, roles: ["admin", "manager", "receptionist"], keywords: "payment doanh thu bill" },
   { id: "reports", label: "Mở Báo cáo", description: "Doanh thu, attendance và công nợ", path: "/reports", icon: BarChart3, roles: ["admin", "manager"], keywords: "report phan tich" },
   { id: "accounts", label: "Mở Tài khoản & quyền", description: "Người dùng và phân quyền", path: "/accounts", icon: ShieldCheck, roles: ["admin"], keywords: "user role permission" },
-  { id: "settings", label: "Mở Cài đặt & thiết bị", description: "Chi nhánh, ngân hàng và thiết bị", path: "/settings", icon: Settings, roles: ["admin"], keywords: "branch bank device" },
+  { id: "settings", label: "Mở Cài đặt & thiết bị", description: "Ngân hàng và thiết bị", path: "/settings", icon: Settings, roles: ["admin"], keywords: "bank device" },
 ];
 
 const normalize = (value = "") =>

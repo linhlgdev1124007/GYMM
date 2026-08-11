@@ -131,6 +131,46 @@ def test_session_count_is_capped_per_user(client):
         assert db.query(AuthSession).count() <= 3
 
 
+def test_admin_can_change_an_account_password(client):
+    assert login(client, "10.0.0.77").status_code == 200
+    csrf = client.cookies.get("gym_csrf")
+    headers = {**ORIGIN, "X-CSRF-Token": csrf}
+    created = client.post(
+        "/api/users",
+        json={
+            "username": "password-test",
+            "displayName": "Password Test",
+            "password": "OldPassword!2026",
+            "role": "receptionist",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200
+    user_id = created.json()["id"]
+
+    mismatch = client.patch(
+        f"/api/users/{user_id}/password",
+        json={"password": "NewPassword!2026", "confirmPassword": "not-the-same"},
+        headers=headers,
+    )
+    assert mismatch.status_code == 422
+
+    changed = client.patch(
+        f"/api/users/{user_id}/password",
+        json={"password": "NewPassword!2026", "confirmPassword": "NewPassword!2026"},
+        headers=headers,
+    )
+    assert changed.status_code == 200
+    assert changed.json()["sessionsRevoked"] is True
+
+    logged_in = client.post(
+        "/api/auth/login",
+        json={"username": "password-test", "password": "NewPassword!2026"},
+        headers={**ORIGIN, "X-Forwarded-For": "10.0.0.78"},
+    )
+    assert logged_in.status_code == 200
+
+
 def test_untrusted_host_is_rejected(client):
     response = client.get("/api/health/live", headers={"Host": "evil.example"})
     assert response.status_code == 400

@@ -51,16 +51,6 @@ class AuthSession(Base):
     user: Mapped[User] = relationship()
 
 
-class Branch(Base):
-    __tablename__ = "branches"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(30), unique=True)
-    name: Mapped[str] = mapped_column(String(160))
-    address: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(30), default="active")
-
-
 class Person(Base):
     __tablename__ = "people"
 
@@ -82,7 +72,6 @@ class Customer(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), unique=True)
-    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"))
     customer_code: Mapped[str] = mapped_column(String(40), unique=True)
     mbs_card_code: Mapped[str | None] = mapped_column(String(60), unique=True)
     sales_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
@@ -91,7 +80,6 @@ class Customer(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     person: Mapped[Person] = relationship(back_populates="customer")
-    branch: Mapped[Branch | None] = relationship()
     sales_employee: Mapped["Employee | None"] = relationship()
     memberships: Mapped[list["Membership"]] = relationship(back_populates="customer")
 
@@ -101,14 +89,12 @@ class Employee(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), unique=True)
-    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"))
     employee_code: Mapped[str] = mapped_column(String(40), unique=True)
     job_title: Mapped[str | None] = mapped_column(String(80))
     base_salary: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(30), default="active")
 
     person: Mapped[Person] = relationship(back_populates="employee")
-    branch: Mapped[Branch | None] = relationship()
 
 
 class ServicePackage(Base):
@@ -314,6 +300,7 @@ class PtEnrollment(Base):
     remaining_sessions: Mapped[int] = mapped_column(Integer, default=12)
     schedule_days: Mapped[str | None] = mapped_column(String(120))
     schedule_time: Mapped[str | None] = mapped_column(String(10))
+    schedule_json: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
 
     customer: Mapped[Customer] = relationship()
@@ -352,7 +339,6 @@ class CashShift(Base):
     __tablename__ = "cash_shifts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"))
     opened_by_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     shift_date: Mapped[date] = mapped_column(Date, default=date.today)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
@@ -363,7 +349,6 @@ class CashShift(Base):
     status: Mapped[str] = mapped_column(String(30), default="open")
     note: Mapped[str | None] = mapped_column(Text)
 
-    branch: Mapped[Branch | None] = relationship()
     opened_by: Mapped[Employee | None] = relationship()
 
 
@@ -388,7 +373,6 @@ class Device(Base):
     __tablename__ = "devices"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"))
     code: Mapped[str] = mapped_column(String(40), unique=True)
     name: Mapped[str] = mapped_column(String(160))
     model: Mapped[str | None] = mapped_column(String(80))
@@ -398,5 +382,3 @@ class Device(Base):
     pending_jobs: Mapped[int] = mapped_column(Integer, default=0)
     errors_24h: Mapped[int] = mapped_column(Integer, default=0)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-    branch: Mapped[Branch | None] = relationship()

@@ -123,7 +123,10 @@ def membership_data(membership, include_payments=False, include_history=False):
 
 
 def pt_data(enrollment):
+    from .training_schedule import schedule_data
+
     coaches = [employee_data(assignment.coach) for assignment in enrollment.coach_assignments]
+    schedule = schedule_data(enrollment)
     return {
         "id": enrollment.id,
         "memberId": enrollment.customer_id,
@@ -139,8 +142,10 @@ def pt_data(enrollment):
         "expiresAt": iso(enrollment.expires_at),
         "totalSessions": enrollment.total_sessions,
         "remainingSessions": enrollment.remaining_sessions,
-        "scheduleDays": [value.strip() for value in (enrollment.schedule_days or "").split(",") if value.strip()],
-        "scheduleTime": enrollment.schedule_time,
+        "schedule": schedule,
+        # Kept in responses during the transition for older clients.
+        "scheduleDays": [slot["day"] for slot in schedule],
+        "scheduleTime": schedule[0]["time"] if schedule and len({slot["time"] for slot in schedule}) == 1 else None,
         "status": enrollment.status,
     }
 

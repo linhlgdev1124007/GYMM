@@ -18,11 +18,14 @@ env/
 *.sqlite3
 *.db
 !gym.sqlite3
+tools/database-backup.sql
+tools/database.sql
 
 # Environment and secrets
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 # Node / Playwright
 node_modules/

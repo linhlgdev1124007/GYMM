@@ -34,7 +34,7 @@ Only enable `GYM_TRUST_PROXY_HEADERS` when the application is behind a trusted p
 
 The in-process rate limiter is a last-line defense for the current single-instance application. Multi-worker or multi-instance deployments must enforce shared limits at a trusted reverse proxy, API gateway or WAF. TLS termination, DDoS protection, secret storage/rotation, vulnerability scanning and encrypted backups also belong to the deployment platform.
 
-Before handling real enterprise data, migrate SQLite to managed PostgreSQL, move receipts to private object storage with signed access, add MFA/SSO and complete an OWASP ASVS Level 2 verification.
+Before handling real enterprise data, use a managed MySQL service with encrypted automated backups, move receipts to private object storage with signed access, add MFA/SSO and complete an OWASP ASVS Level 2 verification.
 
 ## Security verification
 

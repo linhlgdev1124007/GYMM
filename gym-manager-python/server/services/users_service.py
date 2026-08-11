@@ -3,7 +3,7 @@ import re
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import Employee, User
+from ..models import AuthSession, Employee, User
 from ..security import hash_password
 from .audit_service import record_audit
 from .serializers import employee_data
@@ -108,16 +108,39 @@ def update_user(db: Session, user_id: int, payload: dict, actor: User):
         linked = db.query(User).filter(User.employee_id == employee_id, User.id != row.id).first()
         if linked:
             raise HTTPException(409, "Nhân viên này đã có tài khoản đăng nhập.")
-    password = str(payload.get("password", ""))
-    if password and len(password) < 8:
-        raise HTTPException(422, "Mật khẩu mới phải có ít nhất 8 ký tự.")
     row.display_name = str(payload.get("displayName", row.display_name)).strip() or row.display_name
     row.role = role
     row.is_active = active
     row.employee_id = employee_id
-    if password:
-        row.password_hash = hash_password(password)
-    record_audit(db, actor, "update", "user", row.id, f"Cập nhật tài khoản {row.username}", details={"fields": list(payload.keys()), "role": role, "active": active, "passwordReset": bool(password)})
+    record_audit(db, actor, "update", "user", row.id, f"Cập nhật tài khoản {row.username}", details={"fields": list(payload.keys()), "role": role, "active": active})
     db.commit()
     db.refresh(row)
     return user_data(row)
+
+
+def update_password(db: Session, user_id: int, payload: dict, actor: User):
+    row = db.get(User, user_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy tài khoản.")
+    password = str(payload.get("password", ""))
+    confirmation = str(payload.get("confirmPassword", ""))
+    if len(password) < 8:
+        raise HTTPException(422, "Mật khẩu mới phải có ít nhất 8 ký tự.")
+    if password != confirmation:
+        raise HTTPException(422, "Xác nhận mật khẩu không khớp.")
+    row.password_hash = hash_password(password)
+    # A password reset signs the target account out everywhere. Keep the
+    # administrator's current session only when they reset their own password.
+    if row.id != actor.id:
+        db.query(AuthSession).filter(AuthSession.user_id == row.id).delete(synchronize_session=False)
+    record_audit(
+        db,
+        actor,
+        "password_reset",
+        "user",
+        row.id,
+        f"Đổi mật khẩu tài khoản {row.username}",
+        details={"sessionsRevoked": row.id != actor.id},
+    )
+    db.commit()
+    return {"ok": True, "username": row.username, "sessionsRevoked": row.id != actor.id}

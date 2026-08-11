@@ -9,11 +9,12 @@ from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..database import ROOT_DIR
 from ..models import (
-    AttendanceSession, BankAccount, Branch, Customer, Employee, Membership,
+    AttendanceSession, BankAccount, Customer, Employee, Membership,
     MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User,
 )
 from .audit_service import member_audit_logs, record_audit
 from .serializers import membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
+from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
 
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
@@ -156,11 +157,9 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
 
 
 def member_options(db: Session):
-    branches = db.query(Branch).filter(Branch.status == "active").order_by(Branch.name).all()
     employees = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active").order_by(Employee.id).all()
     accounts = db.query(BankAccount).filter(BankAccount.status == "active").order_by(BankAccount.bank_name).all()
     return {
-        "branches": [{"id": row.id, "name": row.name} for row in branches],
         "employees": [{"id": row.id, "name": row.person.display_name, "title": row.job_title} for row in employees],
         "plans": list_plans(db),
         "bankAccounts": [{"id": row.id, "label": f"{row.bank_name} · {row.account_number}", "visibility": row.visibility} for row in accounts],
@@ -169,7 +168,7 @@ def member_options(db: Session):
 
 def get_member(db: Session, member_id: int):
     member = db.query(Customer).options(
-        joinedload(Customer.person), joinedload(Customer.branch),
+        joinedload(Customer.person),
         joinedload(Customer.sales_employee).joinedload(Employee.person),
     ).filter(Customer.id == member_id).first()
     if not member:
@@ -198,7 +197,7 @@ def get_member(db: Session, member_id: int):
     return {
         "id": member.id, "code": member.customer_code, "mbsCode": member.mbs_card_code,
         **person_data(member.person), "source": member.source, "status": member.status,
-        "notes": member.notes, "branch": member.branch.name if member.branch else None,
+        "notes": member.notes,
         "salesEmployeeId": member.sales_employee_id,
         "salesEmployee": member.sales_employee.person.display_name if member.sales_employee else None,
         "memberships": [membership_data(row, include_payments=True, include_history=True) for row in memberships if not row.package.is_pt],
@@ -219,13 +218,46 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         raise HTTPException(status_code=409, detail="Số điện thoại này đã tồn tại.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    branch_id = _int(payload.get("branchId")) or (
-        db.query(Branch.id).order_by(Branch.id).limit(1).scalar()
-    )
-    member = Customer(person_id=person.id, branch_id=branch_id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
+    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
     member.customer_code = f"MB-{member.id:06d}"
     record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
+    pt_payload = payload.get("ptEnrollment")
+    if isinstance(pt_payload, dict):
+        raw_coach_ids = pt_payload.get("coachIds") or []
+        coach_ids = list(dict.fromkeys(value for value in (_int(item) for item in raw_coach_ids) if value))
+        coaches = db.query(Employee).filter(Employee.id.in_(coach_ids), Employee.status == "active").all() if coach_ids else []
+        if len(coaches) != len(coach_ids):
+            raise HTTPException(422, "Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
+        kind = pt_payload.get("type") if pt_payload.get("type") in ("1:1", "1:2", "1:3") else "1:1"
+        sessions = max(_int(pt_payload.get("totalSessions")) or 12, 1)
+        starts_at = _parse_date(pt_payload.get("startsAt")) or date.today()
+        expires_at = _parse_date(pt_payload.get("expiresAt"))
+        if expires_at and expires_at < starts_at:
+            raise HTTPException(422, "Ngày hết hạn PT phải sau ngày bắt đầu.")
+        schedule_json, schedule_days, schedule_time = schedule_storage(normalize_schedule(pt_payload))
+        enrollment = PtEnrollment(
+            customer_id=member.id,
+            coach_id=coach_ids[0] if coach_ids else None,
+            group_type=kind,
+            starts_at=starts_at,
+            expires_at=expires_at,
+            total_sessions=sessions,
+            remaining_sessions=sessions,
+            schedule_json=schedule_json,
+            schedule_days=schedule_days,
+            schedule_time=schedule_time,
+            status="active",
+        )
+        db.add(enrollment); db.flush()
+        enrollment.coach_assignments = [PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
+        member.status = "active"
+        record_audit(
+            db, actor, "create", "pt_enrollment", enrollment.id,
+            f"Đăng ký PT {kind} · {sessions} buổi cùng lúc tạo hội viên",
+            customer_id=member.id,
+            details={"coachIds": coach_ids, "schedule": json.loads(schedule_json) if schedule_json else []},
+        )
     db.commit()
     return get_member(db, member.id)
 
