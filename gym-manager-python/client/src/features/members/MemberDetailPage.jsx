@@ -17,6 +17,7 @@ import { notify } from "../../services/notify";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
@@ -346,12 +347,12 @@ export function MemberDetailPage() {
       key: "schedule",
       label: "Lịch tập",
       render: (r) => (
-        <span>
-          {r.scheduleDays.join(", ") || "Chưa xếp lịch"}
-          <span className="cell-secondary">
-            {r.scheduleTime || "Chưa chọn giờ"}
-          </span>
-        </span>
+        <ScheduleSummary
+          schedule={r.schedule}
+          scheduleDays={r.scheduleDays}
+          scheduleTime={r.scheduleTime}
+          compact
+        />
       ),
     },
     {
@@ -605,11 +606,15 @@ export function MemberDetailPage() {
                         .map((coach) => coach.name)
                         .join(", ") || "Chưa phân công Coach"}{" "}
                       · {activeTraining.type}
-                      <span className="cell-secondary mt-0.5 block">
-                        {activeTraining.scheduleDays.join(", ") ||
-                          "Chưa chọn thứ"}{" "}
-                        · {activeTraining.scheduleTime || "Chưa chọn giờ"}
-                      </span>
+                      <div className="cell-secondary mt-0.5 block">
+                        <ScheduleSummary
+                          schedule={activeTraining.schedule}
+                          scheduleDays={activeTraining.scheduleDays}
+                          scheduleTime={activeTraining.scheduleTime}
+                          emptyText="Chưa chọn thứ"
+                          compact
+                        />
+                      </div>
                     </>
                   ) : canEditPt ? (
                     <button

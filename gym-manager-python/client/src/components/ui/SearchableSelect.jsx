@@ -58,6 +58,7 @@ export function SearchableSelect({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}
               onKeyDown={(e) => {
+                if (e.nativeEvent?.isComposing || e.isComposing) return;
                 if (e.key === "Escape") {
                   e.stopPropagation();
                   setOpen(false);

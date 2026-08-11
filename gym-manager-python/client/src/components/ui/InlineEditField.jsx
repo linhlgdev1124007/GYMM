@@ -60,6 +60,7 @@ export function InlineEditField({
                 value={draft}
                 onChange={setDraft}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent?.isComposing || e.isComposing) return;
                   if (e.key === "Enter") save();
                   if (e.key === "Escape") close();
                 }}
@@ -71,6 +72,7 @@ export function InlineEditField({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent?.isComposing || e.isComposing) return;
                   if (e.key === "Enter") save();
                   if (e.key === "Escape") close();
                 }}

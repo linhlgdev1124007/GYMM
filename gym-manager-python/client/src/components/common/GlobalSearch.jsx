@@ -143,6 +143,7 @@ export function GlobalSearch() {
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Tìm hội viên, màn hình hoặc tác vụ…"
                 onKeyDown={(event) => {
+                  if (event.nativeEvent?.isComposing || event.isComposing) return;
                   if (event.key === "Escape") setOpen(false);
                   if (event.key === "ArrowDown") {
                     event.preventDefault();

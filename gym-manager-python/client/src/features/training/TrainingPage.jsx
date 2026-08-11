@@ -12,6 +12,7 @@ import { DataTable } from "../../components/ui/DataTable";
 import { Select } from "../../components/ui/Form";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { formatPhone, shortDate } from "../../utils/format";
 
@@ -101,12 +102,13 @@ export function TrainingPage() {
       key: "schedule",
       label: "Lịch tập",
       render: (row) => (
-        <div>
-          {row.scheduleDays.join(", ") || "Chưa chọn thứ"}
-          <div className="cell-secondary">
-            {row.scheduleTime || "Chưa chọn giờ"}
-          </div>
-        </div>
+        <ScheduleSummary
+          schedule={row.schedule}
+          scheduleDays={row.scheduleDays}
+          scheduleTime={row.scheduleTime}
+          emptyText="Chưa chọn thứ"
+          compact
+        />
       ),
     },
     {

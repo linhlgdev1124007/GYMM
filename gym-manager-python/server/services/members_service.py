@@ -13,7 +13,7 @@ from ..models import (
     MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User,
 )
 from .audit_service import member_audit_logs, record_audit
-from .serializers import membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
+from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
 
@@ -148,6 +148,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             **person_data(member.person),
             "source": member.source,
             "status": member.status,
+            "salesEmployee": employee_data(member.sales_employee),
             "trainer": (trainers.get(member.id) or [None])[0],
             "trainers": trainers.get(member.id, []),
             "membership": membership_data(current) if current else None,
@@ -160,7 +161,7 @@ def member_options(db: Session):
     employees = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active").order_by(Employee.id).all()
     accounts = db.query(BankAccount).filter(BankAccount.status == "active").order_by(BankAccount.bank_name).all()
     return {
-        "employees": [{"id": row.id, "name": row.person.display_name, "title": row.job_title} for row in employees],
+        "employees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title} for row in employees],
         "plans": list_plans(db),
         "bankAccounts": [{"id": row.id, "label": f"{row.bank_name} · {row.account_number}", "visibility": row.visibility} for row in accounts],
     }

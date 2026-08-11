@@ -161,11 +161,8 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
             onChange={(expiresAt) => setForm({ ...form, expiresAt })}
           />
         </Field>
-        <Field
-          className="form-span"
-          label="Lịch tập theo thứ"
-          hint="Chọn thứ rồi đặt giờ riêng cho từng ngày."
-        >
+        <div className="field form-span">
+          <span className="field-label">Lịch tập theo thứ</span>
           <div className="flex flex-wrap gap-2">
             {weekdays.map((day) => (
               <button
@@ -196,7 +193,10 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
               ))}
             </div>
           )}
-        </Field>
+          <span className="field-hint">
+            Chọn thứ rồi đặt giờ riêng cho từng ngày.
+          </span>
+        </div>
         {editing && (
           <Field label="Trạng thái">
             <Select

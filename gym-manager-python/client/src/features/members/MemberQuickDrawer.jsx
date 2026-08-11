@@ -21,6 +21,7 @@ import {
 import { Drawer } from "../../components/ui/Drawer";
 import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
@@ -163,6 +164,7 @@ export function MemberQuickDrawer({
               <Link
                 className="inline-flex items-center gap-1 text-xs font-medium text-navy-800 hover:underline"
                 to={`/members/${member.id}`}
+                data-member-full-profile="true"
               >
                 Xem hồ sơ đầy đủ <ExternalLink size={12} />
               </Link>
@@ -392,7 +394,15 @@ export function MemberQuickDrawer({
                   <dt>Lịch PT</dt>
                   <dd>
                     {training
-                      ? `${training.scheduleDays.join(", ") || "Chưa chọn thứ"} · ${training.scheduleTime || "Chưa chọn giờ"}`
+                      ? (
+                        <ScheduleSummary
+                          schedule={training.schedule}
+                          scheduleDays={training.scheduleDays}
+                          scheduleTime={training.scheduleTime}
+                          emptyText="Chưa chọn thứ"
+                          compact
+                        />
+                      )
                       : "—"}
                   </dd>
                 </div>
@@ -406,6 +416,7 @@ export function MemberQuickDrawer({
                     <InlineEditField label="Điện thoại" value={member.phone} type="tel" displayValue={formatPhone(member.phone)} onSave={(phone) => update.mutateAsync({ payload: { phone }, silent: true })} pending={update.isPending} />
                     <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => update.mutateAsync({ payload: { email }, silent: true })} pending={update.isPending} />
                     <InlineEditField label="Nguồn khách" value={member.source} onSave={(source) => update.mutateAsync({ payload: { source }, silent: true })} pending={update.isPending} />
+                    <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
                     <InlineEditField label="Trạng thái" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
                   </>
                 ) : (
@@ -413,6 +424,7 @@ export function MemberQuickDrawer({
                     <div className="inline-field"><dt>Điện thoại</dt><dd>{formatPhone(member.phone) || "—"}</dd></div>
                     <div className="inline-field"><dt>Email</dt><dd>{member.email || "—"}</dd></div>
                     <div className="inline-field"><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
+                    <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
                     <div className="inline-field"><dt>Trạng thái</dt><dd><StatusBadge status={member.status} /></dd></div>
                   </>
                 )}

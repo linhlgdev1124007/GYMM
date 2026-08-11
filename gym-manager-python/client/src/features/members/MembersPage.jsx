@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkPlus,
@@ -35,7 +35,7 @@ import {
   shortDate,
 } from "../../utils/format";
 
-const initialForm = {
+const createInitialForm = () => ({
   name: "",
   phone: "",
   email: "",
@@ -48,7 +48,8 @@ const initialForm = {
   status: "active",
   registerPt: false,
   pt: emptyTrainingForm(),
-};
+});
+const initialForm = createInitialForm();
 const views = [
   ["all", "Tất cả"],
   ["active", "Đang hoạt động"],
@@ -92,6 +93,12 @@ export function MembersPage() {
     () => localStorage.getItem("pulsefit-table-density") || "standard",
   );
   const [hiddenColumns, setHiddenColumns] = useState([]);
+  const [tableOptionsOpen, setTableOptionsOpen] = useState(false);
+  const [tableOptionsPosition, setTableOptionsPosition] = useState({
+    top: 0,
+    left: 0,
+  });
+  const tableOptionsRef = useRef(null);
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState([]);
@@ -151,9 +158,10 @@ export function MembersPage() {
       api("/api/members", { method: "POST", body: payload }),
     onSuccess: (member) => {
       client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["training"] });
       client.invalidateQueries({ queryKey: ["dashboard"] });
       setCreateOpen(false);
-      setForm(initialForm);
+      setForm(createInitialForm());
       updateParams({ member: member.id });
       notify.success({
         title: `Đã tạo hội viên ${member.name}.`,
@@ -185,6 +193,23 @@ export function MembersPage() {
     document.addEventListener("keydown", focus);
     return () => document.removeEventListener("keydown", focus);
   }, []);
+  useEffect(() => {
+    if (!tableOptionsOpen) return undefined;
+    const close = (event) => {
+      if (!tableOptionsRef.current?.contains(event.target)) {
+        setTableOptionsOpen(false);
+      }
+    };
+    const reposition = () => setTableOptionsOpen(false);
+    document.addEventListener("pointerdown", close);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [tableOptionsOpen]);
   const openMember = useCallback(
     (row, nextAction) =>
       updateParams({ member: row.id, action: nextAction || "" }),
@@ -237,6 +262,30 @@ export function MembersPage() {
         label: "Điện thoại",
         className: "whitespace-nowrap max-[640px]:hidden",
         render: (row) => formatPhone(row.phone) || "—",
+      },
+      {
+        key: "sale",
+        label: "Sale",
+        className: "max-[768px]:hidden",
+        render: (row) =>
+          row.salesEmployee ? (
+            <div>
+              <span className="cell-primary">{row.salesEmployee.name}</span>
+              <div className="cell-secondary">
+                {row.salesEmployee.code || "Phụ trách"}
+              </div>
+            </div>
+          ) : (
+            <button
+              className="text-xs font-medium text-blue-700"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMember(row, "edit");
+              }}
+            >
+              + Gán Sale
+            </button>
+          ),
       },
       {
         key: "membership",
@@ -426,12 +475,13 @@ export function MembersPage() {
     const rows =
       members.data?.items.filter((row) => selection.includes(row.id)) || [];
     const csv = [
-      "Mã hội viên,Họ tên,Điện thoại,Gói tập,Công nợ,Hạn thanh toán,PT,Trạng thái",
+      "Mã hội viên,Họ tên,Điện thoại,Sale,Gói tập,Công nợ,Hạn thanh toán,PT,Trạng thái",
       ...rows.map((row) =>
         [
           row.code,
           row.name,
           row.phone || "",
+          row.salesEmployee?.name || "",
           row.membership?.package.name || "",
           row.membership?.debtAmount || 0,
           row.membership?.debtDueDate || "",
@@ -454,7 +504,7 @@ export function MembersPage() {
   };
   const closeCreate = () => {
     setCreateOpen(false);
-    setForm(initialForm);
+    setForm(createInitialForm());
     setError("");
   };
   const saveView = (event) => {
@@ -686,12 +736,31 @@ export function MembersPage() {
             <option value="name">Tên A–Z</option>
             <option value="status">Trạng thái</option>
           </Select>
-          <details className="table-options">
-            <summary>
+          <div className="table-options" ref={tableOptionsRef}>
+            <button
+              type="button"
+              className="table-options-trigger"
+              aria-expanded={tableOptionsOpen}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const width = 224;
+                setTableOptionsPosition({
+                  top: rect.bottom + 4,
+                  left: Math.max(
+                    8,
+                    Math.min(rect.left, window.innerWidth - width - 8),
+                  ),
+                });
+                setTableOptionsOpen((open) => !open);
+              }}
+            >
               <SlidersHorizontal size={14} />
               Hiển thị
-            </summary>
-            <div className="table-options-panel">
+            </button>
+            {tableOptionsOpen && <div
+              className="table-options-panel"
+              style={tableOptionsPosition}
+            >
               <strong>Mật độ bảng</strong>
               <label>
                 <input
@@ -721,6 +790,7 @@ export function MembersPage() {
               <strong>Cột hiển thị</strong>
               {[
                 ["phone", "Điện thoại"],
+                ["sale", "Sale"],
                 ["membership", "Gói & hết hạn"],
                 ["debt", "Công nợ"],
                 ["debtDueDate", "Hạn thanh toán"],
@@ -742,8 +812,8 @@ export function MembersPage() {
                   {label}
                 </label>
               ))}
-            </div>
-          </details>
+            </div>}
+          </div>
           <div className="toolbar-spacer" />
           <span className="text-xs text-slate-400">
             {members.data?.pagination.total || 0} hội viên
@@ -878,6 +948,10 @@ export function MembersPage() {
           onSubmit={(event) => {
             event.preventDefault();
             setError("");
+            if (!form.name.trim()) {
+              setError("Họ tên không được để trống.");
+              return;
+            }
             if (normalizePhone(form.phone).length !== 10) {
               setError("Số điện thoại cần đủ 10 chữ số.");
               return;

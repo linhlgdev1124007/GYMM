@@ -18,6 +18,7 @@ export function Modal({
   const closeRef = useRef(onClose);
   const discardFocus = useRef(null);
   const discardPanel = useRef(null);
+  const pointerDownOnLayer = useRef(false);
   const confirmDiscardRef = useRef(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   dirtyRef.current = dirty;
@@ -87,9 +88,18 @@ export function Modal({
     <div
       className="modal-layer"
       role="presentation"
-      onMouseDown={(event) =>
-        event.target === event.currentTarget && requestClose()
-      }
+      onMouseDown={(event) => {
+        pointerDownOnLayer.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (
+          pointerDownOnLayer.current &&
+          event.target === event.currentTarget
+        ) {
+          requestClose();
+        }
+        pointerDownOnLayer.current = false;
+      }}
     >
       <section
         ref={panel}
@@ -98,6 +108,8 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
           if (event.target.closest("[data-modal-close]")) {
             event.preventDefault();

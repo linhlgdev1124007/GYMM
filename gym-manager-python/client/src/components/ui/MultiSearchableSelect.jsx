@@ -87,6 +87,7 @@ export function MultiSearchableSelect({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               onKeyDown={(event) => {
+                if (event.nativeEvent?.isComposing || event.isComposing) return;
                 if (event.key === "Escape") setOpen(false);
                 if (event.key === "ArrowDown") {
                   event.preventDefault();

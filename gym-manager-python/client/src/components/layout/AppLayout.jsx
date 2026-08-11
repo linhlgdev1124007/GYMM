@@ -182,6 +182,7 @@ export function AppLayout() {
     )
       return;
     const anchor = event.target.closest("a");
+    if (anchor?.dataset.memberFullProfile === "true") return;
     const match = anchor?.getAttribute("href")?.match(/^\/members\/(\d+)$/);
     if (!match) return;
     event.preventDefault();
