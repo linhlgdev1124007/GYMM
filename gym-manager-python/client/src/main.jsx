@@ -19,7 +19,16 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <BrowserRouter>
         <AuthProvider>
           <App />
-          <Toaster richColors position="bottom-right" closeButton />
+          <Toaster
+            position="top-right"
+            visibleToasts={4}
+            gap={10}
+            duration={5000}
+            offset="76px"
+            mobileOffset="12px"
+            closeButton
+            toastOptions={{ className: "pulsefit-toast" }}
+          />
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

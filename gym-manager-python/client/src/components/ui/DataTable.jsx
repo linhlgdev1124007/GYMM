@@ -5,6 +5,7 @@ export function DataTable({
   rows,
   loading,
   error,
+  onRetry,
   emptyTitle = "Không có dữ liệu",
   emptyDescription = "Thử thay đổi bộ lọc hoặc tạo dữ liệu mới.",
   rowKey = "id",
@@ -21,6 +22,14 @@ export function DataTable({
         <div>
           <strong>Không thể tải dữ liệu</strong>
           <p>{error.message || "Vui lòng thử lại sau."}</p>
+          {onRetry && (
+            <button
+              className="mt-2 text-xs font-semibold text-red-700 underline"
+              onClick={onRetry}
+            >
+              Thử lại
+            </button>
+          )}
         </div>
       </div>
     );

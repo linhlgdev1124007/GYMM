@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Search, UserRound, XCircle } from "lucide-react";
-import { toast } from "sonner";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
@@ -33,21 +33,32 @@ export function CheckinPage() {
   const checkin = useMutation({
     mutationFn: () =>
       api("/api/checkins", { method: "POST", body: { memberId: selected.id } }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      const memberName = selected.name;
       refresh();
       setSelected(null);
       setSearch("");
-      toast.success("Check-in thành công.");
+      notify.success(
+        `${memberName} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
+      );
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) =>
+      /đã check-in/i.test(e.message)
+        ? notify.warning(e.message)
+        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
   });
   const checkout = useMutation({
     mutationFn: (id) =>
       api(`/api/checkins/${id}/checkout`, { method: "PATCH" }),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      const memberName = recent.data?.find(
+        (item) => item.id === id,
+      )?.memberName;
       refresh();
-      toast.success("Đã check-out.");
+      notify.success(`Đã check-out${memberName ? ` cho ${memberName}` : ""}.`);
     },
+    onError: (e) =>
+      notify.errorFrom(e, "Không thể check-out. Vui lòng thử lại."),
   });
   const columns = [
     {
@@ -211,10 +222,12 @@ export function CheckinPage() {
               <Button
                 className="mt-4 w-full"
                 size="lg"
-                disabled={!selected.eligible || checkin.isPending}
+                disabled={!selected.eligible}
+                loading={checkin.isPending}
+                loadingText="Đang check-in…"
                 onClick={() => checkin.mutate()}
               >
-                {checkin.isPending ? "Đang check-in…" : "Xác nhận check-in"}
+                Xác nhận check-in
               </Button>
             </div>
           )}
@@ -270,6 +283,8 @@ export function CheckinPage() {
           rows={recent.data}
           columns={columns}
           loading={recent.isLoading}
+          error={recent.error}
+          onRetry={recent.refetch}
         />
       </section>
     </>

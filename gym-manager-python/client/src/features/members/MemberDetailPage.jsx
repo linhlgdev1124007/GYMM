@@ -9,11 +9,12 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  ReceiptText,
   TriangleAlert,
 } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
-import { toast } from "sonner";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../services/api";
+import { notify } from "../../services/notify";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -23,6 +24,9 @@ import { MembershipForm } from "../../components/forms/MembershipForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
+import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
+import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
+import { useAuth } from "../../app/AuthContext";
 import {
   dateTime,
   formatPhone,
@@ -34,19 +38,28 @@ import {
 const tabs = [
   ["overview", "Tổng quan"],
   ["memberships", "Lịch sử gói"],
+  ["payments", "Thanh toán"],
   ["checkins", "Lịch sử check-in"],
   ["training", "PT & lịch tập"],
   ["notes", "Ghi chú"],
-  ["activity", "Hoạt động"],
+  ["activity", "Nhật ký"],
 ];
 
 export function MemberDetailPage() {
   const { memberId } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() =>
+    tabs.some(([key]) => key === searchParams.get("tab"))
+      ? searchParams.get("tab")
+      : "overview",
+  );
   const [dialog, setDialog] = useState(null);
   const [selectedMembership, setSelectedMembership] = useState(null);
   const [selectedTraining, setSelectedTraining] = useState(null);
+  const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
@@ -66,14 +79,18 @@ export function MemberDetailPage() {
     client.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const updateMember = useMutation({
-    mutationFn: (payload) =>
+    mutationFn: ({ payload }) =>
       api(`/api/members/${memberId}`, { method: "PATCH", body: payload }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       refresh();
-      setDialog(null);
-      toast.success("Đã cập nhật hội viên.");
+      if (!variables.silent) {
+        setDialog(null);
+        notify.success(`Đã lưu hồ sơ ${member.name}.`);
+      }
     },
-    onError: (e) => setFormError(e.message),
+    onError: (e, variables) => {
+      if (!variables.silent) setFormError(e.message);
+    },
   });
   const saveMembership = useMutation({
     mutationFn: ({ membership, data }) =>
@@ -81,11 +98,21 @@ export function MemberDetailPage() {
         membership ? `/api/memberships/${membership.id}` : "/api/memberships",
         { method: membership ? "PATCH" : "POST", body: data },
       ),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       refresh();
       setDialog(null);
       setSelectedMembership(null);
-      toast.success("Đã lưu giao dịch gói tập.");
+      if (variables.feedback?.amount) {
+        notify.success(
+          `Đã ghi nhận ${money(variables.feedback.amount)} cho ${member.name}.`,
+        );
+      } else if (variables.feedback?.expiresAt) {
+        notify.success(
+          `Đã lưu ${variables.feedback.planName} đến ${shortDate(variables.feedback.expiresAt)} cho ${member.name}.`,
+        );
+      } else {
+        notify.success(`Đã cập nhật gói tập của ${member.name}.`);
+      }
     },
     onError: (e) => setFormError(e.message),
   });
@@ -99,7 +126,7 @@ export function MemberDetailPage() {
       refresh();
       setDialog(null);
       setSelectedMembership(null);
-      toast.success("Đã lưu hạn thanh toán.");
+      notify.success(`Đã lưu hạn thanh toán cho ${member.name}.`);
     },
     onError: (e) => setFormError(e.message),
   });
@@ -115,7 +142,7 @@ export function MemberDetailPage() {
       refresh();
       setDialog(null);
       setSelectedTraining(null);
-      toast.success("Đã lưu đăng ký PT.");
+      notify.success(`Đã cập nhật đăng ký PT của ${member.name}.`);
     },
     onError: (e) => setFormError(e.message),
   });
@@ -125,11 +152,60 @@ export function MemberDetailPage() {
         method: "POST",
         body: { memberId: Number(memberId) },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       refresh();
-      toast.success("Check-in thành công.");
+      notify.success(
+        `${member.name} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
+      );
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) =>
+      /đã check-in/i.test(e.message)
+        ? notify.warning(e.message)
+        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
+  });
+  const uploadReceipts = useMutation({
+    mutationFn: ({ paymentId, data }) =>
+      api(`/api/payments/${paymentId}/receipts`, {
+        method: "POST",
+        body: data,
+      }),
+    onSuccess: (payment) => {
+      refresh();
+      setSelectedPayment(payment);
+      notify.success(`Đã thêm chứng từ cho ${payment.number}.`);
+    },
+    onError: (error) => setFormError(error.message),
+  });
+  const membershipOperation = useMutation({
+    mutationFn: ({ action, payload }) =>
+      api(
+        action === "freeze"
+          ? `/api/memberships/${selectedMembership.id}/freeze`
+          : `/api/memberships/${selectedMembership.id}/actions`,
+        { method: "POST", body: payload },
+      ),
+    onSuccess: (result, variables) => {
+      refresh();
+      client.invalidateQueries({ queryKey: ["alerts"] });
+      client.invalidateQueries({ queryKey: ["audit-logs"] });
+      setDialog(null);
+      setSelectedMembership(null);
+      if (variables.action === "freeze") {
+        notify.success("Đã bảo lưu và cộng bù thời hạn gói.");
+      } else {
+        notify.success({
+          title: result.summary,
+          action:
+            variables.action === "transfer"
+              ? {
+                  label: "Xem người nhận",
+                  onClick: () => navigate(`/members/${result.customerId}`),
+                }
+              : undefined,
+        });
+      }
+    },
+    onError: (reason) => setFormError(reason.message),
   });
   if (memberQuery.isLoading)
     return (
@@ -142,7 +218,10 @@ export function MemberDetailPage() {
   if (memberQuery.isError)
     return <div className="inline-error">{memberQuery.error.message}</div>;
   const current = member.memberships[0];
+  const canFinancial = ["admin", "manager", "receptionist"].includes(user.role);
+  const canManageLifecycle = ["admin", "manager"].includes(user.role);
   const activeTraining = member.training.find((row) => row.status === "active");
+  const canEditPt = canFinancial || (user.role === "coach" && !!activeTraining);
   const activeTrainingCoaches = activeTraining?.coaches || [];
   const lastCheckin = member.checkins[0];
   const daysLeft = current?.expiresAt
@@ -150,7 +229,12 @@ export function MemberDetailPage() {
     : null;
   const open = (name, record = null) => {
     setFormError("");
-    if (name === "membership" || name === "payment" || name === "deadline")
+    if (
+      name === "membership" ||
+      name === "payment" ||
+      name === "deadline" ||
+      name === "operations"
+    )
       setSelectedMembership(record);
     if (name === "renew") setSelectedMembership(null);
     if (name === "training") setSelectedTraining(record);
@@ -200,9 +284,67 @@ export function MemberDetailPage() {
       key: "action",
       label: "",
       render: (r) => (
-        <Button size="sm" variant="ghost" onClick={() => open("membership", r)}>
-          Chi tiết
-        </Button>
+        <div className="flex justify-end gap-1">
+          {canFinancial && (
+            <Button size="sm" variant="ghost" onClick={() => open("membership", r)}>
+              Chi tiết
+            </Button>
+          )}
+          {canManageLifecycle && r.status !== "cancelled" && (
+            <Button size="sm" variant="secondary" onClick={() => open("operations", r)}>
+              Quản lý
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+  const paymentColumns = [
+    {
+      key: "number",
+      label: "Giao dịch",
+      render: (row) => (
+        <div>
+          <span className="cell-primary">{row.number}</span>
+          <div className="cell-secondary">{dateTime(row.paidAt)}</div>
+        </div>
+      ),
+    },
+    {
+      key: "package",
+      label: "Gói tập",
+      render: (row) => row.description || "Thanh toán gói",
+    },
+    {
+      key: "amount",
+      label: "Số tiền",
+      className: "text-right",
+      render: (row) => (
+        <strong className="text-slate-900">{money(row.amount)}</strong>
+      ),
+    },
+    {
+      key: "method",
+      label: "Phương thức",
+      render: (row) =>
+        ({ cash: "Tiền mặt", bank_transfer: "Chuyển khoản", card: "Thẻ" })[
+          row.method
+        ] || row.method,
+    },
+    {
+      key: "receipts",
+      label: "Chứng từ",
+      render: (row) => (
+        <button
+          className="receipt-count-button"
+          onClick={() => {
+            setFormError("");
+            setSelectedPayment(row);
+          }}
+        >
+          <ReceiptText size={14} />
+          {row.receiptCount ? `${row.receiptCount} ảnh` : "+ Thêm bill"}
+        </button>
       ),
     },
   ];
@@ -283,32 +425,27 @@ export function MemberDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => checkin.mutate()} disabled={checkin.isPending}>
-            <CheckCircle2 size={15} />
-            Check-in
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() =>
-              current?.debtAmount
-                ? open("payment", current)
-                : toast.info("Hội viên không có công nợ.")
-            }
-          >
-            <CreditCard size={15} />
-            Thu tiền
-          </Button>
-          <Button variant="secondary" onClick={() => open("renew")}>
-            <CalendarPlus size={15} />
-            Gia hạn
-          </Button>
-          <Button variant="secondary" onClick={() => open("edit")}>
-            <Pencil size={15} />
-            Sửa
-          </Button>
-          <Button variant="ghost" aria-label="Thêm thao tác">
-            <MoreHorizontal size={17} />
-          </Button>
+          {canFinancial && (
+            <>
+              <Button onClick={() => checkin.mutate()} loading={checkin.isPending} loadingText="Đang check-in…">
+                <CheckCircle2 size={15} /> Check-in
+              </Button>
+              <Button variant="secondary" onClick={() => current?.debtAmount ? open("payment", current) : notify.info("Hội viên không có công nợ.")}>
+                <CreditCard size={15} /> Thu tiền
+              </Button>
+              <Button variant="secondary" onClick={() => open("renew")}>
+                <CalendarPlus size={15} /> Gia hạn
+              </Button>
+              <Button variant="secondary" onClick={() => open("edit")}>
+                <Pencil size={15} /> Sửa
+              </Button>
+            </>
+          )}
+          {canManageLifecycle && current && (
+            <Button variant="ghost" onClick={() => open("operations", current)}>
+              <MoreHorizontal size={17} /> Quản lý gói
+            </Button>
+          )}
         </div>
       </header>
       <div className="summary-strip mt-5">
@@ -351,7 +488,12 @@ export function MemberDetailPage() {
           <button
             key={key}
             className={`tab ${tab === key ? "active" : ""}`}
-            onClick={() => setTab(key)}
+            onClick={() => {
+              setTab(key);
+              setSearchParams(key === "overview" ? {} : { tab: key }, {
+                replace: true,
+              });
+            }}
           >
             {label}
           </button>
@@ -373,7 +515,7 @@ export function MemberDetailPage() {
                   Gói{" "}
                   {daysLeft < 0 ? "đã hết hạn" : `hết hạn sau ${daysLeft} ngày`}
                 </span>
-                <button onClick={() => open("renew")}>Gia hạn</button>
+                {canFinancial && <button onClick={() => open("renew")}>Gia hạn</button>}
               </div>
             )}
             {current?.debtAmount > 0 && (
@@ -382,9 +524,7 @@ export function MemberDetailPage() {
                   <TriangleAlert size={15} />
                   Còn nợ {money(current.debtAmount)}
                 </span>
-                <button onClick={() => open("payment", current)}>
-                  Thu tiền
-                </button>
+                {canFinancial && <button onClick={() => open("payment", current)}>Thu tiền</button>}
               </div>
             )}
             {!activeTraining && (
@@ -393,7 +533,7 @@ export function MemberDetailPage() {
                   <TriangleAlert size={15} />
                   Chưa đăng ký PT
                 </span>
-                <button onClick={() => open("training")}>Đăng ký PT</button>
+                {canFinancial && <button onClick={() => open("training")}>Đăng ký PT</button>}
               </div>
             )}
             {activeTraining && !activeTrainingCoaches.length && (
@@ -402,9 +542,7 @@ export function MemberDetailPage() {
                   <TriangleAlert size={15} />
                   Đăng ký PT đang chờ phân công Coach
                 </span>
-                <button onClick={() => open("training", activeTraining)}>
-                  Phân công
-                </button>
+                {canEditPt && <button onClick={() => open("training", activeTraining)}>Phân công</button>}
               </div>
             )}
             <div className="definition-list mt-4">
@@ -419,14 +557,14 @@ export function MemberDetailPage() {
                         {shortDate(current.expiresAt)}
                       </span>
                     </>
-                  ) : (
+                  ) : canFinancial ? (
                     <button
                       className="font-medium text-blue-700"
                       onClick={() => open("renew")}
                     >
                       + Đăng ký gói
                     </button>
-                  )}
+                  ) : "—"}
                 </dd>
               </div>
               <div>
@@ -494,27 +632,27 @@ export function MemberDetailPage() {
                         · {activeTraining.scheduleTime || "Chưa chọn giờ"}
                       </span>
                     </>
-                  ) : (
+                  ) : canEditPt ? (
                     <button
                       className="font-medium text-blue-700"
                       onClick={() => open("training")}
                     >
                       + Gán PT
                     </button>
-                  )}
+                  ) : "—"}
                 </dd>
               </div>
               <div>
                 <dt>Ghi chú quan trọng</dt>
                 <dd>
-                  {member.notes || (
+                  {member.notes || (canFinancial ? (
                     <button
                       className="font-medium text-blue-700"
                       onClick={() => open("edit")}
                     >
                       + Thêm ghi chú
                     </button>
-                  )}
+                  ) : "—")}
                 </dd>
               </div>
             </div>
@@ -522,28 +660,19 @@ export function MemberDetailPage() {
           <aside className="info-rail">
             <h3>Liên hệ & phụ trách</h3>
             <dl>
-              <InlineEditField
-                label="Điện thoại"
-                value={member.phone}
-                type="tel"
-                displayValue={formatPhone(member.phone)}
-                onSave={(phone) => updateMember.mutateAsync({ phone })}
-                pending={updateMember.isPending}
-              />
-              <InlineEditField
-                label="Email"
-                value={member.email}
-                type="email"
-                emptyAction="+ Thêm email"
-                onSave={(email) => updateMember.mutateAsync({ email })}
-                pending={updateMember.isPending}
-              />
-              <InlineEditField
-                label="Nguồn khách"
-                value={member.source}
-                onSave={(source) => updateMember.mutateAsync({ source })}
-                pending={updateMember.isPending}
-              />
+              {canFinancial ? (
+                <>
+                  <InlineEditField label="Điện thoại" value={member.phone} type="tel" displayValue={formatPhone(member.phone)} onSave={(phone) => updateMember.mutateAsync({ payload: { phone }, silent: true })} pending={updateMember.isPending} />
+                  <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => updateMember.mutateAsync({ payload: { email }, silent: true })} pending={updateMember.isPending} />
+                  <InlineEditField label="Nguồn khách" value={member.source} onSave={(source) => updateMember.mutateAsync({ payload: { source }, silent: true })} pending={updateMember.isPending} />
+                </>
+              ) : (
+                <>
+                  <div><dt>Điện thoại</dt><dd>{formatPhone(member.phone) || "—"}</dd></div>
+                  <div><dt>Email</dt><dd>{member.email || "—"}</dd></div>
+                  <div><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
+                </>
+              )}
               <div>
                 <dt>Mã MBS</dt>
                 <dd>{member.mbsCode || "—"}</dd>
@@ -563,12 +692,63 @@ export function MemberDetailPage() {
               <h2>Lịch sử gói tập</h2>
               <p>Đăng ký, gia hạn, thanh toán và phiếu thu</p>
             </div>
-            <Button size="sm" onClick={() => open("renew")}>
-              <Plus size={14} />
-              Đăng ký gói
-            </Button>
+            {canFinancial && (
+              <Button size="sm" onClick={() => open("renew")}>
+                <Plus size={14} /> Đăng ký gói
+              </Button>
+            )}
           </div>
           <DataTable columns={membershipColumns} rows={member.memberships} />
+          {!!member.membershipEvents?.length && (
+            <div className="mt-6">
+              <div className="section-header">
+                <div><h3>Lịch sử biến động gói</h3><p>Bảo lưu, chuyển nhượng, đổi, nâng cấp và hủy gói</p></div>
+              </div>
+              <div className="membership-event-timeline">
+                {member.membershipEvents.map((event) => (
+                  <div key={event.id}>
+                    <time>{shortDate(event.effectiveAt)}</time>
+                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy gói" })[event.action] || event.action}</span>
+                    <div>
+                      <strong>{event.action === "freeze" ? `${event.details?.compensatedDays || ""} ngày bảo lưu` : event.fromPackage && event.toPackage && event.fromPackage !== event.toPackage ? `${event.fromPackage} → ${event.toPackage}` : event.fromMember && event.toMember && event.fromMember !== event.toMember ? `${event.fromMember} → ${event.toMember}` : event.reason}</strong>
+                      <p>{event.reason} · {event.createdBy}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+      {tab === "payments" && (
+        <section className="mt-5">
+          <div className="section-header">
+            <div>
+              <h2>Lịch sử thanh toán</h2>
+              <p>
+                Mỗi lần thu tiền là một giao dịch độc lập, kèm đầy đủ chứng từ
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="block text-[11px] text-slate-400">
+                Tổng đã ghi nhận
+              </span>
+              <strong className="text-sm text-slate-900">
+                {money(
+                  member.payments.reduce(
+                    (sum, row) => sum + Number(row.amount || 0),
+                    0,
+                  ),
+                )}
+              </strong>
+            </div>
+          </div>
+          <DataTable
+            columns={paymentColumns}
+            rows={member.payments}
+            emptyTitle="Chưa có giao dịch"
+            emptyDescription="Các lần thanh toán sẽ xuất hiện tại đây."
+          />
         </section>
       )}
       {tab === "checkins" && (
@@ -618,10 +798,12 @@ export function MemberDetailPage() {
               <h2>PT & lịch tập</h2>
               <p>Toàn bộ lịch sử PT và số buổi</p>
             </div>
-            <Button size="sm" onClick={() => open("training", activeTraining)}>
-              <Dumbbell size={14} />
-              {activeTraining ? "Chỉnh sửa PT" : "Đăng ký PT"}
-            </Button>
+            {canEditPt && (
+              <Button size="sm" onClick={() => open("training", activeTraining)}>
+                <Dumbbell size={14} />
+                {activeTraining ? "Chỉnh sửa PT" : "Đăng ký PT"}
+              </Button>
+            )}
           </div>
           <DataTable
             rows={member.training}
@@ -638,10 +820,11 @@ export function MemberDetailPage() {
               <h2>Ghi chú chăm sóc</h2>
               <p>Thông tin nội bộ dành cho nhân viên phụ trách</p>
             </div>
-            <Button size="sm" variant="secondary" onClick={() => open("edit")}>
-              <Pencil size={14} />
-              Chỉnh sửa
-            </Button>
+            {canFinancial && (
+              <Button size="sm" variant="secondary" onClick={() => open("edit")}>
+                <Pencil size={14} /> Chỉnh sửa
+              </Button>
+            )}
           </div>
           <div className="border-y border-slate-200 bg-white px-4 py-5 text-[13px] leading-6 text-slate-700">
             {member.notes || (
@@ -656,35 +839,34 @@ export function MemberDetailPage() {
         <section className="mt-5 max-w-3xl">
           <div className="section-header">
             <div>
-              <h2>Hoạt động gần đây</h2>
-              <p>Giao dịch và tương tác được ghi nhận</p>
+              <h2>Nhật ký thao tác</h2>
+              <p>Ai đã thay đổi gì trên hồ sơ này và vào thời điểm nào</p>
             </div>
           </div>
           <div className="activity-timeline">
-            {[
-              ...member.payments.map((row) => ({
-                id: `p${row.id}`,
-                time: row.paidAt,
-                title: `Thanh toán ${money(row.amount)}`,
-                meta: row.description,
-              })),
-              ...member.checkins.slice(0, 15).map((row) => ({
-                id: `c${row.id}`,
-                time: row.checkedInAt,
-                title: "Check-in tại quầy",
-                meta: row.source,
-              })),
-            ]
-              .sort((a, b) => new Date(b.time) - new Date(a.time))
-              .map((item) => (
+            {member.auditLogs?.length ? (
+              member.auditLogs.map((item) => (
                 <div key={item.id}>
-                  <time>{dateTime(item.time)}</time>
+                  <time>{dateTime(item.createdAt)}</time>
                   <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.meta}</p>
+                    <strong>{item.summary}</strong>
+                    <p>
+                      {item.actor.name} · {item.actor.role}
+                    </p>
                   </div>
                 </div>
-              ))}
+              ))
+            ) : (
+              <div>
+                <time>—</time>
+                <div>
+                  <strong>Chưa có nhật ký mới</strong>
+                  <p>
+                    Các thao tác từ thời điểm bật Audit Log sẽ được lưu tại đây.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -693,7 +875,7 @@ export function MemberDetailPage() {
         options={options.data}
         open={dialog === "edit"}
         onClose={() => setDialog(null)}
-        onSubmit={(payload) => updateMember.mutate(payload)}
+        onSubmit={(payload) => updateMember.mutate({ payload })}
         pending={updateMember.isPending}
         error={formError}
       />
@@ -706,8 +888,12 @@ export function MemberDetailPage() {
           setDialog(null);
           setSelectedMembership(null);
         }}
-        onSubmit={(data) =>
-          saveMembership.mutate({ membership: selectedMembership, data })
+        onSubmit={(data, feedback) =>
+          saveMembership.mutate({
+            membership: selectedMembership,
+            data,
+            feedback,
+          })
         }
         pending={saveMembership.isPending}
         error={formError}
@@ -717,10 +903,11 @@ export function MemberDetailPage() {
         options={options.data}
         open={dialog === "payment"}
         onClose={() => setDialog(null)}
-        onSubmit={(data) =>
+        onSubmit={(data, feedback) =>
           saveMembership.mutate({
             membership: selectedMembership || current,
             data,
+            feedback,
           })
         }
         pending={saveMembership.isPending}
@@ -740,6 +927,32 @@ export function MemberDetailPage() {
           })
         }
         pending={saveDeadline.isPending}
+        error={formError}
+      />
+      <PaymentReceiptModal
+        payment={selectedPayment}
+        open={!!selectedPayment}
+        onClose={() => {
+          setSelectedPayment(null);
+          setFormError("");
+        }}
+        onUpload={(data) =>
+          uploadReceipts.mutate({ paymentId: selectedPayment.id, data })
+        }
+        pending={uploadReceipts.isPending}
+        error={formError}
+      />
+      <MembershipOperationsModal
+        membership={selectedMembership || current}
+        memberId={memberId}
+        options={options.data}
+        open={dialog === "operations"}
+        onClose={() => {
+          setDialog(null);
+          setSelectedMembership(null);
+        }}
+        onSubmit={(variables) => membershipOperation.mutate(variables)}
+        pending={membershipOperation.isPending}
         error={formError}
       />
       <TrainingForm

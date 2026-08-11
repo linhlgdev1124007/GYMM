@@ -49,8 +49,13 @@ export function DebtDeadlineForm({
           <Button data-modal-close variant="secondary" onClick={onClose}>
             Hủy
           </Button>
-          <Button type="submit" disabled={pending || !dueDate}>
-            {pending ? "Đang lưu…" : "Lưu hạn thanh toán"}
+          <Button
+            type="submit"
+            loading={pending}
+            loadingText="Đang lưu…"
+            disabled={!dueDate}
+          >
+            Lưu hạn thanh toán
           </Button>
         </div>
       </form>

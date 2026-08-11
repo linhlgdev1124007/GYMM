@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ReceiptText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -12,6 +12,8 @@ import { DateInput } from "../../components/ui/SmartInputs";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { dateTime, money } from "../../utils/format";
+import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
+import { notify } from "../../services/notify";
 
 const methods = {
   cash: "Tiền mặt",
@@ -20,18 +22,32 @@ const methods = {
   apple_pay: "Apple Pay",
 };
 export function PaymentsPage() {
+  const client = useQueryClient();
   const [search, setSearch] = useState("");
   const q = useDebouncedValue(search);
   const [method, setMethod] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+  const [selectedPayment, setSelectedPayment] = useState(null);
+  const [formError, setFormError] = useState("");
   const query = useQuery({
     queryKey: ["payments", q, method, dateFrom, dateTo, page],
     queryFn: () =>
       api(
         `/api/payments?${queryString({ q, method, dateFrom, dateTo, page, pageSize: 20 })}`,
       ),
+  });
+  const uploadReceipts = useMutation({
+    mutationFn: ({ id, data }) =>
+      api(`/api/payments/${id}/receipts`, { method: "POST", body: data }),
+    onSuccess: (payment) => {
+      client.invalidateQueries({ queryKey: ["payments"] });
+      client.invalidateQueries({ queryKey: ["member", payment.memberId] });
+      setSelectedPayment(payment);
+      notify.success(`Đã thêm chứng từ cho ${payment.number}.`);
+    },
+    onError: (error) => setFormError(error.message),
   });
   const columns = [
     {
@@ -79,18 +95,19 @@ export function PaymentsPage() {
     },
     {
       key: "receipt",
-      label: "",
-      render: (r) =>
-        r.receiptUrl && (
-          <a
-            href={r.receiptUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-navy-700 hover:underline"
-          >
-            Phiếu <ExternalLink size={12} />
-          </a>
-        ),
+      label: "Chứng từ",
+      render: (r) => (
+        <button
+          className="receipt-count-button"
+          onClick={() => {
+            setFormError("");
+            setSelectedPayment(r);
+          }}
+        >
+          <ReceiptText size={14} />
+          {r.receiptCount ? `${r.receiptCount} ảnh` : "+ Thêm bill"}
+        </button>
+      ),
     },
   ];
   return (
@@ -141,8 +158,23 @@ export function PaymentsPage() {
         columns={columns}
         rows={query.data?.items}
         loading={query.isLoading}
+        error={query.error}
+        onRetry={query.refetch}
       />
       <Pagination data={query.data?.pagination} onPage={setPage} />
+      <PaymentReceiptModal
+        payment={selectedPayment}
+        open={!!selectedPayment}
+        onClose={() => {
+          setSelectedPayment(null);
+          setFormError("");
+        }}
+        onUpload={(data) =>
+          uploadReceipts.mutate({ id: selectedPayment.id, data })
+        }
+        pending={uploadReceipts.isPending}
+        error={formError}
+      />
     </>
   );
 }

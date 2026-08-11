@@ -152,8 +152,8 @@ export function MemberEditForm({
           <Button data-modal-close variant="secondary" onClick={onClose}>
             Hủy
           </Button>
-          <Button type="submit" disabled={pending}>
-            {pending ? "Đang lưu…" : "Lưu thay đổi"}
+          <Button type="submit" loading={pending} loadingText="Đang lưu…">
+            Lưu thay đổi
           </Button>
         </div>
       </form>

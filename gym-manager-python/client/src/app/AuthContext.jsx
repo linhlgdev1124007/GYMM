@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../services/api";
+import { notify } from "../services/notify";
 
 const AuthContext = createContext(null);
 
@@ -23,6 +24,8 @@ export function AuthProvider({ children }) {
       queryClient.clear();
       queryClient.setQueryData(["auth"], null);
     },
+    onError: (error) =>
+      notify.errorFrom(error, "Không thể đăng xuất. Vui lòng thử lại."),
   });
   return (
     <AuthContext.Provider
@@ -32,6 +35,7 @@ export function AuthProvider({ children }) {
         login: loginMutation.mutateAsync,
         loginPending: loginMutation.isPending,
         logout: logoutMutation.mutateAsync,
+        logoutPending: logoutMutation.isPending,
       }}
     >
       {children}

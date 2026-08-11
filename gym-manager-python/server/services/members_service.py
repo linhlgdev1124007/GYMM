@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import secrets
+import json
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import and_, func, or_
@@ -9,9 +10,10 @@ from sqlalchemy.orm import Session, aliased, joinedload
 from ..database import ROOT_DIR
 from ..models import (
     AttendanceSession, BankAccount, Branch, Customer, Employee, Membership,
-    Payment, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage,
+    MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User,
 )
-from .serializers import membership_data, package_data, pagination, person_data, pt_data, payment_data
+from .audit_service import member_audit_logs, record_audit
+from .serializers import membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,6 +50,26 @@ async def save_receipt(upload: UploadFile | None) -> str | None:
     filename = f"receipt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}{suffix}"
     (RECEIPT_DIR / filename).write_bytes(content)
     return f"/uploads/receipts/{filename}"
+
+
+async def attach_receipts(payment: Payment, uploads: list[UploadFile], actor: User | None):
+    if len(uploads) > 10:
+        raise HTTPException(status_code=400, detail="Mỗi lần chỉ được tải tối đa 10 ảnh chứng từ.")
+    saved = []
+    for upload in uploads:
+        path = await save_receipt(upload)
+        if path:
+            payment.receipts.append(
+                PaymentReceipt(
+                    file_path=path,
+                    original_name=upload.filename,
+                    uploaded_by_user_id=actor.id if actor else None,
+                )
+            )
+            saved.append(path)
+    if saved and not payment.receipt_image_path:
+        payment.receipt_image_path = saved[0]
+    return saved
 
 
 def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None, expiring_days: int = 14, payment_status: str = "all", overdue_days: int = 7):
@@ -153,26 +175,41 @@ def get_member(db: Session, member_id: int):
         raise HTTPException(status_code=404, detail="Không tìm thấy hội viên.")
     memberships = db.query(Membership).options(
         joinedload(Membership.package), joinedload(Membership.payments).joinedload(Payment.bank_account),
+        joinedload(Membership.payments).joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by),
+        joinedload(Membership.freezes).joinedload(MembershipFreeze.created_by),
+        joinedload(Membership.events).joinedload(MembershipEvent.created_by),
+        joinedload(Membership.events).joinedload(MembershipEvent.from_customer).joinedload(Customer.person),
+        joinedload(Membership.events).joinedload(MembershipEvent.to_customer).joinedload(Customer.person),
+        joinedload(Membership.events).joinedload(MembershipEvent.from_package),
+        joinedload(Membership.events).joinedload(MembershipEvent.to_package),
         joinedload(Membership.sale_online_employee).joinedload(Employee.person),
         joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
     ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
     pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
     checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id == member_id).order_by(AttendanceSession.checked_in_at.desc()).limit(100).all()
-    payments = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package)).filter(Payment.customer_id == member_id).order_by(Payment.paid_at.desc()).all()
+    payments = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package), joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by)).filter(Payment.customer_id == member_id).order_by(Payment.paid_at.desc()).all()
+    membership_events = db.query(MembershipEvent).options(
+        joinedload(MembershipEvent.created_by),
+        joinedload(MembershipEvent.from_customer).joinedload(Customer.person),
+        joinedload(MembershipEvent.to_customer).joinedload(Customer.person),
+        joinedload(MembershipEvent.from_package), joinedload(MembershipEvent.to_package),
+    ).filter(or_(MembershipEvent.from_customer_id == member_id, MembershipEvent.to_customer_id == member_id)).order_by(MembershipEvent.created_at.desc()).all()
     return {
         "id": member.id, "code": member.customer_code, "mbsCode": member.mbs_card_code,
         **person_data(member.person), "source": member.source, "status": member.status,
         "notes": member.notes, "branch": member.branch.name if member.branch else None,
         "salesEmployeeId": member.sales_employee_id,
         "salesEmployee": member.sales_employee.person.display_name if member.sales_employee else None,
-        "memberships": [membership_data(row, include_payments=True) for row in memberships if not row.package.is_pt],
+        "memberships": [membership_data(row, include_payments=True, include_history=True) for row in memberships if not row.package.is_pt],
+        "membershipEvents": [membership_event_data(row) for row in membership_events],
         "training": [pt_data(row) for row in pt_rows],
         "checkins": [{"id": row.id, "checkedInAt": row.checked_in_at.isoformat(), "checkedOutAt": row.checked_out_at.isoformat() if row.checked_out_at else None, "result": row.result, "status": row.status, "source": row.source} for row in checkins],
         "payments": [payment_data(row) for row in payments],
+        "auditLogs": member_audit_logs(db, member_id),
     }
 
 
-def create_member(db: Session, payload: dict):
+def create_member(db: Session, payload: dict, actor: User | None = None):
     name = str(payload.get("name", "")).strip()
     phone = str(payload.get("phone", "")).strip()
     if not name or not phone:
@@ -181,20 +218,25 @@ def create_member(db: Session, payload: dict):
         raise HTTPException(status_code=409, detail="Số điện thoại này đã tồn tại.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    branch_id = _int(payload.get("branchId")) or (db.query(Branch.id).order_by(Branch.id).scalar())
+    branch_id = _int(payload.get("branchId")) or (
+        db.query(Branch.id).order_by(Branch.id).limit(1).scalar()
+    )
     member = Customer(person_id=person.id, branch_id=branch_id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
     member.customer_code = f"MB-{member.id:06d}"
+    record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
     db.commit()
     return get_member(db, member.id)
 
 
-def update_member(db: Session, member_id: int, payload: dict):
+def update_member(db: Session, member_id: int, payload: dict, actor: User | None = None):
     member = db.query(Customer).options(joinedload(Customer.person)).filter(Customer.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội viên.")
     if "name" in payload and not str(payload["name"]).strip():
         raise HTTPException(status_code=422, detail="Họ tên không được để trống.")
+    old_name = member.person.display_name
+    changed_fields = list(payload.keys())
     member.person.display_name = str(payload.get("name", member.person.display_name)).strip()
     for source, target in [("phone", "phone"), ("email", "email"), ("gender", "gender")]:
         if source in payload:
@@ -206,6 +248,7 @@ def update_member(db: Session, member_id: int, payload: dict):
     if "notes" in payload: member.notes = payload.get("notes") or None
     if "salesEmployeeId" in payload: member.sales_employee_id = _int(payload.get("salesEmployeeId"))
     if payload.get("status") in ("lead", "active", "blocked", "inactive", "frozen"): member.status = payload["status"]
+    record_audit(db, actor, "update", "member", member.id, f"Cập nhật hồ sơ {member.person.display_name}", customer_id=member.id, details={"fields": changed_fields, "previousName": old_name})
     db.commit()
     return get_member(db, member_id)
 
@@ -218,15 +261,17 @@ def list_plans(db: Session, include_inactive=False):
     return [{**package_data(row), "memberCount": counts.get(row.id, 0)} for row in rows]
 
 
-def create_plan(db: Session, payload: dict):
+def create_plan(db: Session, payload: dict, actor: User | None = None):
     name = str(payload.get("name", "")).strip()
     if not name: raise HTTPException(status_code=422, detail="Tên gói là bắt buộc.")
     plan = ServicePackage(code=f"PLAN-{secrets.token_hex(4).upper()}", name=name, category=payload.get("category") or "Fitness", package_type="time", duration_days=max(_int(payload.get("durationDays")) or 1, 1), session_count=None, price=_money(payload.get("price")), is_pt=False, is_active=True)
-    db.add(plan); db.commit(); db.refresh(plan)
+    db.add(plan); db.flush()
+    record_audit(db, actor, "create", "plan", plan.id, f"Tạo gói tập {plan.name}", details={"price": plan.price, "durationDays": plan.duration_days})
+    db.commit(); db.refresh(plan)
     return package_data(plan)
 
 
-def update_plan(db: Session, plan_id: int, payload: dict):
+def update_plan(db: Session, plan_id: int, payload: dict, actor: User | None = None):
     plan = db.query(ServicePackage).filter(ServicePackage.id == plan_id, ServicePackage.is_pt == False).first()
     if not plan: raise HTTPException(status_code=404, detail="Không tìm thấy gói tập.")
     if "name" in payload: plan.name = str(payload["name"]).strip() or plan.name
@@ -234,6 +279,7 @@ def update_plan(db: Session, plan_id: int, payload: dict):
     if "durationDays" in payload: plan.duration_days = max(_int(payload["durationDays"]) or 1, 1)
     if "price" in payload: plan.price = _money(payload["price"])
     if "active" in payload: plan.is_active = bool(payload["active"])
+    record_audit(db, actor, "update", "plan", plan.id, f"Cập nhật gói tập {plan.name}", details={"fields": list(payload.keys())})
     db.commit(); return package_data(plan)
 
 
@@ -252,7 +298,7 @@ def list_memberships(db: Session, q: str, membership_status: str, page: int, pag
     return {"items": items, "pagination": pagination(page, page_size, total)}
 
 
-async def create_membership(db: Session, form: dict, receipt: UploadFile | None):
+async def create_membership(db: Session, form: dict, receipts: list[UploadFile], actor: User | None = None):
     member = db.get(Customer, _int(form.get("memberId")))
     plan = db.query(ServicePackage).filter(ServicePackage.id == _int(form.get("planId")), ServicePackage.is_pt == False, ServicePackage.is_active == True).first()
     if not member or not plan: raise HTTPException(status_code=422, detail="Hội viên hoặc gói tập không hợp lệ.")
@@ -262,38 +308,49 @@ async def create_membership(db: Session, form: dict, receipt: UploadFile | None)
     row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=date.today(), starts_at=starts_at, expires_at=_parse_date(form.get("expiresAt")) or (starts_at + timedelta(days=plan.duration_days) if plan.duration_days else None), remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=max(final_price-paid, 0), debt_due_date=_parse_date(form.get("debtDueDate")), sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status="active")
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if paid:
-        receipt_path = await save_receipt(receipt)
-        db.add(Payment(customer_id=member.id, membership_id=row.id, bank_account_id=_int(form.get("bankAccountId")), payment_no=f"PAY-{row.id:06d}-001", paid_at=datetime.utcnow(), amount=paid, method=form.get("paymentMethod") or "cash", channel="counter", shift_date=date.today(), receipt_image_path=receipt_path, note="Thanh toán đăng ký gói"))
+        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=_int(form.get("bankAccountId")), payment_no=f"PAY-{row.id:06d}-001", paid_at=datetime.utcnow(), amount=paid, method=form.get("paymentMethod") or "cash", channel="counter", shift_date=date.today(), note="Thanh toán đăng ký gói")
+        db.add(payment)
+        await attach_receipts(payment, receipts, actor)
+        db.flush()
+    record_audit(db, actor, "create", "membership", row.id, f"Đăng ký gói {plan.name}", customer_id=member.id, details={"startsAt": row.starts_at, "expiresAt": row.expires_at, "finalPrice": final_price, "paidAmount": paid})
+    if paid:
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts)})
     member.status = "active"; db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
     return membership_data(row)
 
 
-async def update_membership(db: Session, membership_id: int, form: dict, receipt: UploadFile | None):
+async def update_membership(db: Session, membership_id: int, form: dict, receipts: list[UploadFile], actor: User | None = None):
     row = db.query(Membership).options(joinedload(Membership.package)).filter(Membership.id == membership_id).first()
     if not row or row.package.is_pt: raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký gói.")
     row.starts_at = _parse_date(form.get("startsAt")) or row.starts_at
     row.expires_at = _parse_date(form.get("expiresAt"))
     row.final_price = _money(form.get("finalPrice"), row.final_price)
-    row.paid_amount = _money(form.get("paidAmount"), row.paid_amount)
+    previous_paid = row.paid_amount or 0
+    next_paid = _money(form.get("paidAmount"), previous_paid)
+    if next_paid < previous_paid:
+        raise HTTPException(status_code=422, detail="Không thể giảm số tiền đã thu. Hãy tạo nghiệp vụ hoàn tiền riêng.")
+    row.paid_amount = next_paid
     row.deposit_amount = row.paid_amount
     row.debt_amount = max(row.final_price - row.paid_amount, 0)
     row.debt_due_date = _parse_date(form.get("debtDueDate")) if row.debt_amount else None
     if form.get("status") in ("active", "pending", "frozen", "cancelled"): row.status = form["status"]
-    payment = db.query(Payment).filter(Payment.membership_id == row.id).order_by(Payment.paid_at.desc()).first()
-    if row.paid_amount and not payment:
-        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-001", paid_at=datetime.utcnow(), shift_date=date.today(), note="Thanh toán gói")
+    delta = next_paid - previous_paid
+    payment = None
+    if delta > 0:
+        sequence = db.query(Payment).filter(Payment.membership_id == row.id).count() + 1
+        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=datetime.utcnow(), shift_date=date.today(), note="Thanh toán gói", amount=delta, method=form.get("paymentMethod") or "cash", bank_account_id=_int(form.get("bankAccountId")))
         db.add(payment)
-    if payment:
-        payment.amount = row.paid_amount; payment.method = form.get("paymentMethod") or payment.method; payment.bank_account_id = _int(form.get("bankAccountId"))
-        receipt_path = await save_receipt(receipt)
-        if receipt_path: payment.receipt_image_path = receipt_path
+        await attach_receipts(payment, receipts, actor)
+        db.flush()
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts)})
+    record_audit(db, actor, "update", "membership", row.id, f"Cập nhật gói {row.package.name}", customer_id=row.customer_id, details={"fields": list(form.keys()), "expiresAt": row.expires_at})
     db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
     return membership_data(row)
 
 
-def update_debt_due_date(db: Session, membership_id: int, payload: dict):
+def update_debt_due_date(db: Session, membership_id: int, payload: dict, actor: User | None = None):
     row = db.query(Membership).options(joinedload(Membership.package)).filter(Membership.id == membership_id).first()
     if not row or row.package.is_pt:
         raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký gói.")
@@ -303,6 +360,148 @@ def update_debt_due_date(db: Session, membership_id: int, payload: dict):
     if not due_date:
         raise HTTPException(status_code=422, detail="Vui lòng chọn hạn thanh toán.")
     row.debt_due_date = due_date
+    record_audit(db, actor, "update", "membership", row.id, f"Đặt hạn thanh toán {due_date.strftime('%d/%m/%Y')}", customer_id=row.customer_id, details={"debtDueDate": due_date})
     db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
     return membership_data(row)
+
+
+async def upload_payment_receipts(db: Session, payment_id: int, receipts: list[UploadFile], actor: User | None = None):
+    payment = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package), joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by)).filter(Payment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Không tìm thấy giao dịch thanh toán.")
+    if not receipts:
+        raise HTTPException(status_code=422, detail="Vui lòng chọn ít nhất một ảnh chứng từ.")
+    saved = await attach_receipts(payment, receipts, actor)
+    record_audit(db, actor, "upload_receipt", "payment", payment.id, f"Thêm {len(saved)} chứng từ cho {payment.payment_no}", customer_id=payment.customer_id, details={"files": [upload.filename for upload in receipts]})
+    db.commit()
+    db.refresh(payment)
+    return payment_data(payment)
+
+
+def freeze_membership(db: Session, membership_id: int, payload: dict, actor: User):
+    row = db.query(Membership).options(joinedload(Membership.package), joinedload(Membership.customer).joinedload(Customer.person)).filter(Membership.id == membership_id).first()
+    if not row or row.package.is_pt:
+        raise HTTPException(404, "Không tìm thấy đăng ký gói.")
+    if row.status in ("cancelled", "expired"):
+        raise HTTPException(422, "Không thể bảo lưu gói đã hủy hoặc hết hạn.")
+    starts_at = _parse_date(payload.get("startsAt"))
+    ends_at = _parse_date(payload.get("endsAt"))
+    reason = str(payload.get("reason", "")).strip()
+    if not starts_at or not ends_at or ends_at < starts_at:
+        raise HTTPException(422, "Khoảng thời gian bảo lưu chưa hợp lệ.")
+    if starts_at < date.today():
+        raise HTTPException(422, "Ngày bắt đầu bảo lưu không được ở quá khứ.")
+    if not reason:
+        raise HTTPException(422, "Vui lòng nhập lý do bảo lưu.")
+    overlap = db.query(MembershipFreeze).filter(
+        MembershipFreeze.membership_id == row.id,
+        MembershipFreeze.starts_at <= ends_at,
+        MembershipFreeze.ends_at >= starts_at,
+    ).first()
+    if overlap:
+        raise HTTPException(409, "Thời gian này trùng với một lần bảo lưu đã có.")
+    if not row.expires_at:
+        raise HTTPException(422, "Gói không có ngày hết hạn nên không thể cộng bù tự động.")
+    days = (ends_at - starts_at).days + 1
+    previous_expiry = row.expires_at
+    row.expires_at = row.expires_at + timedelta(days=days)
+    freeze = MembershipFreeze(
+        membership_id=row.id,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        compensated_days=days,
+        reason=reason,
+        created_by_user_id=actor.id,
+    )
+    event = MembershipEvent(
+        membership_id=row.id,
+        action="freeze",
+        from_customer_id=row.customer_id,
+        to_customer_id=row.customer_id,
+        from_package_id=row.package_id,
+        to_package_id=row.package_id,
+        effective_at=starts_at,
+        reason=reason,
+        created_by_user_id=actor.id,
+        details_json=json.dumps({"startsAt": str(starts_at), "endsAt": str(ends_at), "compensatedDays": days, "previousExpiry": str(previous_expiry), "newExpiry": str(row.expires_at)}, ensure_ascii=False),
+    )
+    db.add_all([freeze, event])
+    db.flush()
+    record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
+    db.commit()
+    return get_member(db, row.customer_id)
+
+
+def membership_action(db: Session, membership_id: int, payload: dict, actor: User):
+    row = db.query(Membership).options(joinedload(Membership.package), joinedload(Membership.customer).joinedload(Customer.person)).filter(Membership.id == membership_id).first()
+    if not row or row.package.is_pt:
+        raise HTTPException(404, "Không tìm thấy đăng ký gói.")
+    action = payload.get("action")
+    reason = str(payload.get("reason", "")).strip()
+    if action not in ("transfer", "change", "upgrade", "cancel"):
+        raise HTTPException(422, "Nghiệp vụ gói không hợp lệ.")
+    if not reason:
+        raise HTTPException(422, "Vui lòng nhập lý do để lưu lịch sử đối soát.")
+    old_customer_id, old_package_id = row.customer_id, row.package_id
+    old_customer_name, old_package_name = row.customer.person.display_name, row.package.name
+    details = {}
+    summary = ""
+    if action == "transfer":
+        target_id = _int(payload.get("targetMemberId"))
+        target = db.query(Customer).options(joinedload(Customer.person)).filter(Customer.id == target_id).first()
+        if not target or target.id == row.customer_id:
+            raise HTTPException(422, "Hội viên nhận chuyển nhượng không hợp lệ.")
+        existing = db.query(Membership).join(ServicePackage).filter(
+            Membership.customer_id == target.id,
+            Membership.status == "active",
+            ServicePackage.is_pt == False,
+            or_(Membership.expires_at == None, Membership.expires_at >= date.today()),
+        ).first()
+        if existing:
+            raise HTTPException(409, "Hội viên nhận đang có một gói hoạt động.")
+        row.customer_id = target.id
+        summary = f"Chuyển gói {old_package_name} từ {old_customer_name} sang {target.person.display_name}"
+        details = {"fromMember": old_customer_name, "toMember": target.person.display_name}
+        new_customer_id, new_package_id = target.id, old_package_id
+    elif action in ("change", "upgrade"):
+        plan = db.query(ServicePackage).filter(ServicePackage.id == _int(payload.get("planId")), ServicePackage.is_pt == False, ServicePackage.is_active == True).first()
+        if not plan or plan.id == row.package_id:
+            raise HTTPException(422, "Vui lòng chọn một gói tập khác.")
+        new_price = _money(payload.get("finalPrice"), plan.price or 0)
+        if new_price < (row.paid_amount or 0):
+            raise HTTPException(422, "Giá gói mới không được thấp hơn số tiền đã thu.")
+        previous_price = row.final_price
+        row.package_id = plan.id
+        row.final_price = new_price
+        row.debt_amount = max(new_price - (row.paid_amount or 0), 0)
+        if payload.get("expiresAt"):
+            row.expires_at = _parse_date(payload.get("expiresAt"))
+        summary = f"{'Nâng cấp' if action == 'upgrade' else 'Đổi'} gói {old_package_name} sang {plan.name}"
+        details = {"fromPackage": old_package_name, "toPackage": plan.name, "previousPrice": previous_price, "newPrice": new_price, "newDebt": row.debt_amount}
+        new_customer_id, new_package_id = old_customer_id, plan.id
+    else:
+        if row.status == "cancelled":
+            raise HTTPException(409, "Gói này đã được hủy trước đó.")
+        row.status = "cancelled"
+        summary = f"Hủy gói {old_package_name} của {old_customer_name}"
+        details = {"paidAmount": row.paid_amount, "debtAmount": row.debt_amount, "refundCreated": False}
+        new_customer_id, new_package_id = old_customer_id, old_package_id
+    event = MembershipEvent(
+        membership_id=row.id,
+        action=action,
+        from_customer_id=old_customer_id,
+        to_customer_id=new_customer_id,
+        from_package_id=old_package_id,
+        to_package_id=new_package_id,
+        effective_at=_parse_date(payload.get("effectiveAt")) or date.today(),
+        reason=reason,
+        details_json=json.dumps(details, ensure_ascii=False, default=str),
+        created_by_user_id=actor.id,
+    )
+    db.add(event)
+    record_audit(db, actor, action, "membership", row.id, summary, customer_id=new_customer_id, details={**details, "reason": reason})
+    if action == "transfer":
+        record_audit(db, actor, action, "membership", row.id, summary, customer_id=old_customer_id, details={**details, "reason": reason})
+    db.commit()
+    return {"membershipId": row.id, "customerId": new_customer_id, "action": action, "summary": summary}

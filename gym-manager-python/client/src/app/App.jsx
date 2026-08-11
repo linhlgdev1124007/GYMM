@@ -59,6 +59,16 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const AuditLogPage = lazy(() =>
+  import("../features/audit/AuditLogPage").then((module) => ({
+    default: module.AuditLogPage,
+  })),
+);
+const AccountsPage = lazy(() =>
+  import("../features/users/AccountsPage").then((module) => ({
+    default: module.AccountsPage,
+  })),
+);
 
 export function App() {
   const { user, loading } = useAuth();
@@ -90,7 +100,7 @@ export function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="members" element={<MembersPage />} />
           <Route path="members/:memberId" element={<MemberDetailPage />} />
-          <Route path="memberships" element={<MembershipsPage />} />
+          <Route path="memberships" element={allowed(["admin", "manager", "receptionist"], <MembershipsPage />)} />
           <Route
             path="plans"
             element={allowed(["admin", "manager"], <PlansPage />)}
@@ -100,8 +110,8 @@ export function App() {
             element={allowed(["admin", "manager"], <TrainersPage />)}
           />
           <Route path="training" element={<TrainingPage />} />
-          <Route path="check-in" element={<CheckinPage />} />
-          <Route path="payments" element={<PaymentsPage />} />
+          <Route path="check-in" element={allowed(["admin", "manager", "receptionist"], <CheckinPage />)} />
+          <Route path="payments" element={allowed(["admin", "manager", "receptionist"], <PaymentsPage />)} />
           <Route
             path="reports"
             element={allowed(["admin", "manager"], <ReportsPage />)}
@@ -109,6 +119,14 @@ export function App() {
           <Route
             path="settings"
             element={allowed(["admin"], <SettingsPage />)}
+          />
+          <Route
+            path="audit-logs"
+            element={allowed(["admin", "manager"], <AuditLogPage />)}
+          />
+          <Route
+            path="accounts"
+            element={allowed(["admin"], <AccountsPage />)}
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>

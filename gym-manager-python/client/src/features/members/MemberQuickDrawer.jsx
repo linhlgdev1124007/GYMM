@@ -6,12 +6,13 @@ import {
   CreditCard,
   Dumbbell,
   ExternalLink,
+  LoaderCircle,
   Pencil,
   TriangleAlert,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
 import { api } from "../../services/api";
+import { notify } from "../../services/notify";
 import {
   dateTime,
   formatPhone,
@@ -28,6 +29,7 @@ import { MembershipForm } from "../../components/forms/MembershipForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
+import { useAuth } from "../../app/AuthContext";
 
 export function MemberQuickDrawer({
   memberId,
@@ -35,6 +37,10 @@ export function MemberQuickDrawer({
   initialAction,
   onActionConsumed,
 }) {
+  const { user } = useAuth();
+  const canFinancial = ["admin", "manager", "receptionist"].includes(
+    user?.role,
+  );
   const client = useQueryClient();
   const [dialog, setDialog] = useState(null);
   const [formError, setFormError] = useState("");
@@ -57,14 +63,18 @@ export function MemberQuickDrawer({
     client.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const update = useMutation({
-    mutationFn: (payload) =>
+    mutationFn: ({ payload }) =>
       api(`/api/members/${memberId}`, { method: "PATCH", body: payload }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       refresh();
-      setDialog(null);
-      toast.success("Đã cập nhật hội viên.");
+      if (!variables.silent) {
+        setDialog(null);
+        notify.success(`Đã lưu hồ sơ ${member.name}.`);
+      }
     },
-    onError: (e) => setFormError(e.message),
+    onError: (e, variables) => {
+      if (!variables.silent) setFormError(e.message);
+    },
   });
   const membershipSave = useMutation({
     mutationFn: ({ id, data }) =>
@@ -72,10 +82,20 @@ export function MemberQuickDrawer({
         method: id ? "PATCH" : "POST",
         body: data,
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       refresh();
       setDialog(null);
-      toast.success("Đã cập nhật gói và thanh toán.");
+      if (variables.feedback?.amount) {
+        notify.success(
+          `Đã ghi nhận ${money(variables.feedback.amount)} cho ${member.name}.`,
+        );
+      } else if (variables.feedback?.expiresAt) {
+        notify.success(
+          `Đã lưu ${variables.feedback.planName} đến ${shortDate(variables.feedback.expiresAt)} cho ${member.name}.`,
+        );
+      } else {
+        notify.success(`Đã cập nhật gói tập của ${member.name}.`);
+      }
     },
     onError: (e) => setFormError(e.message),
   });
@@ -88,7 +108,7 @@ export function MemberQuickDrawer({
     onSuccess: () => {
       refresh();
       setDialog(null);
-      toast.success("Đã lưu hạn thanh toán.");
+      notify.success(`Đã lưu hạn thanh toán cho ${member.name}.`);
     },
     onError: (e) => setFormError(e.message),
   });
@@ -101,7 +121,7 @@ export function MemberQuickDrawer({
     onSuccess: () => {
       refresh();
       setDialog(null);
-      toast.success("Đã lưu PT cho hội viên.");
+      notify.success(`Đã cập nhật đăng ký PT của ${member.name}.`);
     },
     onError: (e) => setFormError(e.message),
   });
@@ -111,11 +131,16 @@ export function MemberQuickDrawer({
         method: "POST",
         body: { memberId: Number(memberId) },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       refresh();
-      toast.success("Check-in thành công.");
+      notify.success(
+        `${member.name} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
+      );
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) =>
+      /đã check-in/i.test(e.message)
+        ? notify.warning(e.message)
+        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
   });
   const current = member?.memberships[0];
   const training = member?.training.find((row) => row.status === "active");
@@ -186,21 +211,25 @@ export function MemberQuickDrawer({
               </div>
               <StatusBadge status={member.status} />
             </div>
-            <div className="quick-action-bar">
+            {canFinancial && <div className="quick-action-bar">
               <button
                 className="quick-action"
                 onClick={() => checkin.mutate()}
                 disabled={checkin.isPending}
               >
-                <CheckCircle2 size={17} />
-                <span>Check-in</span>
+                {checkin.isPending ? (
+                  <LoaderCircle className="animate-spin" size={17} />
+                ) : (
+                  <CheckCircle2 size={17} />
+                )}
+                <span>{checkin.isPending ? "Đang xử lý…" : "Check-in"}</span>
               </button>
               <button
                 className="quick-action"
                 onClick={() =>
                   current?.debtAmount
                     ? openDialog("payment")
-                    : toast.info("Hội viên hiện không có công nợ.")
+                    : notify.info("Hội viên hiện không có công nợ.")
                 }
               >
                 <CreditCard size={17} />
@@ -227,7 +256,7 @@ export function MemberQuickDrawer({
                 <Pencil size={17} />
                 <span>Chỉnh sửa</span>
               </button>
-            </div>
+            </div>}
             <section className="detail-section">
               {daysLeft != null && daysLeft <= 14 && (
                 <div className="detail-alert">
@@ -238,7 +267,7 @@ export function MemberQuickDrawer({
                       ? "đã hết hạn"
                       : `hết hạn sau ${daysLeft} ngày`}
                   </span>
-                  <button onClick={() => openDialog("renew")}>Gia hạn</button>
+                  {canFinancial && <button onClick={() => openDialog("renew")}>Gia hạn</button>}
                 </div>
               )}
               {current?.debtAmount > 0 && (
@@ -247,9 +276,9 @@ export function MemberQuickDrawer({
                     <TriangleAlert size={15} />
                     Công nợ {money(current.debtAmount)}
                   </span>
-                  <button onClick={() => openDialog("payment")}>
+                  {canFinancial && <button onClick={() => openDialog("payment")}>
                     Thu tiền
-                  </button>
+                  </button>}
                 </div>
               )}
               {!training && (
@@ -258,9 +287,9 @@ export function MemberQuickDrawer({
                     <TriangleAlert size={15} />
                     Chưa đăng ký PT
                   </span>
-                  <button onClick={() => openDialog("training")}>
+                  {canFinancial && <button onClick={() => openDialog("training")}>
                     Đăng ký PT
-                  </button>
+                  </button>}
                 </div>
               )}
               {training && !trainingCoaches.length && (
@@ -312,7 +341,7 @@ export function MemberQuickDrawer({
                       }
                     >
                       {money(current.debtAmount)}
-                      {current.debtAmount > 0 && (
+                      {canFinancial && current.debtAmount > 0 && (
                         <button
                           className="ml-3 text-xs font-medium text-blue-700"
                           onClick={() => openDialog("payment")}
@@ -326,7 +355,7 @@ export function MemberQuickDrawer({
                     <div className="inline-field">
                       <dt>Hạn thanh toán</dt>
                       <dd>
-                        <button
+                        {canFinancial ? <button
                           className={
                             current.debtDueDate &&
                             new Date(`${current.debtDueDate}T23:59:59`) <
@@ -339,7 +368,7 @@ export function MemberQuickDrawer({
                           {current.debtDueDate
                             ? `${shortDate(current.debtDueDate)} · Đổi hạn`
                             : "+ Đặt hạn"}
-                        </button>
+                        </button> : (current.debtDueDate ? shortDate(current.debtDueDate) : "Chưa đặt hạn")}
                       </dd>
                     </div>
                   )}
@@ -347,9 +376,9 @@ export function MemberQuickDrawer({
               ) : (
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-400">Chưa có gói tập</span>
-                  <Button size="sm" onClick={() => openDialog("renew")}>
+                  {canFinancial && <Button size="sm" onClick={() => openDialog("renew")}>
                     Đăng ký gói
-                  </Button>
+                  </Button>}
                 </div>
               )}
             </section>
@@ -373,14 +402,14 @@ export function MemberQuickDrawer({
                   <dd>
                     {training ? (
                       `${trainingCoaches.map((coach) => coach.name).join(", ") || "Chưa phân công"} · ${training.type}`
-                    ) : (
+                    ) : canFinancial ? (
                       <button
                         className="text-xs font-medium text-blue-700"
                         onClick={() => openDialog("training")}
                       >
                         + Gán PT
                       </button>
-                    )}
+                    ) : "Chưa đăng ký"}
                   </dd>
                 </div>
                 <div className="inline-field">
@@ -396,55 +425,33 @@ export function MemberQuickDrawer({
             <section className="detail-section">
               <h3 className="detail-section-title">Liên hệ & phụ trách</h3>
               <dl>
-                <InlineEditField
-                  label="Điện thoại"
-                  value={member.phone}
-                  type="tel"
-                  displayValue={formatPhone(member.phone)}
-                  onSave={(phone) => update.mutateAsync({ phone })}
-                  pending={update.isPending}
-                />
-                <InlineEditField
-                  label="Email"
-                  value={member.email}
-                  type="email"
-                  emptyAction="+ Thêm email"
-                  onSave={(email) => update.mutateAsync({ email })}
-                  pending={update.isPending}
-                />
-                <InlineEditField
-                  label="Nguồn khách"
-                  value={member.source}
-                  onSave={(source) => update.mutateAsync({ source })}
-                  pending={update.isPending}
-                />
-                <InlineEditField
-                  label="Trạng thái"
-                  value={member.status}
-                  displayValue={<StatusBadge status={member.status} />}
-                  type="select"
-                  options={[
-                    { value: "lead", label: "Tiềm năng" },
-                    { value: "active", label: "Đang hoạt động" },
-                    { value: "frozen", label: "Bảo lưu" },
-                    { value: "blocked", label: "Đã khóa" },
-                    { value: "inactive", label: "Tạm ngừng" },
-                  ]}
-                  onSave={(status) => update.mutateAsync({ status })}
-                  pending={update.isPending}
-                />
+                {canFinancial ? (
+                  <>
+                    <InlineEditField label="Điện thoại" value={member.phone} type="tel" displayValue={formatPhone(member.phone)} onSave={(phone) => update.mutateAsync({ payload: { phone }, silent: true })} pending={update.isPending} />
+                    <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => update.mutateAsync({ payload: { email }, silent: true })} pending={update.isPending} />
+                    <InlineEditField label="Nguồn khách" value={member.source} onSave={(source) => update.mutateAsync({ payload: { source }, silent: true })} pending={update.isPending} />
+                    <InlineEditField label="Trạng thái" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
+                  </>
+                ) : (
+                  <>
+                    <div className="inline-field"><dt>Điện thoại</dt><dd>{formatPhone(member.phone) || "—"}</dd></div>
+                    <div className="inline-field"><dt>Email</dt><dd>{member.email || "—"}</dd></div>
+                    <div className="inline-field"><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
+                    <div className="inline-field"><dt>Trạng thái</dt><dd><StatusBadge status={member.status} /></dd></div>
+                  </>
+                )}
               </dl>
             </section>
             {member.notes && (
               <section className="detail-section">
                 <h3 className="detail-section-title">
                   Ghi chú quan trọng{" "}
-                  <button
+                  {canFinancial && <button
                     className="normal-case text-blue-700"
                     onClick={() => openDialog("edit")}
                   >
                     Chỉnh sửa
-                  </button>
+                  </button>}
                 </h3>
                 <p className="text-[13px] leading-5 text-slate-700">
                   {member.notes}
@@ -461,7 +468,7 @@ export function MemberQuickDrawer({
             options={options.data}
             open={dialog === "edit"}
             onClose={() => setDialog(null)}
-            onSubmit={(payload) => update.mutate(payload)}
+            onSubmit={(payload) => update.mutate({ payload })}
             pending={update.isPending}
             error={formError}
           />
@@ -470,7 +477,9 @@ export function MemberQuickDrawer({
             options={options.data}
             open={dialog === "renew"}
             onClose={() => setDialog(null)}
-            onSubmit={(data) => membershipSave.mutate({ data })}
+            onSubmit={(data, feedback) =>
+              membershipSave.mutate({ data, feedback })
+            }
             pending={membershipSave.isPending}
             error={formError}
           />
@@ -479,7 +488,9 @@ export function MemberQuickDrawer({
             options={options.data}
             open={dialog === "payment"}
             onClose={() => setDialog(null)}
-            onSubmit={(data) => membershipSave.mutate({ id: current.id, data })}
+            onSubmit={(data, feedback) =>
+              membershipSave.mutate({ id: current.id, data, feedback })
+            }
             pending={membershipSave.isPending}
             error={formError}
           />

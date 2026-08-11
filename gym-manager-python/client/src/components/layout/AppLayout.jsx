@@ -16,7 +16,9 @@ import {
   LayoutDashboard,
   Menu,
   Package,
+  ScrollText,
   Settings,
+  ShieldCheck,
   UserRoundCog,
   Users,
   X,
@@ -24,6 +26,8 @@ import {
 import { useAuth } from "../../app/AuthContext";
 import { initials } from "../../utils/format";
 import { GlobalSearch } from "../common/GlobalSearch";
+import { NetworkStatusBanner } from "../common/NetworkStatusBanner";
+import { AlertCenter } from "../common/AlertCenter";
 import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
 import { api } from "../../services/api";
 
@@ -36,7 +40,7 @@ const groups = [
     label: "Quản lý",
     items: [
       { to: "/members", label: "Hội viên", icon: Users },
-      { to: "/memberships", label: "Đăng ký gói", icon: CreditCard },
+      { to: "/memberships", label: "Đăng ký gói", icon: CreditCard, roles: ["admin", "manager", "receptionist"] },
       {
         to: "/plans",
         label: "Gói tập",
@@ -55,8 +59,8 @@ const groups = [
   {
     label: "Vận hành",
     items: [
-      { to: "/check-in", label: "Check-in", icon: CheckCircle2 },
-      { to: "/payments", label: "Thanh toán", icon: CreditCard },
+      { to: "/check-in", label: "Check-in", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"] },
+      { to: "/payments", label: "Thanh toán", icon: CreditCard, roles: ["admin", "manager", "receptionist"] },
     ],
   },
   {
@@ -73,6 +77,18 @@ const groups = [
   {
     label: "Hệ thống",
     items: [
+      {
+        to: "/accounts",
+        label: "Tài khoản & quyền",
+        icon: ShieldCheck,
+        roles: ["admin"],
+      },
+      {
+        to: "/audit-logs",
+        label: "Nhật ký thao tác",
+        icon: ScrollText,
+        roles: ["admin", "manager"],
+      },
       {
         to: "/settings",
         label: "Cài đặt & thiết bị",
@@ -146,7 +162,7 @@ function Sidebar({ open, close, role }) {
 
 export function AppLayout() {
   const [open, setOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, logoutPending } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -190,6 +206,7 @@ export function AppLayout() {
     <div className="app-layout" onClickCapture={interceptMemberLink}>
       <Sidebar open={open} close={() => setOpen(false)} role={user?.role} />
       <div className="app-main">
+        <NetworkStatusBanner />
         <header className="topbar">
           <div className="topbar-context">
             <button
@@ -204,6 +221,7 @@ export function AppLayout() {
             <strong>{current?.label || "Dashboard"}</strong>
           </div>
           <GlobalSearch />
+          <AlertCenter />
           <div className="branch-context">
             <span>Phạm vi</span>
             <strong>
@@ -220,8 +238,13 @@ export function AppLayout() {
               <strong>{user?.displayName}</strong>
               <span>{user?.role}</span>
             </div>
-            <button className="text-button" onClick={logout}>
-              Đăng xuất
+            <button
+              className="text-button"
+              onClick={logout}
+              disabled={logoutPending}
+              aria-busy={logoutPending || undefined}
+            >
+              {logoutPending ? "Đang thoát…" : "Đăng xuất"}
             </button>
           </div>
         </header>

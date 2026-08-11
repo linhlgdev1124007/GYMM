@@ -10,8 +10,8 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { PageHeader } from "../../components/common/PageHeader";
 import { SearchInput } from "../../components/common/SearchInput";
@@ -24,6 +24,7 @@ import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { MemberQuickDrawer } from "./MemberQuickDrawer";
+import { useAuth } from "../../app/AuthContext";
 import {
   formatPhone,
   initials,
@@ -69,6 +70,8 @@ const paramDefaults = {
 };
 
 export function MembersPage() {
+  const { user } = useAuth();
+  const canOperate = ["admin", "manager", "receptionist"].includes(user?.role);
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
@@ -147,19 +150,33 @@ export function MembersPage() {
       setCreateOpen(false);
       setForm(initialForm);
       updateParams({ member: member.id });
-      toast.success("Đã tạo hội viên.");
+      notify.success({
+        title: `Đã tạo hội viên ${member.name}.`,
+        action: {
+          label: "Xem hồ sơ",
+          onClick: () => updateParams({ member: member.id }),
+        },
+      });
     },
     onError: (reason) => setError(reason.message),
   });
   const checkin = useMutation({
     mutationFn: (id) =>
       api("/api/checkins", { method: "POST", body: { memberId: id } }),
-    onSuccess: () => {
+    onSuccess: (data, id) => {
       client.invalidateQueries({ queryKey: ["members"] });
       client.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success("Check-in thành công.");
+      const memberName = members.data?.items?.find(
+        (row) => row.id === id,
+      )?.name;
+      notify.success(
+        `${memberName || "Hội viên"} đã check-in lúc ${new Date(data.checkedInAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}.`,
+      );
     },
-    onError: (reason) => toast.error(reason.message),
+    onError: (reason) =>
+      /đã check-in/i.test(reason.message)
+        ? notify.warning(reason.message)
+        : notify.errorFrom(reason, "Không thể check-in. Vui lòng thử lại."),
   });
   useEffect(() => {
     const focus = (event) => {
@@ -266,8 +283,10 @@ export function MembersPage() {
                 Hạn {shortDate(row.membership.debtDueDate)}
               </div>
             </div>
-          ) : (
+          ) : canOperate ? (
             "—"
+          ) : (
+            <span className="text-slate-400">—</span>
           ),
       },
       {
@@ -350,7 +369,7 @@ export function MembersPage() {
         key: "actions",
         label: "Thao tác nhanh",
         className: "member-quick-cell",
-        render: (row) => (
+        render: (row) => canOperate ? (
           <div className="member-row-actions">
             <button
               title="Check-in"
@@ -393,10 +412,12 @@ export function MembersPage() {
               <Pencil size={15} />
             </button>
           </div>
+        ) : (
+          <span className="text-xs text-slate-400">Chỉ xem</span>
         ),
       },
     ],
-    [checkin, openMember],
+    [canOperate, checkin, openMember],
   );
   const activeFilters = [
     status !== "all" && [
@@ -453,7 +474,7 @@ export function MembersPage() {
     link.download = "pulsefit-members.csv";
     link.click();
     URL.revokeObjectURL(url);
-    toast.success(`Đã xuất ${rows.length} hội viên.`);
+    notify.success(`Đã xuất danh sách ${rows.length} hội viên.`);
   };
   const closeCreate = () => {
     setCreateOpen(false);
@@ -487,7 +508,7 @@ export function MembersPage() {
     localStorage.setItem("pulsefit-member-views", JSON.stringify(next));
     setViewName("");
     setSaveViewOpen(false);
-    toast.success("Đã lưu chế độ xem cá nhân.");
+    notify.success(`Đã lưu chế độ xem “${viewName.trim()}”.`);
   };
   return (
     <>
@@ -495,12 +516,12 @@ export function MembersPage() {
         eyebrow="Quản lý"
         title="Hội viên"
         description="Không gian vận hành hội viên — xem và xử lý mà không rời danh sách."
-        action={
+        action={canOperate ? (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus size={16} />
             Thêm hội viên
           </Button>
-        }
+        ) : null}
       />
       <div className="workspace-views">
         {views.map(([key, label]) => (
@@ -548,7 +569,7 @@ export function MembersPage() {
           Lưu chế độ xem
         </button>
       </div>
-      {selection.length ? (
+      {canOperate && selection.length ? (
         <div className="bulk-bar">
           <strong>{selection.length} hội viên đã chọn</strong>
           <Button size="sm" variant="secondary" onClick={exportSelected}>
@@ -794,8 +815,9 @@ export function MembersPage() {
         rows={members.data?.items}
         loading={members.isLoading}
         error={members.error}
-        selection={selection}
-        onSelectionChange={setSelection}
+        onRetry={members.refetch}
+        selection={canOperate ? selection : undefined}
+        onSelectionChange={canOperate ? setSelection : undefined}
         onRowClick={openMember}
         selectedRowId={Number(memberId)}
         density={density}
@@ -979,8 +1001,12 @@ export function MembersPage() {
             <Button data-modal-close variant="secondary" onClick={closeCreate}>
               Hủy
             </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Đang tạo…" : "Tạo hội viên"}
+            <Button
+              type="submit"
+              loading={create.isPending}
+              loadingText="Đang tạo…"
+            >
+              Tạo hội viên
             </Button>
           </div>
         </form>

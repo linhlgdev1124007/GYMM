@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { PageHeader } from "../../components/common/PageHeader";
 import { SearchInput } from "../../components/common/SearchInput";
@@ -62,12 +62,16 @@ export function TrainersPage() {
           email: payload.email.trim(),
         },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       client.invalidateQueries({ queryKey: ["trainers"] });
       client.invalidateQueries({ queryKey: ["member-options"] });
       setOpen(false);
       setSelected(null);
-      toast.success("Đã lưu nhân viên.");
+      notify.success(
+        selected
+          ? `Đã lưu hồ sơ ${data.name || selected.name}.`
+          : `Đã thêm nhân viên ${data.name}.`,
+      );
     },
     onError: (e) => setError(e.message),
   });
@@ -77,12 +81,14 @@ export function TrainersPage() {
       client.invalidateQueries({ queryKey: ["trainers"] });
       client.invalidateQueries({ queryKey: ["member-options"] });
       setConfirm(null);
-      toast.success(
+      notify.success(
         data.archived
-          ? "Nhân viên có lịch sử nên đã được ẩn an toàn."
-          : "Đã xóa nhân viên.",
+          ? `Đã ẩn ${confirm.name} vì nhân viên có lịch sử liên quan.`
+          : `Đã xóa nhân viên ${confirm.name}.`,
       );
     },
+    onError: (e) =>
+      notify.errorFrom(e, "Không thể xóa nhân viên. Vui lòng thử lại."),
   });
   const columns = [
     {
@@ -178,6 +184,7 @@ export function TrainersPage() {
         rows={query.data?.items}
         loading={query.isLoading}
         error={query.error}
+        onRetry={query.refetch}
         onRowClick={edit}
       />
       <Pagination data={query.data?.pagination} onPage={setPage} />
@@ -248,8 +255,12 @@ export function TrainersPage() {
             >
               Hủy
             </Button>
-            <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? "Đang lưu…" : "Lưu nhân viên"}
+            <Button
+              type="submit"
+              loading={save.isPending}
+              loadingText="Đang lưu…"
+            >
+              Lưu nhân viên
             </Button>
           </div>
         </form>
@@ -277,7 +288,8 @@ export function TrainersPage() {
           <Button
             variant="danger"
             onClick={() => remove.mutate(confirm)}
-            disabled={remove.isPending}
+            loading={remove.isPending}
+            loadingText="Đang xóa…"
           >
             Xóa nhân viên
           </Button>

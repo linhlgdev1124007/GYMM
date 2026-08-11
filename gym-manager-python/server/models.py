@@ -16,6 +16,26 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(30), default="manager", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), unique=True)
+
+    employee: Mapped["Employee | None"] = relationship()
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    entity_type: Mapped[str] = mapped_column(String(60), index=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    summary: Mapped[str] = mapped_column(String(255))
+    details_json: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    actor: Mapped["User | None"] = relationship()
 
 
 class AuthSession(Base):
@@ -132,6 +152,48 @@ class Membership(Base):
     sale_online_employee: Mapped[Employee | None] = relationship(foreign_keys=[sale_online_employee_id])
     direct_sales_employee: Mapped[Employee | None] = relationship(foreign_keys=[direct_sales_employee_id])
     pt_converter_employee: Mapped[Employee | None] = relationship(foreign_keys=[pt_converter_employee_id])
+    freezes: Mapped[list["MembershipFreeze"]] = relationship(back_populates="membership", cascade="all, delete-orphan")
+    events: Mapped[list["MembershipEvent"]] = relationship(back_populates="membership", cascade="all, delete-orphan")
+
+
+class MembershipFreeze(Base):
+    __tablename__ = "membership_freezes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    membership_id: Mapped[int] = mapped_column(ForeignKey("memberships.id", ondelete="CASCADE"), index=True)
+    starts_at: Mapped[date] = mapped_column(Date)
+    ends_at: Mapped[date] = mapped_column(Date)
+    compensated_days: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(255))
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    membership: Mapped[Membership] = relationship(back_populates="freezes")
+    created_by: Mapped["User | None"] = relationship()
+
+
+class MembershipEvent(Base):
+    __tablename__ = "membership_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    membership_id: Mapped[int] = mapped_column(ForeignKey("memberships.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    from_customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
+    to_customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
+    from_package_id: Mapped[int | None] = mapped_column(ForeignKey("service_packages.id"))
+    to_package_id: Mapped[int | None] = mapped_column(ForeignKey("service_packages.id"))
+    effective_at: Mapped[date] = mapped_column(Date, default=date.today)
+    reason: Mapped[str] = mapped_column(String(255))
+    details_json: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    membership: Mapped[Membership] = relationship(back_populates="events")
+    from_customer: Mapped[Customer | None] = relationship(foreign_keys=[from_customer_id])
+    to_customer: Mapped[Customer | None] = relationship(foreign_keys=[to_customer_id])
+    from_package: Mapped[ServicePackage | None] = relationship(foreign_keys=[from_package_id])
+    to_package: Mapped[ServicePackage | None] = relationship(foreign_keys=[to_package_id])
+    created_by: Mapped["User | None"] = relationship()
 
 
 class BankAccount(Base):
@@ -165,6 +227,23 @@ class Payment(Base):
     customer: Mapped[Customer | None] = relationship()
     membership: Mapped[Membership | None] = relationship(back_populates="payments")
     bank_account: Mapped[BankAccount | None] = relationship()
+    receipts: Mapped[list["PaymentReceipt"]] = relationship(
+        back_populates="payment", cascade="all, delete-orphan"
+    )
+
+
+class PaymentReceipt(Base):
+    __tablename__ = "payment_receipts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id", ondelete="CASCADE"), index=True)
+    file_path: Mapped[str] = mapped_column(String(255))
+    original_name: Mapped[str | None] = mapped_column(String(255))
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    payment: Mapped[Payment] = relationship(back_populates="receipts")
+    uploaded_by: Mapped["User | None"] = relationship()
 
 
 class Appointment(Base):

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Pencil, X } from "lucide-react";
 import { Input, Select } from "./Form";
 import { PhoneInput } from "./SmartInputs";
 
@@ -16,14 +16,25 @@ export function InlineEditField({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
   useEffect(() => setDraft(value ?? ""), [value]);
   const close = () => {
     setDraft(value ?? "");
     setEditing(false);
   };
   const save = async () => {
-    await onSave(draft);
-    setEditing(false);
+    setStatus("saving");
+    setError("");
+    try {
+      await onSave(draft);
+      setEditing(false);
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1800);
+    } catch (reason) {
+      setStatus("error");
+      setError(reason?.message || "Không thể lưu. Vui lòng thử lại.");
+    }
   };
   return (
     <div className={`inline-field ${className}`}>
@@ -66,24 +77,42 @@ export function InlineEditField({
               />
             )}
             <button
+              type="button"
               onClick={save}
               disabled={pending}
               aria-label={`Lưu ${label}`}
             >
-              <Check size={15} />
+              {pending || status === "saving" ? (
+                <LoaderCircle className="animate-spin" size={15} />
+              ) : (
+                <Check size={15} />
+              )}
             </button>
-            <button onClick={close} aria-label="Hủy">
+            <button type="button" onClick={close} aria-label="Hủy">
               <X size={15} />
             </button>
           </div>
         ) : (
-          <button
-            className="inline-field-value"
-            onClick={() => setEditing(true)}
-          >
-            <span>{displayValue || value || <em>{emptyAction}</em>}</span>
-            <Pencil size={12} />
-          </button>
+          <div>
+            <button
+              type="button"
+              className="inline-field-value"
+              onClick={() => setEditing(true)}
+            >
+              <span>{displayValue || value || <em>{emptyAction}</em>}</span>
+              <Pencil size={12} />
+            </button>
+            {status === "saved" && (
+              <small className="inline-save-state success">
+                <Check size={12} /> Đã lưu
+              </small>
+            )}
+          </div>
+        )}
+        {status === "error" && (
+          <small className="inline-save-state error">
+            <CircleAlert size={12} /> {error}
+          </small>
         )}
       </dd>
     </div>

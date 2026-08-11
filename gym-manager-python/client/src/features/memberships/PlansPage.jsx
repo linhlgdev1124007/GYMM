@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
 import { api } from "../../services/api";
+import { notify } from "../../services/notify";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
@@ -50,12 +50,16 @@ export function PlansPage() {
         method: selected ? "PATCH" : "POST",
         body: payload,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       client.invalidateQueries({ queryKey: ["plans"] });
       client.invalidateQueries({ queryKey: ["member-options"] });
       setOpen(false);
       setSelected(null);
-      toast.success("Đã lưu gói tập.");
+      notify.success(
+        selected
+          ? `Đã lưu thay đổi cho gói ${data.name || selected.name}.`
+          : `Đã tạo gói tập ${data.name}.`,
+      );
     },
     onError: (e) => setError(e.message),
   });
@@ -65,10 +69,14 @@ export function PlansPage() {
         method: "PATCH",
         body: { active: !row.active },
       }),
-    onSuccess: () => {
+    onSuccess: (data, row) => {
       client.invalidateQueries({ queryKey: ["plans"] });
-      toast.success("Đã cập nhật trạng thái gói.");
+      notify.success(
+        `${data.active ? "Đã kích hoạt" : "Đã tạm ngừng"} gói ${row.name}.`,
+      );
     },
+    onError: (e) =>
+      notify.errorFrom(e, "Không thể đổi trạng thái gói. Vui lòng thử lại."),
   });
   const columns = [
     {
@@ -156,6 +164,7 @@ export function PlansPage() {
         columns={columns}
         loading={query.isLoading}
         error={query.error}
+        onRetry={query.refetch}
         onRowClick={edit}
       />
       <Modal
@@ -231,8 +240,12 @@ export function PlansPage() {
             >
               Hủy
             </Button>
-            <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? "Đang lưu…" : "Lưu gói tập"}
+            <Button
+              type="submit"
+              loading={save.isPending}
+              loadingText="Đang lưu…"
+            >
+              Lưu gói tập
             </Button>
           </div>
         </form>

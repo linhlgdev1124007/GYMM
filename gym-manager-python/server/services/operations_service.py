@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, Branch, CashShift, CommissionLedger,
-    Customer, Device, Employee, Membership, Payment, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
-    ServicePackage,
+    Customer, Device, Employee, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
+    ServicePackage, User,
 )
+from .audit_service import record_audit
 from .serializers import employee_data, pagination, payment_data, pt_data
 
 
@@ -35,28 +36,31 @@ def list_trainers(db: Session, q: str, page: int, page_size: int):
     return {"items":items,"pagination":pagination(page,page_size,total)}
 
 
-def create_trainer(db: Session, payload: dict):
+def create_trainer(db: Session, payload: dict, actor: User | None = None):
     name=str(payload.get("name","")).strip()
     if not name: raise HTTPException(422,"Tên nhân viên là bắt buộc.")
     person=Person(display_name=name,phone=payload.get("phone") or None,email=payload.get("email") or None,status="active",biometric_consent_status="not_requested")
     db.add(person);db.flush()
     branch_id=db.query(Branch.id).order_by(Branch.id).scalar()
     row=Employee(person_id=person.id,branch_id=branch_id,employee_code=f"TMP-{secrets.token_hex(4)}",job_title=payload.get("title") or "Coach",base_salary=0,status="active")
-    db.add(row);db.flush();row.employee_code=f"EMP-{row.id:05d}";db.commit();db.refresh(row)
+    db.add(row);db.flush();row.employee_code=f"EMP-{row.id:05d}"
+    record_audit(db, actor, "create", "employee", row.id, f"Thêm nhân viên {name}", details={"code": row.employee_code, "title": row.job_title})
+    db.commit();db.refresh(row)
     return employee_data(row)
 
 
-def update_trainer(db: Session, trainer_id: int, payload: dict):
+def update_trainer(db: Session, trainer_id: int, payload: dict, actor: User | None = None):
     row=db.query(Employee).options(joinedload(Employee.person)).filter(Employee.id==trainer_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy nhân viên.")
     if "name" in payload: row.person.display_name=str(payload["name"]).strip() or row.person.display_name
     if "phone" in payload: row.person.phone=payload["phone"] or None
     if "email" in payload: row.person.email=payload["email"] or None
     if "title" in payload: row.job_title=payload["title"] or None
+    record_audit(db, actor, "update", "employee", row.id, f"Cập nhật nhân viên {row.person.display_name}", details={"fields": list(payload.keys())})
     db.commit();return employee_data(row)
 
 
-def delete_trainer(db: Session, trainer_id: int):
+def delete_trainer(db: Session, trainer_id: int, actor: User | None = None):
     row=db.query(Employee).options(joinedload(Employee.person)).filter(Employee.id==trainer_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy nhân viên.")
     references=sum([
@@ -70,8 +74,12 @@ def delete_trainer(db: Session, trainer_id: int):
         db.query(CommissionLedger).filter(CommissionLedger.employee_id==trainer_id).count(),
     ])
     if references:
-        row.status="inactive";row.person.status="inactive";db.commit();return {"deleted":False,"archived":True}
-    person=row.person;db.delete(row);db.flush();db.delete(person);db.commit();return {"deleted":True,"archived":False}
+        row.status="inactive";row.person.status="inactive"
+        record_audit(db, actor, "archive", "employee", row.id, f"Lưu trữ nhân viên {row.person.display_name}", details={"references": references})
+        db.commit();return {"deleted":False,"archived":True}
+    person=row.person
+    record_audit(db, actor, "delete", "employee", row.id, f"Xóa nhân viên {row.person.display_name}")
+    db.delete(row);db.flush();db.delete(person);db.commit();return {"deleted":True,"archived":False}
 
 
 def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, page_size: int):
@@ -85,7 +93,7 @@ def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, pa
     return {"items":[pt_data(row) for row in rows],"counts":counts,"pagination":pagination(page,page_size,total)}
 
 
-def create_pt(db: Session, member_id: int, payload: dict):
+def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = None):
     member=db.get(Customer,member_id)
     if not member: raise HTTPException(422,"Hội viên không hợp lệ.")
     if db.query(PtEnrollment).filter(PtEnrollment.customer_id==member_id,PtEnrollment.status=="active").first(): raise HTTPException(409,"Hội viên đang có đăng ký PT hoạt động.")
@@ -98,11 +106,13 @@ def create_pt(db: Session, member_id: int, payload: dict):
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     db.add(row);db.flush()
     row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
-    member.status="active";db.commit()
+    member.status="active"
+    record_audit(db, actor, "create", "pt_enrollment", row.id, f"Đăng ký PT {kind} · {sessions} buổi", customer_id=member_id, details={"coachIds": coach_ids, "expiresAt": row.expires_at})
+    db.commit()
     row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).get(row.id);return pt_data(row)
 
 
-def update_pt(db: Session, enrollment_id: int, payload: dict):
+def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None = None):
     row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy đăng ký PT.")
     if "coachIds" in payload or "coachId" in payload:
@@ -121,6 +131,7 @@ def update_pt(db: Session, enrollment_id: int, payload: dict):
     if "scheduleTime" in payload: row.schedule_time=payload["scheduleTime"] or None
     if payload.get("status") in ("active","completed","inactive"): row.status=payload["status"]
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
+    record_audit(db, actor, "update", "pt_enrollment", row.id, "Cập nhật đăng ký PT", customer_id=row.customer_id, details={"fields": list(payload.keys()), "coachIds": [assignment.coach_id for assignment in row.coach_assignments]})
     db.commit();db.refresh(row);return pt_data(row)
 
 
@@ -141,24 +152,28 @@ def recent_checkins(db: Session, limit=30):
     return [{"id":row.id,"memberId":row.customer_id,"memberName":row.customer.person.display_name if row.customer else None,"memberCode":row.customer.customer_code if row.customer else None,"checkedInAt":row.checked_in_at.isoformat(),"checkedOutAt":row.checked_out_at.isoformat() if row.checked_out_at else None,"result":row.result,"status":row.status} for row in rows]
 
 
-def create_checkin(db: Session, payload: dict):
+def create_checkin(db: Session, payload: dict, actor: User | None = None):
     member_id=_as_int(payload.get("memberId"));member=db.get(Customer,member_id)
     if not member: raise HTTPException(404,"Không tìm thấy hội viên.")
     if db.query(AttendanceSession).filter(AttendanceSession.customer_id==member_id,AttendanceSession.status=="open").first(): raise HTTPException(409,"Hội viên đã check-in và chưa check-out.")
     current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=date.today())).first()
     if member.status!="active" or not current: raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
-    row=AttendanceSession(customer_id=member_id,checked_in_at=datetime.utcnow(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.commit();return {"id":row.id,"checkedInAt":row.checked_in_at.isoformat()}
+    row=AttendanceSession(customer_id=member_id,checked_in_at=datetime.utcnow(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
+    record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
+    db.commit();return {"id":row.id,"checkedInAt":row.checked_in_at.isoformat()}
 
 
-def checkout(db: Session, session_id: int):
+def checkout(db: Session, session_id: int, actor: User | None = None):
     row=db.get(AttendanceSession,session_id)
     if not row: raise HTTPException(404,"Không tìm thấy phiên check-in.")
     if row.status!="open": raise HTTPException(409,"Phiên này đã được check-out.")
-    row.checked_out_at=datetime.utcnow();row.status="closed";db.commit();return {"ok":True}
+    row.checked_out_at=datetime.utcnow();row.status="closed"
+    record_audit(db, actor, "checkout", "attendance", row.id, "Check-out hội viên", customer_id=row.customer_id)
+    db.commit();return {"ok":True}
 
 
 def list_payments(db: Session, q: str, method: str, date_from: str, date_to: str, page: int, page_size: int):
-    query=db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person),joinedload(Payment.membership).joinedload(Membership.package))
+    query=db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person),joinedload(Payment.membership).joinedload(Membership.package),joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by))
     if q: query=query.join(Payment.customer).join(Customer.person).filter(or_(Person.display_name.contains(q),Payment.payment_no.contains(q),Customer.customer_code.contains(q)))
     if method and method!="all": query=query.filter(Payment.method==method)
     if date_from: query=query.filter(Payment.paid_at>=datetime.combine(_as_date(date_from),datetime.min.time()))

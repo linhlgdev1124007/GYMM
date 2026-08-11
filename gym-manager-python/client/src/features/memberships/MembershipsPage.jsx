@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { PageHeader } from "../../components/common/PageHeader";
 import { SearchInput } from "../../components/common/SearchInput";
@@ -47,12 +47,14 @@ export function MembershipsPage() {
   const create = useMutation({
     mutationFn: (data) =>
       api("/api/memberships", { method: "POST", body: data }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       client.invalidateQueries({ queryKey: ["memberships"] });
       client.invalidateQueries({ queryKey: ["members"] });
       setFormOpen(false);
       setSelectedMember(null);
-      toast.success("Đã đăng ký gói tập.");
+      notify.success(
+        `Đã đăng ký ${data.package?.name || "gói tập"} cho ${selectedMember.name}.`,
+      );
     },
     onError: (e) => setError(e.message),
   });
@@ -133,6 +135,8 @@ export function MembershipsPage() {
         columns={columns}
         rows={query.data?.items}
         loading={query.isLoading}
+        error={query.error}
+        onRetry={query.refetch}
       />
       <Pagination data={query.data?.pagination} onPage={setPage} />
       <Modal

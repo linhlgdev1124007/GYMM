@@ -95,6 +95,8 @@ export function ReportsPage() {
         </div>
         <DataTable
           loading={query.isLoading}
+          error={query.error}
+          onRetry={query.refetch}
           rows={data?.debts}
           columns={[
             {

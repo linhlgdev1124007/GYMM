@@ -29,6 +29,8 @@ export function SettingsPage() {
           <DataTable
             rows={data?.branches}
             loading={query.isLoading}
+            error={query.error}
+            onRetry={query.refetch}
             columns={[
               {
                 key: "name",
@@ -59,6 +61,8 @@ export function SettingsPage() {
           <DataTable
             rows={data?.bankAccounts}
             loading={query.isLoading}
+            error={query.error}
+            onRetry={query.refetch}
             columns={[
               {
                 key: "bank",
@@ -86,6 +90,8 @@ export function SettingsPage() {
         <DataTable
           rows={data?.devices}
           loading={query.isLoading}
+          error={query.error}
+          onRetry={query.refetch}
           columns={[
             {
               key: "device",

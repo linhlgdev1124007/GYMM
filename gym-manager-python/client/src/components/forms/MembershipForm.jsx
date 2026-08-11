@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { addDays, format } from "date-fns";
 import { Button } from "../ui/Button";
-import { Field, Input, Select } from "../ui/Form";
+import { Field, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import { money } from "../../utils/format";
 import { DateInput, MoneyInput } from "../ui/SmartInputs";
+import { ReceiptPicker } from "../ui/ReceiptPicker";
 
 export function MembershipForm({
   memberId,
@@ -32,7 +33,7 @@ export function MembershipForm({
           paymentMethod: membership.payments?.[0]?.method || "cash",
           bankAccountId: "",
           status: membership.status || "active",
-          receipt: null,
+          receipts: [],
         }
       : {
           memberId,
@@ -46,7 +47,7 @@ export function MembershipForm({
           bankAccountId: "",
           saleOnlineEmployeeId: "",
           directSaleEmployeeId: "",
-          receipt: null,
+          receipts: [],
         };
     setForm(next);
     setInitial(next);
@@ -91,10 +92,18 @@ export function MembershipForm({
       return;
     }
     const data = new FormData();
-    Object.entries(form).forEach(
-      ([key, value]) => value != null && data.append(key, value),
+    Object.entries(form).forEach(([key, value]) => {
+      if (key !== "receipts" && value != null) data.append(key, value);
+    });
+    form.receipts.forEach((file) => data.append("receipts", file));
+    const plan = options?.plans?.find(
+      (row) => String(row.id) === String(form.planId),
     );
-    onSubmit(data);
+    onSubmit(data, {
+      planName: membership?.package?.name || plan?.name || "Gói tập",
+      expiresAt: form.expiresAt,
+      paidAmount: Number(form.paidAmount || 0),
+    });
   };
   return (
     <Modal
@@ -237,14 +246,12 @@ export function MembershipForm({
                   </Select>
                 </Field>
               )}
-              {Number(form.paidAmount) > 0 && (
+              {!membership && Number(form.paidAmount) > 0 && (
                 <Field label="Ảnh phiếu thu">
-                  <Input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(e) =>
-                      setForm({ ...form, receipt: e.target.files[0] })
-                    }
+                  <ReceiptPicker
+                    files={form.receipts}
+                    onChange={(receipts) => setForm({ ...form, receipts })}
+                    disabled={pending}
                   />
                 </Field>
               )}
@@ -274,13 +281,11 @@ export function MembershipForm({
           </Button>
           <Button
             type="submit"
-            disabled={pending || (!membership && !form.planId)}
+            loading={pending}
+            loadingText="Đang lưu…"
+            disabled={!membership && !form.planId}
           >
-            {pending
-              ? "Đang lưu…"
-              : membership
-                ? "Lưu thay đổi"
-                : "Xác nhận đăng ký"}
+            {membership ? "Lưu thay đổi" : "Xác nhận đăng ký"}
           </Button>
         </div>
       </form>

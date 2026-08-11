@@ -61,8 +61,12 @@ export function LoginPage() {
               {error}
             </div>
           )}
-          <Button type="submit" disabled={loginPending}>
-            {loginPending ? "Đang xác thực…" : "Đăng nhập"}
+          <Button
+            type="submit"
+            loading={loginPending}
+            loadingText="Đang xác thực…"
+          >
+            Đăng nhập
           </Button>
         </form>
         <p className="login-help">

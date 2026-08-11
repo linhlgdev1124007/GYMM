@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
-import { Field, Input, Select } from "../ui/Form";
+import { Field, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { money } from "../../utils/format";
 import { MoneyInput } from "../ui/SmartInputs";
+import { ReceiptPicker } from "../ui/ReceiptPicker";
 
 export function QuickPaymentForm({
   membership,
@@ -18,13 +19,13 @@ export function QuickPaymentForm({
     amount: 0,
     paymentMethod: "cash",
     bankAccountId: "",
-    receipt: null,
+    receipts: [],
   });
   const initial = {
     amount: membership?.debtAmount || 0,
     paymentMethod: "cash",
     bankAccountId: "",
-    receipt: null,
+    receipts: [],
   };
   useEffect(() => setForm(initial), [membership, open]);
   if (!membership) return null;
@@ -52,8 +53,8 @@ export function QuickPaymentForm({
       "status",
       membership.status === "expiring" ? "active" : membership.status,
     );
-    if (form.receipt) payload.append("receipt", form.receipt);
-    onSubmit(payload);
+    form.receipts.forEach((file) => payload.append("receipts", file));
+    onSubmit(payload, { amount: Number(form.amount || 0) });
   };
   return (
     <Modal
@@ -125,17 +126,11 @@ export function QuickPaymentForm({
                 </Select>
               </Field>
             )}
-            <Field
-              className="form-span"
-              label="Ảnh phiếu thu"
-              hint="JPG, PNG hoặc WebP · tối đa 5 MB"
-            >
-              <Input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(e) =>
-                  setForm({ ...form, receipt: e.target.files[0] })
-                }
+            <Field className="form-span" label="Ảnh phiếu thu">
+              <ReceiptPicker
+                files={form.receipts}
+                onChange={(receipts) => setForm({ ...form, receipts })}
+                disabled={pending}
               />
             </Field>
           </div>
@@ -145,8 +140,13 @@ export function QuickPaymentForm({
           <Button data-modal-close variant="secondary" onClick={onClose}>
             Hủy
           </Button>
-          <Button type="submit" disabled={pending || Number(form.amount) <= 0}>
-            {pending ? "Đang ghi nhận…" : "Ghi nhận thanh toán"}
+          <Button
+            type="submit"
+            loading={pending}
+            loadingText="Đang ghi nhận…"
+            disabled={Number(form.amount) <= 0}
+          >
+            Ghi nhận thanh toán
           </Button>
         </div>
       </form>

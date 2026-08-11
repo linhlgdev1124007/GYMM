@@ -222,8 +222,8 @@ export function TrainingForm({
           >
             Hủy
           </Button>
-          <Button type="submit" disabled={pending}>
-            {pending ? "Đang lưu…" : "Lưu đăng ký PT"}
+          <Button type="submit" loading={pending} loadingText="Đang lưu…">
+            Lưu đăng ký PT
           </Button>
         </div>
       </form>

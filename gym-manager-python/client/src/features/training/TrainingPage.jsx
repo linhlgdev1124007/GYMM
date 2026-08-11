@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { UserRoundCheck, UserRoundPlus } from "lucide-react";
-import { toast } from "sonner";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { PageHeader } from "../../components/common/PageHeader";
 import { SearchInput } from "../../components/common/SearchInput";
@@ -39,12 +39,17 @@ export function TrainingPage() {
   const save = useMutation({
     mutationFn: (payload) =>
       api(`/api/training/${selected.id}`, { method: "PATCH", body: payload }),
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
       client.invalidateQueries({ queryKey: ["training"] });
       client.invalidateQueries({ queryKey: ["members"] });
       client.invalidateQueries({ queryKey: ["member", selected.memberId] });
       setSelected(null);
-      toast.success("Đã cập nhật Coach phụ trách.");
+      const coachCount = payload.coachIds?.length || 0;
+      notify.success(
+        coachCount
+          ? `Đã cập nhật ${coachCount} Coach cho ${selected.member.name}.`
+          : `Đã để ${selected.member.name} ở trạng thái chưa phân Coach.`,
+      );
     },
     onError: (error) => setFormError(error.message),
   });
@@ -189,6 +194,8 @@ export function TrainingPage() {
         rows={query.data?.items}
         columns={columns}
         loading={query.isLoading}
+        error={query.error}
+        onRetry={query.refetch}
         emptyTitle={
           assignment === "unassigned"
             ? "Không có đăng ký chờ phân công"
