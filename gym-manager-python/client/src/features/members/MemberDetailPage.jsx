@@ -860,6 +860,8 @@ export function MemberDetailPage() {
       />
       <MembershipForm
         memberId={memberId}
+        member={member}
+        currentMembership={current}
         membership={selectedMembership}
         options={options.data}
         open={dialog === "membership" || dialog === "renew"}

@@ -208,6 +208,8 @@ export function MembershipsPage() {
       </Modal>
       <MembershipForm
         memberId={selectedMember?.id}
+        member={selectedMember}
+        currentMembership={selectedMember?.membership}
         options={options.data}
         open={formOpen}
         onClose={() => setFormOpen(false)}

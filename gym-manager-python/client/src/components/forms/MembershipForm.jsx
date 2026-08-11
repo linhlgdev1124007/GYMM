@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
-import { addDays, format } from "date-fns";
+import { addDays, format, parseISO } from "date-fns";
 import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { SearchableSelect } from "../ui/SearchableSelect";
-import { money } from "../../utils/format";
+import {
+  formatPhone,
+  money,
+  shortDate,
+  statusLabel,
+} from "../../utils/format";
 import { DateInput, MoneyInput } from "../ui/SmartInputs";
 import { ReceiptPicker } from "../ui/ReceiptPicker";
 
 export function MembershipForm({
   memberId,
+  member,
   membership,
+  currentMembership,
   options,
   open,
   onClose,
@@ -22,7 +29,17 @@ export function MembershipForm({
   const [form, setForm] = useState({});
   const [initial, setInitial] = useState({});
   const [localError, setLocalError] = useState("");
+  const isRenewal = !membership && Boolean(currentMembership);
   useEffect(() => {
+    const renewalPlan = currentMembership
+      ? options?.plans?.find(
+          (row) => String(row.id) === String(currentMembership.package?.id),
+        )
+      : null;
+    const renewalStart =
+      currentMembership?.expiresAt && currentMembership.expiresAt >= today
+        ? format(addDays(parseISO(currentMembership.expiresAt), 1), "yyyy-MM-dd")
+        : today;
     const next = membership
       ? {
           startsAt: membership.startsAt || today,
@@ -37,10 +54,15 @@ export function MembershipForm({
         }
       : {
           memberId,
-          planId: "",
-          startsAt: today,
-          expiresAt: "",
-          finalPrice: 0,
+          planId: renewalPlan?.id || "",
+          startsAt: renewalStart,
+          expiresAt: renewalPlan?.durationDays
+            ? format(
+                addDays(parseISO(renewalStart), renewalPlan.durationDays),
+                "yyyy-MM-dd",
+              )
+            : "",
+          finalPrice: renewalPlan?.price || 0,
           paidAmount: 0,
           debtDueDate: "",
           paymentMethod: "cash",
@@ -52,7 +74,7 @@ export function MembershipForm({
     setForm(next);
     setInitial(next);
     setLocalError("");
-  }, [membership, memberId, options, open]);
+  }, [membership, currentMembership, memberId, options, open, today]);
   const planChange = (id) => {
     const plan = options?.plans?.find((row) => String(row.id) === String(id));
     setForm({
@@ -91,6 +113,17 @@ export function MembershipForm({
       );
       return;
     }
+    if (form.startsAt && form.expiresAt && form.expiresAt < form.startsAt) {
+      setLocalError("Ngày hết hạn phải sau hoặc bằng ngày bắt đầu.");
+      return;
+    }
+    if (
+      Number(form.finalPrice) - Number(form.paidAmount) > 0 &&
+      !form.debtDueDate
+    ) {
+      setLocalError("Vui lòng chọn hạn thanh toán cho phần công nợ mới.");
+      return;
+    }
     const data = new FormData();
     Object.entries(form).forEach(([key, value]) => {
       if (key !== "receipts" && value != null) data.append(key, value);
@@ -105,18 +138,72 @@ export function MembershipForm({
       paidAmount: Number(form.paidAmount || 0),
     });
   };
+  const selectedPlan = options?.plans?.find(
+    (row) => String(row.id) === String(form.planId),
+  );
+  const newDebt = Math.max(
+    Number(form.finalPrice) - Number(form.paidAmount),
+    0,
+  );
+  const memberName = member?.name || membership?.memberName;
+  const memberCode = member?.code;
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={membership ? "Cập nhật gói đăng ký" : "Đăng ký / gia hạn gói"}
+      size="lg"
+      title={
+        membership
+          ? "Cập nhật gói đăng ký"
+          : `${isRenewal ? "Gia hạn gói" : "Đăng ký gói"}${memberName ? ` cho ${memberName}` : ""}`
+      }
       description={
-        membership?.package.name || "Thông tin hội viên đã được điền sẵn"
+        membership?.package.name ||
+        [memberCode, formatPhone(member?.phone)].filter(Boolean).join(" · ") ||
+        "Kiểm tra thông tin trước khi xác nhận"
       }
       dirty={JSON.stringify(form) !== JSON.stringify(initial)}
     >
       <form onSubmit={submit}>
         <div className="modal-body space-y-5">
+          {memberName && !membership && (
+            <section className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-blue-600">
+                Hội viên
+              </span>
+              <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
+                <strong className="text-sm text-slate-950">{memberName}</strong>
+                <span className="text-xs text-slate-600">
+                  {[memberCode, formatPhone(member?.phone)].filter(Boolean).join(" · ")}
+                </span>
+              </div>
+            </section>
+          )}
+          {isRenewal && (
+            <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Gói hiện tại
+                  </span>
+                  <strong className="mt-1 block text-sm text-slate-950">
+                    {currentMembership.package?.name}
+                  </strong>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {shortDate(currentMembership.startsAt)} → {shortDate(currentMembership.expiresAt)}
+                  </p>
+                </div>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+                  {statusLabel[currentMembership.status] || currentMembership.status}
+                </span>
+              </div>
+              {Number(currentMembership.debtAmount) > 0 && (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  Gói hiện tại còn nợ <strong>{money(currentMembership.debtAmount)}</strong>. Khoản này được theo dõi riêng và không cộng vào giao dịch gia hạn mới.
+                </div>
+              )}
+            </section>
+          )}
           {!membership && (
             <section className="form-section">
               <h3 className="form-section-title">Gói và thời hạn</h3>
@@ -177,7 +264,7 @@ export function MembershipForm({
                   onChange={(finalPrice) => setForm({ ...form, finalPrice })}
                 />
               </Field>
-              <Field label="Đã thanh toán">
+              <Field label={membership ? "Đã thanh toán" : "Thanh toán lần này"}>
                 <MoneyInput
                   min="0"
                   max={Number(form.finalPrice) || 0}
@@ -271,6 +358,46 @@ export function MembershipForm({
               )}
             </div>
           </section>
+          {!membership && form.planId && (
+            <section className="rounded-lg border border-slate-300 bg-white p-4 shadow-sm">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Xác nhận giao dịch
+              </h3>
+              <dl className="mt-3 grid grid-cols-2 gap-x-5 gap-y-3 text-xs max-[540px]:grid-cols-1">
+                <div>
+                  <dt className="text-slate-500">Hội viên</dt>
+                  <dd className="mt-0.5 font-medium text-slate-950">{memberName || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Gói {isRenewal ? "gia hạn" : "đăng ký"}</dt>
+                  <dd className="mt-0.5 font-medium text-slate-950">
+                    {selectedPlan?.name || "—"}
+                    {selectedPlan?.durationDays ? ` · ${selectedPlan.durationDays} ngày` : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Thời gian áp dụng</dt>
+                  <dd className="mt-0.5 font-medium text-slate-950">
+                    {shortDate(form.startsAt)} → {shortDate(form.expiresAt)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Tổng giá trị</dt>
+                  <dd className="mt-0.5 font-medium text-slate-950">{money(form.finalPrice)}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Thanh toán lần này</dt>
+                  <dd className="mt-0.5 font-medium text-emerald-700">{money(form.paidAmount)}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Công nợ mới</dt>
+                  <dd className={`mt-0.5 font-medium ${newDebt ? "text-red-700" : "text-emerald-700"}`}>
+                    {money(newDebt)}{newDebt && form.debtDueDate ? ` · hạn ${shortDate(form.debtDueDate)}` : ""}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          )}
           {(localError || error) && (
             <div className="inline-error">{localError || error}</div>
           )}
@@ -285,7 +412,11 @@ export function MembershipForm({
             loadingText="Đang lưu…"
             disabled={!membership && !form.planId}
           >
-            {membership ? "Lưu thay đổi" : "Xác nhận đăng ký"}
+            {membership
+              ? "Lưu thay đổi"
+              : isRenewal
+                ? "Xác nhận gia hạn"
+                : "Xác nhận đăng ký"}
           </Button>
         </div>
       </form>

@@ -72,6 +72,15 @@ const viewports = [
   if (!drawerBox || drawerBox.width < 480 || drawerBox.width > 600 || drawerBox.x < 800) failures.push(`workflow: desktop drawer width/position is invalid (${drawerBox && drawerBox.width})`);
   const openedUrl = new URL(workflow.url());
   if (openedUrl.searchParams.get('q') !== 'Tuấn' || openedUrl.searchParams.get('status') !== 'active' || !openedUrl.searchParams.get('member')) failures.push('workflow: member drawer did not preserve list context');
+  await workflow.locator('.quick-action').filter({ hasText: 'Gia hạn' }).click();
+  const renewalModal = workflow.locator('.modal');
+  await renewalModal.waitFor();
+  for (const expected of ['Gói hiện tại', 'Xác nhận giao dịch', 'Xác nhận gia hạn']) {
+    if (!await renewalModal.getByText(expected, { exact: false }).count()) failures.push(`workflow: renewal modal is missing "${expected}"`);
+  }
+  await workflow.screenshot({ path: 'screenshots/v2-desktop-renewal.png', fullPage: true });
+  await renewalModal.locator('.modal-header .icon-button').click();
+  await renewalModal.waitFor({ state: 'detached' });
   await workflow.locator('.drawer-header .icon-button').click();
   await workflow.locator('.drawer').waitFor({ state: 'detached' });
   const closedUrl = new URL(workflow.url());

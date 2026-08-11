@@ -450,6 +450,8 @@ export function MemberQuickDrawer({
           />
           <MembershipForm
             memberId={member.id}
+            member={member}
+            currentMembership={current}
             options={options.data}
             open={dialog === "renew"}
             onClose={() => setDialog(null)}

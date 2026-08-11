@@ -359,15 +359,15 @@ export function MembersPage() {
           <div className="member-row-actions">
             <button
               className="row-action-primary"
-              title="Gia hạn gói"
-              aria-label={`Gia hạn gói cho ${row.name}`}
+              title={row.membership ? "Gia hạn gói" : "Đăng ký gói"}
+              aria-label={`${row.membership ? "Gia hạn" : "Đăng ký"} gói cho ${row.name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 openMember(row, "renew");
               }}
             >
               <CalendarPlus size={15} />
-              <span>Gia hạn</span>
+              <span>{row.membership ? "Gia hạn" : "Đăng ký"}</span>
             </button>
             <button
               className="row-action-secondary"
