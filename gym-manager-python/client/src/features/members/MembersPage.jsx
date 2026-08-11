@@ -5,6 +5,7 @@ import {
   CalendarPlus,
   CreditCard,
   Plus,
+  ScanFace,
   SlidersHorizontal,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -26,12 +27,14 @@ import {
   TrainingFields,
 } from "../../components/forms/TrainingForm";
 import { MemberQuickDrawer } from "./MemberQuickDrawer";
+import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
 import {
   formatPhone,
   initials,
   money,
   normalizePhone,
+  dateTime,
   shortDate,
 } from "../../utils/format";
 
@@ -42,6 +45,11 @@ const createInitialForm = () => ({
   gender: "",
   dateOfBirth: "",
   mbsCode: "",
+  personUuid: "",
+  dahEventId: "",
+  dahIdentityName: "",
+  dahIdentityImageData: "",
+  dahIdentityTime: "",
   source: "Walk-in",
   salesEmployeeId: "",
   notes: "",
@@ -100,6 +108,7 @@ export function MembersPage() {
   });
   const tableOptionsRef = useRef(null);
   const [form, setForm] = useState(initialForm);
+  const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState([]);
   const search = params.get("q") || "";
@@ -956,7 +965,14 @@ export function MembersPage() {
               setError("Số điện thoại cần đủ 10 chữ số.");
               return;
             }
-            const { registerPt, pt, ...memberForm } = form;
+            const {
+              registerPt,
+              pt,
+              dahIdentityName,
+              dahIdentityImageData,
+              dahIdentityTime,
+              ...memberForm
+            } = form;
             create.mutate({
               ...memberForm,
               name: form.name.trim(),
@@ -1024,6 +1040,40 @@ export function MembersPage() {
                     }
                   />
                 </Field>
+              </div>
+            </section>
+            <section className="form-section">
+              <h3 className="form-section-title">Định danh DAH</h3>
+              <div className="identity-link-summary">
+                <div className="identity-face">
+                  {form.dahIdentityImageData ? (
+                    <img src={form.dahIdentityImageData} alt="" />
+                  ) : (
+                    <ScanFace size={22} />
+                  )}
+                </div>
+                <div>
+                  <strong>
+                    {form.personUuid ? "Đã chọn định danh" : "Chưa liên kết"}
+                  </strong>
+                  <span>
+                    {form.personUuid ||
+                      "Quét mặt trên DAH rồi chọn PersonUUID mới."}
+                  </span>
+                  {form.dahIdentityName && (
+                    <small>
+                      {form.dahIdentityName} · {dateTime(form.dahIdentityTime)}
+                    </small>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIdentityLinkOpen(true)}
+                >
+                  <ScanFace size={15} />
+                  {form.personUuid ? "Đổi định danh" : "Liên kết định danh"}
+                </Button>
               </div>
             </section>
             <section className="form-section">
@@ -1110,6 +1160,20 @@ export function MembersPage() {
           </div>
         </form>
       </Modal>
+      <DahIdentityLinkModal
+        open={identityLinkOpen}
+        onClose={() => setIdentityLinkOpen(false)}
+        onSelect={(candidate) =>
+          setForm((current) => ({
+            ...current,
+            personUuid: candidate.personUuid,
+            dahEventId: candidate.eventId,
+            dahIdentityName: candidate.name || "",
+            dahIdentityImageData: candidate.imageData || "",
+            dahIdentityTime: candidate.eventTime || "",
+          }))
+        }
+      />
     </>
   );
 }

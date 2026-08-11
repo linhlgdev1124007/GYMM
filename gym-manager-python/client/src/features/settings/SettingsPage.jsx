@@ -262,7 +262,7 @@ export function SettingsPage() {
         <div className="section-header">
           <div>
             <h2>Thiết bị</h2>
-            <p>DAH-1017 và cổng kiểm soát; tích hợp đồng bộ vẫn tạm hoãn.</p>
+            <p>Chỉ theo dõi DAH1017; trạng thái online dựa trên heartbeat gần nhất.</p>
           </div>
         </div>
         <DataTable

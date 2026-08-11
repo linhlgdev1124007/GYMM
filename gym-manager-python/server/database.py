@@ -195,3 +195,27 @@ def migrate_pt_schedule():
         connection.exec_driver_sql(
             f"ALTER TABLE {quote('pt_enrollments')} ADD COLUMN {quote('schedule_json')} TEXT"
         )
+
+
+def migrate_dah_integration():
+    """Add DAH customer identity fields to existing databases."""
+    inspector = inspect(engine)
+    if "customers" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("customers")}
+    quote = engine.dialect.identifier_preparer.quote
+    text_type = "TEXT" if IS_SQLITE else "LONGTEXT"
+    with engine.begin() as connection:
+        if "person_uuid" not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('customers')} ADD COLUMN {quote('person_uuid')} VARCHAR(80)"
+            )
+        if "avatar_image_data" not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('customers')} ADD COLUMN {quote('avatar_image_data')} {text_type}"
+            )
+        indexes = {index["name"] for index in inspector.get_indexes("customers")}
+        if "ix_customers_person_uuid" not in indexes:
+            connection.exec_driver_sql(
+                f"CREATE UNIQUE INDEX {quote('ix_customers_person_uuid')} ON {quote('customers')} ({quote('person_uuid')})"
+            )

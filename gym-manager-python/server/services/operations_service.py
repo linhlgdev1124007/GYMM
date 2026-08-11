@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import secrets
 
 from fastapi import HTTPException
@@ -11,6 +11,7 @@ from ..models import (
     ServicePackage, User,
 )
 from .audit_service import record_audit
+from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
@@ -61,6 +62,55 @@ def _job_title_data(row: EmployeeJobTitle):
         "name": row.name,
         "isPtRole": row.is_pt_role,
         "active": row.is_active,
+    }
+
+
+def _device_online(row: Device | None):
+    return bool(
+        row and row.last_heartbeat_at and
+        row.last_heartbeat_at >= utc_now() - timedelta(seconds=HEARTBEAT_TIMEOUT_SECONDS)
+    )
+
+
+def _primary_dah_device(db: Session):
+    row = (
+        db.query(Device)
+        .filter(or_(Device.model == DAH_MODEL, Device.code.like("DAH-%"), Device.code == DAH_MODEL))
+        .order_by(Device.last_heartbeat_at.desc(), Device.id.desc())
+        .first()
+    )
+    if row:
+        row.name = DAH_MODEL
+        row.model = DAH_MODEL
+        row.status = "online" if _device_online(row) else "offline"
+        return row
+    row = Device(
+        code=DAH_MODEL,
+        name=DAH_MODEL,
+        model=DAH_MODEL,
+        purpose="shared",
+        status="offline",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def device_data(row: Device):
+    online = _device_online(row)
+    row.status = "online" if online else "offline"
+    return {
+        "id": row.id,
+        "code": row.code,
+        "name": DAH_MODEL,
+        "model": DAH_MODEL,
+        "ip": row.ip_address,
+        "purpose": row.purpose,
+        "status": row.status,
+        "pendingJobs": row.pending_jobs,
+        "errors24h": row.errors_24h,
+        "lastHeartbeat": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
+        "heartbeatTimeoutSeconds": HEARTBEAT_TIMEOUT_SECONDS,
     }
 
 
@@ -261,12 +311,13 @@ def list_payments(db: Session, q: str, method: str, date_from: str, date_to: str
 
 def settings(db: Session):
     ensure_employee_job_titles(db)
+    device = _primary_dah_device(db)
     db.commit()
-    devices=db.query(Device).order_by(Device.id).all();accounts=db.query(BankAccount).filter(BankAccount.status != "deleted").order_by(BankAccount.id).all()
+    accounts=db.query(BankAccount).filter(BankAccount.status != "deleted").order_by(BankAccount.id).all()
     return {
         "jobTitles": [_job_title_data(row) for row in employee_job_titles(db)],
         "bankAccounts":[_bank_account_data(row) for row in accounts],
-        "devices":[{"id":r.id,"code":r.code,"name":r.name,"model":r.model,"ip":r.ip_address,"purpose":r.purpose,"status":r.status,"pendingJobs":r.pending_jobs,"errors24h":r.errors_24h,"lastHeartbeat":r.last_heartbeat_at.isoformat() if r.last_heartbeat_at else None} for r in devices],
+        "devices":[device_data(device)],
     }
 
 

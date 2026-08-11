@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import tempfile
+from datetime import timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -73,5 +74,28 @@ def test_deleting_default_job_title_does_not_recreate_it(tmp_path):
         db.commit()
 
         assert "Marketing" not in active_titles(db)
+    finally:
+        db.close()
+
+
+def test_settings_returns_single_dah1017_with_heartbeat_status(tmp_path):
+    from server.models import Device
+    from server.services.operations_service import settings
+    from server.timeutils import utc_now
+
+    db = make_session(tmp_path)
+    try:
+        db.add(Device(code="OLD-GATE", name="Old Gate", model="Other", status="online"))
+        db.add(Device(code="DAH-2470802", name="DAH 2470802", model="DAH1017", status="online", last_heartbeat_at=utc_now() - timedelta(seconds=120)))
+        db.commit()
+
+        data = settings(db)
+        assert len(data["devices"]) == 1
+        assert data["devices"][0]["name"] == "DAH1017"
+        assert data["devices"][0]["status"] == "offline"
+
+        db.query(Device).filter(Device.code == "DAH-2470802").one().last_heartbeat_at = utc_now()
+        db.commit()
+        assert settings(db)["devices"][0]["status"] == "online"
     finally:
         db.close()

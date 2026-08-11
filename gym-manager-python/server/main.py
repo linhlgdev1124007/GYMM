@@ -1,5 +1,6 @@
 from pathlib import Path
 from contextlib import asynccontextmanager
+from datetime import timedelta
 import hmac
 
 from fastapi import FastAPI, HTTPException, Request
@@ -8,17 +9,18 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 from .config import settings
-from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_dah_integration, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
 from .models import (
-    AuthSession, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
+    AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
 )
 from .observability import configure_open_telemetry, metrics
-from .routes import audit, auth, insights, members, operations, users
+from .routes import audit, auth, dah, insights, members, operations, users
 from .security import ensure_admin_user
 from .services.operations_service import ensure_employee_job_titles
+from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
 from .timeutils import utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
@@ -28,6 +30,7 @@ def initialize_database():
     migrate_pt_coaches()
     migrate_remove_branches()
     migrate_pt_schedule()
+    migrate_dah_integration()
     if IS_SQLITE:
         with engine.connect() as connection:
             user_columns = {
@@ -115,12 +118,41 @@ async def http_error(request: Request, exc: HTTPException):
 
 @app.get("/api/health", tags=["system"])
 def health():
+    result = {
+        "status": "ready",
+        "database": "ok",
+        "dah1017": "unknown",
+    }
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-        return {"status": "ready", "database": "ok"}
     except Exception:
-        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "unavailable"})
+        result["status"] = "not_ready"
+        result["database"] = "unavailable"
+        result["dah1017"] = "unknown"
+        return JSONResponse(status_code=503, content=result)
+
+    db = SessionLocal()
+    try:
+        device = (
+            db.query(Device)
+            .filter(or_(Device.model == DAH_MODEL, Device.code.like("DAH-%"), Device.code == DAH_MODEL))
+            .order_by(Device.last_heartbeat_at.desc(), Device.id.desc())
+            .first()
+        )
+        online = bool(
+            device and device.last_heartbeat_at and
+            device.last_heartbeat_at >= utc_now() - timedelta(seconds=HEARTBEAT_TIMEOUT_SECONDS)
+        )
+        result["dah1017"] = "online" if online else "offline"
+        result["lastHeartbeat"] = device.last_heartbeat_at.isoformat() if device and device.last_heartbeat_at else None
+        result["heartbeatTimeoutSeconds"] = HEARTBEAT_TIMEOUT_SECONDS
+        if not online:
+            result["status"] = "not_ready"
+            return JSONResponse(status_code=503, content=result)
+        return result
+    finally:
+        db.close()
 
 
 @app.get("/api/health/live", tags=["system"])
@@ -144,6 +176,7 @@ def prometheus_metrics(request: Request):
 
 
 app.include_router(auth.router)
+app.include_router(dah.router)
 app.include_router(insights.router)
 app.include_router(members.router)
 app.include_router(operations.router)

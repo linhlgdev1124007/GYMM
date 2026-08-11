@@ -6,6 +6,7 @@ import {
   Dumbbell,
   ExternalLink,
   Pencil,
+  ScanFace,
   TriangleAlert,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -29,6 +30,7 @@ import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { useAuth } from "../../app/AuthContext";
+import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 
 export function MemberQuickDrawer({
   memberId,
@@ -42,6 +44,7 @@ export function MemberQuickDrawer({
   );
   const client = useQueryClient();
   const [dialog, setDialog] = useState(null);
+  const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
@@ -142,7 +145,10 @@ export function MemberQuickDrawer({
     }
   }, [member, initialAction, onActionConsumed]);
   useEffect(() => {
-    if (!memberId) setDialog(null);
+    if (!memberId) {
+      setDialog(null);
+      setIdentityLinkOpen(false);
+    }
   }, [memberId]);
   return (
     <>
@@ -185,7 +191,13 @@ export function MemberQuickDrawer({
         {member && (
           <>
             <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
-              <div className="avatar h-11 w-11">{initials(member.name)}</div>
+              <div className="avatar h-11 w-11">
+                {member.avatarImageData ? (
+                  <img src={member.avatarImageData} alt="" />
+                ) : (
+                  initials(member.name)
+                )}
+              </div>
               <div className="min-w-0 flex-1">
                 <strong className="block truncate text-[15px] font-semibold text-slate-950">
                   {member.name}
@@ -417,6 +429,18 @@ export function MemberQuickDrawer({
                     <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => update.mutateAsync({ payload: { email }, silent: true })} pending={update.isPending} />
                     <InlineEditField label="Nguồn khách" value={member.source} onSave={(source) => update.mutateAsync({ payload: { source }, silent: true })} pending={update.isPending} />
                     <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
+                    <div className="inline-field">
+                      <dt>Định danh DAH</dt>
+                      <dd>
+                        {member.personUuid ? (
+                          <span className="font-mono text-[12px]">{member.personUuid}</span>
+                        ) : (
+                          <button className="inline-flex items-center gap-1 text-xs font-medium text-blue-700" onClick={() => setIdentityLinkOpen(true)}>
+                            <ScanFace size={13} /> Liên kết định danh
+                          </button>
+                        )}
+                      </dd>
+                    </div>
                     <InlineEditField label="Trạng thái" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
                   </>
                 ) : (
@@ -425,6 +449,7 @@ export function MemberQuickDrawer({
                     <div className="inline-field"><dt>Email</dt><dd>{member.email || "—"}</dd></div>
                     <div className="inline-field"><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
                     <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
+                    <div className="inline-field"><dt>Định danh DAH</dt><dd>{member.personUuid || "Chưa liên kết"}</dd></div>
                     <div className="inline-field"><dt>Trạng thái</dt><dd><StatusBadge status={member.status} /></dd></div>
                   </>
                 )}
@@ -502,6 +527,16 @@ export function MemberQuickDrawer({
             }
             pending={trainingSave.isPending}
             error={formError}
+          />
+          <DahIdentityLinkModal
+            open={identityLinkOpen}
+            onClose={() => setIdentityLinkOpen(false)}
+            memberId={member.id}
+            memberName={member.name}
+            onLinked={() => {
+              refresh();
+              notify.success(`Đã liên kết định danh DAH cho ${member.name}.`);
+            }}
           />
         </>
       )}

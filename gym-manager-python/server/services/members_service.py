@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..database import ROOT_DIR
 from ..models import (
-    AttendanceSession, BankAccount, Customer, Employee, EmployeeJobTitle, Membership,
+    AttendanceSession, BankAccount, Customer, DahCustomerIdentity, DahWebhookEvent, Employee, EmployeeJobTitle, Membership,
     MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User,
 )
 from .audit_service import member_audit_logs, record_audit
+from . import dah_service
 from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
@@ -31,6 +32,13 @@ def _int(value):
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
+
+
+def _text(value, limit=255):
+    text = str(value or "").strip()
+    if not text or text.lower() in {"null", "none", "undefined"}:
+        return None
+    return text[:limit]
 
 
 def _money(value, default=0):
@@ -145,6 +153,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             "id": member.id,
             "code": member.customer_code,
             "mbsCode": member.mbs_card_code,
+            "personUuid": member.person_uuid,
             **person_data(member.person),
             "source": member.source,
             "status": member.status,
@@ -203,6 +212,8 @@ def get_member(db: Session, member_id: int):
     ).filter(or_(MembershipEvent.from_customer_id == member_id, MembershipEvent.to_customer_id == member_id)).order_by(MembershipEvent.created_at.desc()).all()
     return {
         "id": member.id, "code": member.customer_code, "mbsCode": member.mbs_card_code,
+        "personUuid": member.person_uuid,
+        "avatarImageData": member.avatar_image_data,
         **person_data(member.person), "source": member.source, "status": member.status,
         "notes": member.notes,
         "salesEmployeeId": member.sales_employee_id,
@@ -223,9 +234,19 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         raise HTTPException(status_code=422, detail="Họ tên và số điện thoại là bắt buộc.")
     if db.query(Person).filter(Person.phone == phone).first():
         raise HTTPException(status_code=409, detail="Số điện thoại này đã tồn tại.")
+    dah_event_id = _int(payload.get("dahEventId"))
+    dah_event = db.get(DahWebhookEvent, dah_event_id) if dah_event_id else None
+    if dah_event_id:
+        if not dah_event or dah_event.operator != "VerifyPush" or not dah_event.person_uuid:
+            raise HTTPException(status_code=422, detail="Định danh DAH không hợp lệ.")
+        if db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == dah_event.person_uuid).first():
+            raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
+    person_uuid = _text(payload.get("personUuid"), 80) or (dah_event.person_uuid if dah_event else None)
+    if person_uuid and db.query(Customer).filter(Customer.person_uuid == person_uuid).first():
+        raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
+    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
     member.customer_code = f"MB-{member.id:06d}"
     record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
@@ -266,6 +287,8 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
             details={"coachIds": coach_ids, "schedule": json.loads(schedule_json) if schedule_json else []},
         )
     db.commit()
+    if dah_event_id:
+        dah_service.assign_identity_to_customer(db, member.id, dah_event_id)
     return get_member(db, member.id)
 
 
@@ -284,6 +307,13 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
     if "dateOfBirth" in payload:
         member.person.date_of_birth = _parse_date(payload.get("dateOfBirth"))
     if "mbsCode" in payload: member.mbs_card_code = payload.get("mbsCode") or None
+    if "personUuid" in payload:
+        person_uuid = _text(payload.get("personUuid"), 80)
+        if person_uuid:
+            duplicate = db.query(Customer).filter(Customer.person_uuid == person_uuid, Customer.id != member.id).first()
+            if duplicate:
+                raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
+        member.person_uuid = person_uuid
     if "source" in payload: member.source = payload.get("source") or None
     if "notes" in payload: member.notes = payload.get("notes") or None
     if "salesEmployeeId" in payload: member.sales_employee_id = _int(payload.get("salesEmployeeId"))

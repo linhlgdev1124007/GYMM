@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   ReceiptText,
+  ScanFace,
   TriangleAlert,
 } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -26,6 +27,7 @@ import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
 import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
+import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
 import {
   dateTime,
@@ -61,6 +63,7 @@ export function MemberDetailPage() {
   const [selectedTraining, setSelectedTraining] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
+  const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
     queryFn: () => api(`/api/members/${memberId}`),
@@ -396,7 +399,13 @@ export function MemberDetailPage() {
         </Link>
       </div>
       <header className="profile-header">
-        <div className="avatar">{initials(member.name)}</div>
+        <div className="avatar">
+          {member.avatarImageData ? (
+            <img src={member.avatarImageData} alt="" />
+          ) : (
+            initials(member.name)
+          )}
+        </div>
         <div className="profile-title">
           <div className="flex items-center gap-3">
             <h1>{member.name}</h1>
@@ -660,6 +669,25 @@ export function MemberDetailPage() {
               <div>
                 <dt>Mã MBS</dt>
                 <dd>{member.mbsCode || "—"}</dd>
+              </div>
+              <div>
+                <dt>Định danh DAH</dt>
+                <dd>
+                  {member.personUuid ? (
+                    <span className="font-mono text-[12px]">
+                      {member.personUuid}
+                    </span>
+                  ) : canFinancial ? (
+                    <button
+                      className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
+                      onClick={() => setIdentityLinkOpen(true)}
+                    >
+                      <ScanFace size={14} /> Liên kết định danh
+                    </button>
+                  ) : (
+                    "Chưa liên kết"
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Phụ trách</dt>
@@ -954,6 +982,16 @@ export function MemberDetailPage() {
         }
         pending={saveTraining.isPending}
         error={formError}
+      />
+      <DahIdentityLinkModal
+        open={identityLinkOpen}
+        onClose={() => setIdentityLinkOpen(false)}
+        memberId={member.id}
+        memberName={member.name}
+        onLinked={() => {
+          refresh();
+          notify.success(`Đã liên kết định danh DAH cho ${member.name}.`);
+        }}
       />
     </>
   );

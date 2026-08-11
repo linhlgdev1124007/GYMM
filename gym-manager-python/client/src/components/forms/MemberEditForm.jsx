@@ -27,6 +27,7 @@ export function MemberEditForm({
         gender: member.gender || "",
         dateOfBirth: member.dateOfBirth || "",
         mbsCode: member.mbsCode || "",
+        personUuid: member.personUuid || "",
         source: member.source || "",
         salesEmployeeId: member.salesEmployeeId || "",
         status: member.status || "active",

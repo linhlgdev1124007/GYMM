@@ -204,6 +204,9 @@
   .avatar {
     @apply flex shrink-0 items-center justify-center rounded-full bg-slate-200 font-semibold text-slate-600;
   }
+  .avatar img {
+    @apply h-full w-full rounded-full object-cover;
+  }
   .avatar-sm {
     @apply h-8 w-8 text-[11px];
   }
@@ -300,6 +303,44 @@
   }
   .form-section-title {
     @apply mb-3 text-[13px] font-semibold text-slate-900;
+  }
+  .identity-link-summary {
+    @apply flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3;
+  }
+  .identity-link-summary > div:nth-child(2) {
+    @apply min-w-0 flex-1;
+  }
+  .identity-link-summary strong,
+  .identity-link-toolbar strong,
+  .identity-candidate strong {
+    @apply block text-[13px] font-semibold text-slate-950;
+  }
+  .identity-link-summary span,
+  .identity-link-toolbar span,
+  .identity-candidate span {
+    @apply block truncate text-xs text-slate-500;
+  }
+  .identity-link-summary small,
+  .identity-candidate small {
+    @apply mt-0.5 block truncate text-[11px] text-slate-400;
+  }
+  .identity-face {
+    @apply flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white text-slate-400;
+  }
+  .identity-face img {
+    @apply h-full w-full object-cover;
+  }
+  .identity-link-toolbar {
+    @apply flex items-center justify-between gap-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3;
+  }
+  .identity-candidate-list {
+    @apply grid gap-2;
+  }
+  .identity-candidate {
+    @apply flex w-full items-center gap-3 rounded-md border border-slate-200 bg-white p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-wait disabled:opacity-60;
+  }
+  .identity-candidate > div:last-child {
+    @apply min-w-0 flex-1;
   }
   .form-span {
     @apply col-span-2;

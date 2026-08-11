@@ -1,10 +1,13 @@
 from datetime import datetime, date
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 from .timeutils import utc_now
+
+LONG_TEXT = Text().with_variant(LONGTEXT(), "mysql")
 
 
 class User(Base):
@@ -74,6 +77,8 @@ class Customer(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), unique=True)
     customer_code: Mapped[str] = mapped_column(String(40), unique=True)
     mbs_card_code: Mapped[str | None] = mapped_column(String(60), unique=True)
+    person_uuid: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
+    avatar_image_data: Mapped[str | None] = mapped_column(LONG_TEXT)
     sales_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     source: Mapped[str | None] = mapped_column(String(80))
     status: Mapped[str] = mapped_column(String(30), default="lead")
@@ -392,3 +397,49 @@ class Device(Base):
     pending_jobs: Mapped[int] = mapped_column(Integer, default=0)
     errors_24h: Mapped[int] = mapped_column(Integer, default=0)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class DahCustomerIdentity(Base):
+    __tablename__ = "dah_customer_identities"
+    __table_args__ = (
+        UniqueConstraint("person_uuid", name="uq_dah_customer_identities_person_uuid"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), index=True)
+    person_uuid: Mapped[str] = mapped_column(String(80), index=True)
+    person_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    face_name: Mapped[str | None] = mapped_column(String(160))
+    rfid_card: Mapped[str | None] = mapped_column(String(80))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    customer: Mapped[Customer] = relationship()
+    device: Mapped[Device | None] = relationship()
+
+
+class DahWebhookEvent(Base):
+    __tablename__ = "dah_webhook_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    operator: Mapped[str] = mapped_column(String(40), index=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    attendance_session_id: Mapped[int | None] = mapped_column(ForeignKey("attendance_sessions.id"))
+    person_uuid: Mapped[str | None] = mapped_column(String(80), index=True)
+    person_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    verify_status: Mapped[int | None] = mapped_column(Integer)
+    similarity: Mapped[float | None] = mapped_column(Float)
+    event_time: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="received", index=True)
+    action: Mapped[str | None] = mapped_column(String(40), index=True)
+    note: Mapped[str | None] = mapped_column(String(255))
+    image_data: Mapped[str | None] = mapped_column(LONG_TEXT)
+    raw_payload: Mapped[str | None] = mapped_column(LONG_TEXT)
+
+    device: Mapped[Device | None] = relationship()
+    customer: Mapped[Customer | None] = relationship()
+    attendance_session: Mapped[AttendanceSession | None] = relationship()

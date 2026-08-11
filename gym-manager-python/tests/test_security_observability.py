@@ -26,7 +26,8 @@ from fastapi.testclient import TestClient
 from server.database import SessionLocal, engine
 from server.config import load_settings
 from server.main import app
-from server.models import AuthSession
+from server.models import AuthSession, Device
+from server.timeutils import utc_now
 
 
 ORIGIN = {"Origin": "http://testserver"}
@@ -49,10 +50,20 @@ def login(client: TestClient, ip: str = "10.0.0.1"):
 
 
 def test_health_request_id_metrics_and_security_headers(client):
+    with SessionLocal() as db:
+        device = db.query(Device).filter(Device.code == "DAH-2470802").first()
+        if not device:
+            device = Device(code="DAH-2470802", name="DAH1017", model="DAH1017", status="online")
+            db.add(device)
+        device.last_heartbeat_at = utc_now()
+        db.commit()
+
     request_id = "request-test-0001"
     response = client.get("/api/health/ready", headers={"X-Request-ID": request_id})
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "database": "ok"}
+    assert response.json()["status"] == "ready"
+    assert response.json()["database"] == "ok"
+    assert response.json()["dah1017"] == "online"
     assert response.headers["x-request-id"] == request_id
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
