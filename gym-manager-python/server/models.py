@@ -97,6 +97,16 @@ class Employee(Base):
     person: Mapped[Person] = relationship(back_populates="employee")
 
 
+class EmployeeJobTitle(Base):
+    __tablename__ = "employee_job_titles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    is_pt_role: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
 class ServicePackage(Base):
     __tablename__ = "service_packages"
 

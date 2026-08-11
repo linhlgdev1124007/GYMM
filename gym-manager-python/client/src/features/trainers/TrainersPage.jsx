@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -9,18 +9,25 @@ import { PageHeader } from "../../components/common/PageHeader";
 import { SearchInput } from "../../components/common/SearchInput";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
-import { Field, Input } from "../../components/ui/Form";
+import { Field, Input, Select } from "../../components/ui/Form";
 import { Modal } from "../../components/ui/Modal";
 import { PhoneInput } from "../../components/ui/SmartInputs";
 import { Pagination } from "../../components/ui/Pagination";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { formatPhone, initials, normalizePhone } from "../../utils/format";
 
+const defaultJobTitles = ["Sale", "Coach", "Marketing"];
 const blank = { name: "", phone: "", email: "", title: "Coach" };
+
+function normalizeJobTitle(value) {
+  return String(value || "").trim().slice(0, 80);
+}
+
 export function TrainersPage() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
   const q = useDebouncedValue(search);
+  const [titleFilter, setTitleFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -42,10 +49,21 @@ export function TrainersPage() {
     [selected, open],
   );
   const query = useQuery({
-    queryKey: ["trainers", q, page],
+    queryKey: ["trainers", q, titleFilter, page],
     queryFn: () =>
-      api(`/api/trainers?${queryString({ q, page, pageSize: 20 })}`),
+      api(`/api/trainers?${queryString({ q, title: titleFilter, page, pageSize: 20 })}`),
   });
+  const jobTitles = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...defaultJobTitles,
+          ...(query.data?.jobTitles || []).map((row) => row.name),
+          normalizeJobTitle(form.title),
+        ].filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b, "vi")),
+    [form.title, query.data?.jobTitles],
+  );
   const edit = (row) => {
     setSelected(row);
     setError("");
@@ -60,6 +78,7 @@ export function TrainersPage() {
           name: payload.name.trim(),
           phone: normalizePhone(payload.phone),
           email: payload.email.trim(),
+          title: normalizeJobTitle(payload.title) || "Coach",
         },
       }),
     onSuccess: (data) => {
@@ -115,7 +134,7 @@ export function TrainersPage() {
       label: "Điện thoại",
       render: (r) => formatPhone(r.phone) || "—",
     },
-    { key: "title", label: "Chức danh", render: (r) => r.title || "—" },
+    { key: "title", label: "Chức vụ", render: (r) => r.title || "—" },
     {
       key: "activeClients",
       label: "Khách PT",
@@ -176,8 +195,23 @@ export function TrainersPage() {
             setSearch(value);
             setPage(1);
           }}
-          placeholder="Tên, điện thoại, mã nhân viên…"
+          placeholder="Tên, điện thoại, mã nhân viên, chức vụ…"
         />
+        <Select
+          className="input w-48"
+          value={titleFilter}
+          onChange={(event) => {
+            setTitleFilter(event.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="all">Mọi chức vụ</option>
+          {jobTitles.map((title) => (
+            <option key={title} value={title}>
+              {title}
+            </option>
+          ))}
+        </Select>
       </div>
       <DataTable
         columns={columns}
@@ -238,12 +272,24 @@ export function TrainersPage() {
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                 />
               </Field>
-              <Field className="form-span" label="Chức danh">
-                <Input
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                />
-              </Field>
+              <div className="field form-span">
+                <span className="field-label">Chức vụ</span>
+                <Select
+                  value={form.title || "Coach"}
+                  onChange={(event) =>
+                    setForm({ ...form, title: event.target.value })
+                  }
+                >
+                  {jobTitles.map((title) => (
+                    <option key={title} value={title}>
+                      {title}
+                    </option>
+                  ))}
+                </Select>
+                <span className="field-hint">
+                  Thêm chức vụ mới và đánh dấu chức vụ PT tại Cài đặt.
+                </span>
+              </div>
             </div>
             {error && <div className="inline-error mt-4">{error}</div>}
           </div>

@@ -48,7 +48,7 @@ function enrollmentForm(enrollment) {
 
 export function TrainingFields({ form, setForm, options, editing = false }) {
   const coaches =
-    options?.employees?.filter((row) => /coach|pt/i.test(row.title || "")) ||
+    options?.employees?.filter((row) => row.isPtRole) ||
     [];
   const coachOptions = coaches.map((row) => ({
     value: row.id,

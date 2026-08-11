@@ -7,13 +7,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
-    Customer, Device, Employee, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
+    Customer, Device, Employee, EmployeeJobTitle, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
     ServicePackage, User,
 )
 from .audit_service import record_audit
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_now
+
+DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
+DEFAULT_PT_TITLES = {"Coach"}
 
 
 def _as_int(value, default=None):
@@ -25,9 +28,81 @@ def _as_date(value):
     return date.fromisoformat(value) if value else None
 
 
-def list_trainers(db: Session, q: str, page: int, page_size: int):
+def _job_title(value, default="Coach"):
+    title = str(value or "").strip()
+    if not title:
+        return default
+    return title[:80]
+
+
+def _bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bank_account_data(row: BankAccount):
+    return {
+        "id": row.id,
+        "code": row.code,
+        "bank": row.bank_name,
+        "accountName": row.account_name,
+        "accountNumber": row.account_number,
+        "visibility": row.visibility,
+        "status": row.status,
+    }
+
+
+def _job_title_data(row: EmployeeJobTitle):
+    return {
+        "id": row.id,
+        "name": row.name,
+        "isPtRole": row.is_pt_role,
+        "active": row.is_active,
+    }
+
+
+def ensure_employee_job_titles(db: Session):
+    existing_names = {
+        name for (name,) in db.query(EmployeeJobTitle.name).all()
+    }
+    names = set(DEFAULT_JOB_TITLES) if not existing_names else set()
+    names.update(
+        title for (title,) in db.query(Employee.job_title)
+        .filter(Employee.status == "active", Employee.job_title.is_not(None), Employee.job_title != "")
+        .distinct()
+        .all()
+        if title
+    )
+    for name in sorted(names, key=str.casefold):
+        normalized = _job_title(name, default="")
+        if normalized and normalized not in existing_names:
+            db.add(EmployeeJobTitle(
+                name=normalized,
+                is_pt_role=normalized in DEFAULT_PT_TITLES or "pt" in normalized.lower(),
+                is_active=True,
+            ))
+            existing_names.add(normalized)
+    db.flush()
+
+
+def employee_job_titles(db: Session):
+    ensure_employee_job_titles(db)
+    return db.query(EmployeeJobTitle).filter(EmployeeJobTitle.is_active == True).order_by(EmployeeJobTitle.name).all()
+
+
+def pt_role_names(db: Session):
+    return {row.name for row in employee_job_titles(db) if row.is_pt_role}
+
+
+def list_trainers(db: Session, q: str, page: int, page_size: int, title: str = "all"):
+    ensure_employee_job_titles(db)
     query = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active")
     if q: query = query.join(Employee.person).filter(or_(Person.display_name.contains(q), Person.phone.contains(q), Employee.employee_code.contains(q), Employee.job_title.contains(q)))
+    if title and title != "all":
+        query = query.filter(Employee.job_title == title)
     total = query.count(); rows = query.order_by(Employee.id.desc()).offset((page-1)*page_size).limit(page_size).all()
     ids = [row.id for row in rows]
     counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollmentCoach.enrollment_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
@@ -35,7 +110,7 @@ def list_trainers(db: Session, q: str, page: int, page_size: int):
     items=[]
     for row in rows:
         item=employee_data(row); item["activeClients"]=counts.get(row.id,0); item["ptSessions"]=sessions.get(row.id,0) or 0; items.append(item)
-    return {"items":items,"pagination":pagination(page,page_size,total)}
+    return {"items":items,"pagination":pagination(page,page_size,total),"jobTitles":[_job_title_data(row) for row in employee_job_titles(db)]}
 
 
 def create_trainer(db: Session, payload: dict, actor: User | None = None):
@@ -43,7 +118,7 @@ def create_trainer(db: Session, payload: dict, actor: User | None = None):
     if not name: raise HTTPException(422,"Tên nhân viên là bắt buộc.")
     person=Person(display_name=name,phone=payload.get("phone") or None,email=payload.get("email") or None,status="active",biometric_consent_status="not_requested")
     db.add(person);db.flush()
-    row=Employee(person_id=person.id,employee_code=f"TMP-{secrets.token_hex(4)}",job_title=payload.get("title") or "Coach",base_salary=0,status="active")
+    row=Employee(person_id=person.id,employee_code=f"TMP-{secrets.token_hex(4)}",job_title=_job_title(payload.get("title")),base_salary=0,status="active")
     db.add(row);db.flush();row.employee_code=f"EMP-{row.id:05d}"
     record_audit(db, actor, "create", "employee", row.id, f"Thêm nhân viên {name}", details={"code": row.employee_code, "title": row.job_title})
     db.commit();db.refresh(row)
@@ -56,7 +131,7 @@ def update_trainer(db: Session, trainer_id: int, payload: dict, actor: User | No
     if "name" in payload: row.person.display_name=str(payload["name"]).strip() or row.person.display_name
     if "phone" in payload: row.person.phone=payload["phone"] or None
     if "email" in payload: row.person.email=payload["email"] or None
-    if "title" in payload: row.job_title=payload["title"] or None
+    if "title" in payload: row.job_title=_job_title(payload["title"], default="")
     record_audit(db, actor, "update", "employee", row.id, f"Cập nhật nhân viên {row.person.display_name}", details={"fields": list(payload.keys())})
     db.commit();return employee_data(row)
 
@@ -185,5 +260,143 @@ def list_payments(db: Session, q: str, method: str, date_from: str, date_to: str
 
 
 def settings(db: Session):
-    devices=db.query(Device).order_by(Device.id).all();accounts=db.query(BankAccount).order_by(BankAccount.id).all()
-    return {"bankAccounts":[{"id":r.id,"bank":r.bank_name,"accountName":r.account_name,"accountNumber":r.account_number,"visibility":r.visibility,"status":r.status} for r in accounts],"devices":[{"id":r.id,"code":r.code,"name":r.name,"model":r.model,"ip":r.ip_address,"purpose":r.purpose,"status":r.status,"pendingJobs":r.pending_jobs,"errors24h":r.errors_24h,"lastHeartbeat":r.last_heartbeat_at.isoformat() if r.last_heartbeat_at else None} for r in devices]}
+    ensure_employee_job_titles(db)
+    db.commit()
+    devices=db.query(Device).order_by(Device.id).all();accounts=db.query(BankAccount).filter(BankAccount.status != "deleted").order_by(BankAccount.id).all()
+    return {
+        "jobTitles": [_job_title_data(row) for row in employee_job_titles(db)],
+        "bankAccounts":[_bank_account_data(row) for row in accounts],
+        "devices":[{"id":r.id,"code":r.code,"name":r.name,"model":r.model,"ip":r.ip_address,"purpose":r.purpose,"status":r.status,"pendingJobs":r.pending_jobs,"errors24h":r.errors_24h,"lastHeartbeat":r.last_heartbeat_at.isoformat() if r.last_heartbeat_at else None} for r in devices],
+    }
+
+
+def create_job_title(db: Session, payload: dict, actor: User | None = None):
+    name = _job_title(payload.get("name"), default="")
+    if not name:
+        raise HTTPException(422, "Tên chức vụ là bắt buộc.")
+    existing = db.query(EmployeeJobTitle).filter(EmployeeJobTitle.name == name).first()
+    if existing:
+        if existing.is_active:
+            raise HTTPException(409, "Chức vụ này đã tồn tại.")
+        existing.is_active = True
+        existing.is_pt_role = _bool(payload.get("isPtRole"), existing.is_pt_role)
+        record_audit(db, actor, "restore", "job_title", existing.id, f"Khôi phục chức vụ {name}", details={"isPtRole": existing.is_pt_role})
+        db.commit()
+        return _job_title_data(existing)
+    row = EmployeeJobTitle(name=name, is_pt_role=_bool(payload.get("isPtRole")), is_active=True)
+    db.add(row); db.flush()
+    record_audit(db, actor, "create", "job_title", row.id, f"Thêm chức vụ {name}", details={"isPtRole": row.is_pt_role})
+    db.commit(); db.refresh(row)
+    return _job_title_data(row)
+
+
+def update_job_title(db: Session, title_id: int, payload: dict, actor: User | None = None):
+    row = db.get(EmployeeJobTitle, title_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy chức vụ.")
+    if "name" in payload:
+        name = _job_title(payload.get("name"), default="")
+        if not name:
+            raise HTTPException(422, "Tên chức vụ là bắt buộc.")
+        duplicate = db.query(EmployeeJobTitle).filter(EmployeeJobTitle.name == name, EmployeeJobTitle.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "Chức vụ này đã tồn tại.")
+        old_name = row.name
+        row.name = name
+        if payload.get("renameEmployees"):
+            db.query(Employee).filter(Employee.job_title == old_name).update({Employee.job_title: name}, synchronize_session=False)
+    if "isPtRole" in payload:
+        row.is_pt_role = _bool(payload.get("isPtRole"))
+    if "active" in payload:
+        active = _bool(payload.get("active"), row.is_active)
+        if not active and db.query(Employee).filter(Employee.job_title == row.name, Employee.status == "active").count():
+            raise HTTPException(409, "Chức vụ đang có nhân viên hoạt động nên chưa thể ẩn.")
+        row.is_active = active
+    record_audit(db, actor, "update", "job_title", row.id, f"Cập nhật chức vụ {row.name}", details={"fields": list(payload.keys()), "isPtRole": row.is_pt_role})
+    db.commit(); db.refresh(row)
+    return _job_title_data(row)
+
+
+def delete_job_title(db: Session, title_id: int, actor: User | None = None):
+    row = db.get(EmployeeJobTitle, title_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy chức vụ.")
+    active_employees = db.query(Employee).filter(Employee.job_title == row.name, Employee.status == "active").count()
+    if active_employees:
+        raise HTTPException(409, f"Chức vụ đang có {active_employees} nhân viên hoạt động nên chưa thể xóa.")
+    row.is_active = False
+    row.is_pt_role = False
+    record_audit(db, actor, "delete", "job_title", row.id, f"Xóa chức vụ {row.name}")
+    db.commit()
+    return {"deleted": True, "id": row.id}
+
+
+def create_bank_account(db: Session, payload: dict, actor: User | None = None):
+    bank = str(payload.get("bank") or "").strip()
+    account_name = str(payload.get("accountName") or "").strip()
+    account_number = str(payload.get("accountNumber") or "").strip()
+    if not bank or not account_name or not account_number:
+        raise HTTPException(422, "Ngân hàng, chủ tài khoản và số tài khoản là bắt buộc.")
+    existing = db.query(BankAccount).filter(BankAccount.account_number == account_number).first()
+    if existing and existing.status != "deleted":
+        raise HTTPException(409, "Số tài khoản này đã tồn tại.")
+    if existing:
+        existing.bank_name = bank[:120]
+        existing.account_name = account_name[:160]
+        existing.visibility = payload.get("visibility") if payload.get("visibility") in ("public", "private") else "public"
+        existing.status = payload.get("status") if payload.get("status") in ("active", "inactive") else "active"
+        record_audit(db, actor, "restore", "bank_account", existing.id, f"Khôi phục tài khoản nhận tiền {bank}", details={"accountNumber": account_number})
+        db.commit(); db.refresh(existing)
+        return _bank_account_data(existing)
+    row = BankAccount(
+        code=f"BANK-{secrets.token_hex(4).upper()}",
+        bank_name=bank[:120],
+        account_name=account_name[:160],
+        account_number=account_number[:80],
+        visibility=payload.get("visibility") if payload.get("visibility") in ("public", "private") else "public",
+        status=payload.get("status") if payload.get("status") in ("active", "inactive") else "active",
+    )
+    db.add(row); db.flush()
+    record_audit(db, actor, "create", "bank_account", row.id, f"Thêm tài khoản nhận tiền {bank}", details={"accountNumber": account_number})
+    db.commit(); db.refresh(row)
+    return _bank_account_data(row)
+
+
+def update_bank_account(db: Session, account_id: int, payload: dict, actor: User | None = None):
+    row = db.get(BankAccount, account_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy tài khoản nhận tiền.")
+    if "bank" in payload:
+        row.bank_name = str(payload.get("bank") or "").strip()[:120] or row.bank_name
+    if "accountName" in payload:
+        row.account_name = str(payload.get("accountName") or "").strip()[:160] or row.account_name
+    if "accountNumber" in payload:
+        account_number = str(payload.get("accountNumber") or "").strip()
+        if not account_number:
+            raise HTTPException(422, "Số tài khoản là bắt buộc.")
+        duplicate = db.query(BankAccount).filter(BankAccount.account_number == account_number, BankAccount.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "Số tài khoản này đã tồn tại.")
+        row.account_number = account_number[:80]
+    if payload.get("visibility") in ("public", "private"):
+        row.visibility = payload["visibility"]
+    if payload.get("status") in ("active", "inactive"):
+        row.status = payload["status"]
+    record_audit(db, actor, "update", "bank_account", row.id, f"Cập nhật tài khoản nhận tiền {row.bank_name}", details={"fields": list(payload.keys())})
+    db.commit(); db.refresh(row)
+    return _bank_account_data(row)
+
+
+def delete_bank_account(db: Session, account_id: int, actor: User | None = None):
+    row = db.get(BankAccount, account_id)
+    if not row or row.status == "deleted":
+        raise HTTPException(404, "Không tìm thấy tài khoản nhận tiền.")
+    payments = db.query(Payment).filter(Payment.bank_account_id == account_id).count()
+    record_audit(db, actor, "delete", "bank_account", row.id, f"Xóa tài khoản nhận tiền {row.bank_name}", details={"payments": payments})
+    if payments:
+        row.status = "deleted"
+        db.commit()
+        return {"deleted": True, "archived": True, "id": row.id}
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "archived": False, "id": account_id}

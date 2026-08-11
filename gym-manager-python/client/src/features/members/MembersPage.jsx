@@ -720,7 +720,7 @@ export function MembersPage() {
           >
             <option value="">Mọi PT</option>
             {options.data?.employees
-              .filter((row) => /coach|pt/i.test(row.title || ""))
+              .filter((row) => row.isPtRole)
               .map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.name}

@@ -18,6 +18,7 @@ from .models import (
 from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, insights, members, operations, users
 from .security import ensure_admin_user
+from .services.operations_service import ensure_employee_job_titles
 from .timeutils import utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
@@ -65,6 +66,7 @@ def initialize_database():
                 ))
         now = utc_now()
         db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
+        ensure_employee_job_titles(db)
         db.commit()
         ensure_admin_user(db)
     finally:

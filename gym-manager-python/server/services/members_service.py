@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..database import ROOT_DIR
 from ..models import (
-    AttendanceSession, BankAccount, Customer, Employee, Membership,
+    AttendanceSession, BankAccount, Customer, Employee, EmployeeJobTitle, Membership,
     MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User,
 )
 from .audit_service import member_audit_logs, record_audit
@@ -160,8 +160,14 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
 def member_options(db: Session):
     employees = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active").order_by(Employee.id).all()
     accounts = db.query(BankAccount).filter(BankAccount.status == "active").order_by(BankAccount.bank_name).all()
+    pt_titles = {
+        row.name for row in db.query(EmployeeJobTitle)
+        .filter(EmployeeJobTitle.is_active == True, EmployeeJobTitle.is_pt_role == True)
+        .all()
+    } or {"Coach"}
     return {
-        "employees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title} for row in employees],
+        "employees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title, "isPtRole": row.job_title in pt_titles} for row in employees],
+        "ptRoleTitles": sorted(pt_titles, key=str.casefold),
         "plans": list_plans(db),
         "bankAccounts": [{"id": row.id, "label": f"{row.bank_name} · {row.account_number}", "visibility": row.visibility} for row in accounts],
     }

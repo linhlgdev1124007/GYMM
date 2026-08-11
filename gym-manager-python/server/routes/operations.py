@@ -10,8 +10,8 @@ router = APIRouter(prefix="/api", tags=["operations"], dependencies=[Depends(cur
 
 
 @router.get("/trainers", dependencies=[Depends(require_roles("admin", "manager"))])
-def trainers(q: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
-    return operations_controller.list_trainers(db, q=q, page=page, page_size=page_size)
+def trainers(q: str = "", title: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
+    return operations_controller.list_trainers(db, q=q, title=title, page=page, page_size=page_size)
 
 
 @router.post("/trainers", dependencies=[Depends(require_roles("admin", "manager"))])
@@ -72,3 +72,33 @@ def payments(q: str = "", method: str = "all", date_from: str = Query("", alias=
 @router.get("/settings", dependencies=[Depends(require_roles("admin"))])
 def settings(db: Session = Depends(get_db)):
     return operations_controller.settings(db)
+
+
+@router.post("/settings/job-titles", dependencies=[Depends(require_roles("admin"))])
+def create_job_title(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.create_job_title(db, payload, user)
+
+
+@router.patch("/settings/job-titles/{title_id}", dependencies=[Depends(require_roles("admin"))])
+def update_job_title(title_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.update_job_title(db, title_id, payload, user)
+
+
+@router.delete("/settings/job-titles/{title_id}", dependencies=[Depends(require_roles("admin"))])
+def delete_job_title(title_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.delete_job_title(db, title_id, user)
+
+
+@router.post("/settings/bank-accounts", dependencies=[Depends(require_roles("admin"))])
+def create_bank_account(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.create_bank_account(db, payload, user)
+
+
+@router.patch("/settings/bank-accounts/{account_id}", dependencies=[Depends(require_roles("admin"))])
+def update_bank_account(account_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.update_bank_account(db, account_id, payload, user)
+
+
+@router.delete("/settings/bank-accounts/{account_id}", dependencies=[Depends(require_roles("admin"))])
+def delete_bank_account(account_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.delete_bank_account(db, account_id, user)
