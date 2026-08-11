@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -18,6 +18,7 @@ import { money, shortDate } from "../../utils/format";
 
 export function MembershipsPage() {
   const client = useQueryClient();
+  const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const q = useDebouncedValue(search);
   const [status, setStatus] = useState("all");
@@ -28,6 +29,15 @@ export function MembershipsPage() {
   const [selectedMember, setSelectedMember] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (params.get("create") !== "1") return;
+    setChooseOpen(true);
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("create");
+      return next;
+    }, { replace: true });
+  }, [params, setParams]);
   const query = useQuery({
     queryKey: ["memberships", q, status, page],
     queryFn: () =>
@@ -137,6 +147,19 @@ export function MembershipsPage() {
         loading={query.isLoading}
         error={query.error}
         onRetry={query.refetch}
+        emptyTitle={search || status !== "all" ? "Không có đăng ký phù hợp" : "Chưa có đăng ký gói"}
+        emptyDescription={search || status !== "all" ? "Thử từ khóa khác hoặc xóa bộ lọc hiện tại." : "Chọn hội viên để tạo đăng ký gói đầu tiên."}
+        emptyAction={
+          search || status !== "all" ? (
+            <Button size="sm" variant="secondary" onClick={() => { setSearch(""); setStatus("all"); setPage(1); }}>
+              Xóa tìm kiếm và bộ lọc
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => setChooseOpen(true)}>
+              <Plus size={14} /> Đăng ký gói
+            </Button>
+          )
+        }
       />
       <Pagination data={query.data?.pagination} onPage={setPage} />
       <Modal

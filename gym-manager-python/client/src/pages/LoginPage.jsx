@@ -36,7 +36,7 @@ export function LoginPage() {
           <p className="eyebrow">Vận hành phòng gym</p>
           <h1>Đăng nhập hệ thống</h1>
           <p>
-            Quản lý hội viên, check-in, công nợ và lịch PT trong một không gian
+            Quản lý hội viên, điểm danh DAH, công nợ và lịch PT trong một không gian
             làm việc thống nhất.
           </p>
         </div>

@@ -1,4 +1,7 @@
 const { chromium } = require('@playwright/test');
+const fs = require('fs');
+
+fs.mkdirSync('screenshots', { recursive: true });
 
 const pages = [
   ['dashboard', '/dashboard'],
@@ -84,6 +87,24 @@ const viewports = [
   await workflow.locator('.drawer').waitFor();
   if (!workflow.url().includes('/members?member=')) failures.push('workflow: global search did not open quick detail');
   await workflow.locator('.drawer-header .icon-button').click();
+  await workflow.keyboard.press('Control+K');
+  await workflow.locator('.command-input input').fill('Thanh toán');
+  await workflow.screenshot({ path: 'screenshots/v2-desktop-command.png', fullPage: true });
+  await workflow.locator('.command-input input').press('Enter');
+  await workflow.waitForURL('**/payments');
+  await workflow.keyboard.press('Control+K');
+  await workflow.locator('.command-input input').fill('Thêm hội viên');
+  await workflow.locator('.command-input input').press('Enter');
+  await workflow.locator('.modal').waitFor();
+  await workflow.locator('.modal input').first().fill('Hội viên chưa lưu');
+  await workflow.locator('.modal-header .icon-button').click();
+  const discardDialog = workflow.getByRole('alertdialog');
+  await discardDialog.waitFor();
+  await discardDialog.getByRole('button', { name: 'Tiếp tục chỉnh sửa' }).click();
+  if (!await workflow.locator('.modal').isVisible()) failures.push('workflow: continuing a dirty form unexpectedly closed it');
+  await workflow.locator('.modal-header .icon-button').click();
+  await workflow.getByRole('button', { name: 'Bỏ thay đổi' }).click();
+  await workflow.locator('.modal').waitFor({ state: 'detached' });
   await workflow.goto(`${baseUrl}/payments`, { waitUntil: 'networkidle' });
   const paymentMember = workflow.locator('.data-table tbody a[href^="/members/"]').first();
   if (await paymentMember.count()) {
@@ -91,6 +112,15 @@ const viewports = [
     await workflow.locator('.drawer').waitFor();
     if (new URL(workflow.url()).pathname !== '/payments') failures.push('workflow: cross-module member preview lost payment context');
   }
+  if (await workflow.locator('.drawer').isVisible()) {
+    await workflow.locator('.drawer-header .icon-button').click();
+    await workflow.locator('.drawer').waitFor({ state: 'detached' });
+  }
+  await Promise.all([
+    workflow.waitForResponse((response) => response.url().includes('/api/auth/logout') && response.status() === 200),
+    workflow.getByRole('button', { name: 'Đăng xuất' }).click(),
+  ]);
+  await workflow.locator('input[autocomplete="username"]').waitFor();
   await workflow.close();
   await browser.close();
   if (failures.length) { console.error(failures.join('\n')); process.exit(1); }

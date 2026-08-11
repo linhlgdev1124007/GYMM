@@ -62,7 +62,11 @@ export const notify = {
     fallback = "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
     options = {},
   ) {
-    return show("error", { title: safeError(error, fallback), ...options });
+    return show("error", {
+      title: safeError(error, fallback),
+      description: error?.requestId ? `Mã hỗ trợ: ${error.requestId}` : options.description,
+      ...options,
+    });
   },
   loading(input, options = {}) {
     const config = normalize(input, options);

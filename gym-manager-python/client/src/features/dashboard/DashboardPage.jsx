@@ -213,7 +213,7 @@ export function DashboardPage() {
               <h2>Check-in gần đây</h2>
               <p>Hoạt động mới nhất</p>
             </div>
-            <Link to="/check-in">Mở quầy check-in</Link>
+            <Link to="/check-in">Giám sát điểm danh</Link>
           </div>
           <DataTable
             loading={query.isLoading}

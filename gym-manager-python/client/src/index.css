@@ -189,6 +189,15 @@
   .command-results > button.active {
     @apply bg-slate-100;
   }
+  .command-group-label {
+    @apply px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400;
+  }
+  .command-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-navy-700;
+  }
+  .command-results > button > kbd {
+    @apply hidden rounded border border-slate-200 bg-white px-1.5 py-0.5 font-sans text-[10px] text-slate-400 sm:block;
+  }
   .command-results > button > span {
     @apply flex min-w-0 flex-1 flex-col;
   }
@@ -312,7 +321,7 @@
     animation: fade-in 150ms ease-out;
   }
   .modal {
-    @apply flex max-h-[min(82vh,720px)] w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-popover;
+    @apply relative flex max-h-[min(82vh,720px)] w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-popover;
     animation: modal-in 170ms ease-out;
   }
   .modal > form {
@@ -329,6 +338,24 @@
   }
   .modal-body {
     @apply min-h-0 flex-1 overflow-y-auto px-5 py-4;
+  }
+  .discard-confirm {
+    @apply absolute inset-0 z-10 flex items-center justify-center bg-slate-950/35 p-5 backdrop-blur-[1px];
+  }
+  .discard-confirm-card {
+    @apply grid w-full max-w-sm grid-cols-[36px_1fr] gap-x-3 rounded-lg border border-slate-200 bg-white p-4 shadow-popover;
+  }
+  .discard-confirm-icon {
+    @apply flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-700;
+  }
+  .discard-confirm-card h3 {
+    @apply text-sm font-semibold text-slate-950;
+  }
+  .discard-confirm-card p {
+    @apply mt-1 text-xs leading-5 text-slate-500;
+  }
+  .discard-confirm-actions {
+    @apply col-span-2 mt-4 flex justify-end gap-2;
   }
   .smart-input {
     @apply relative;
@@ -460,6 +487,9 @@
   }
   .empty-state p {
     @apply mt-1 text-xs;
+  }
+  .empty-state-action {
+    @apply mt-3;
   }
   .skeleton {
     @apply animate-pulse rounded bg-slate-200;
@@ -625,18 +655,19 @@
     @apply h-7 w-14 border-0 px-1 text-center focus:ring-0;
   }
   .member-row-actions {
-    @apply flex items-center justify-end gap-0.5 opacity-40 transition-opacity;
-  }
-  tr:hover .member-row-actions,
-  tr:focus .member-row-actions,
-  .member-row-actions:focus-within {
-    @apply opacity-100;
+    @apply flex items-center justify-end gap-1.5;
   }
   .member-row-actions button {
-    @apply flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-navy-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500;
+    @apply flex h-7 items-center justify-center gap-1 whitespace-nowrap rounded px-2 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500;
+  }
+  .member-row-actions .row-action-primary {
+    @apply bg-navy-900 text-white hover:bg-navy-800;
+  }
+  .member-row-actions .row-action-secondary {
+    @apply border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50;
   }
   .member-quick-cell {
-    min-width: 142px;
+    min-width: 174px;
     text-align: right;
   }
   .table-options {

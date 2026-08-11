@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarPlus,
-  CheckCircle2,
   CreditCard,
   Dumbbell,
   MoreHorizontal,
@@ -145,23 +144,6 @@ export function MemberDetailPage() {
       notify.success(`Đã cập nhật đăng ký PT của ${member.name}.`);
     },
     onError: (e) => setFormError(e.message),
-  });
-  const checkin = useMutation({
-    mutationFn: () =>
-      api("/api/checkins", {
-        method: "POST",
-        body: { memberId: Number(memberId) },
-      }),
-    onSuccess: (data) => {
-      refresh();
-      notify.success(
-        `${member.name} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
-      );
-    },
-    onError: (e) =>
-      /đã check-in/i.test(e.message)
-        ? notify.warning(e.message)
-        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
   });
   const uploadReceipts = useMutation({
     mutationFn: ({ paymentId, data }) =>
@@ -427,10 +409,7 @@ export function MemberDetailPage() {
         <div className="flex flex-wrap gap-2">
           {canFinancial && (
             <>
-              <Button onClick={() => checkin.mutate()} loading={checkin.isPending} loadingText="Đang check-in…">
-                <CheckCircle2 size={15} /> Check-in
-              </Button>
-              <Button variant="secondary" onClick={() => current?.debtAmount ? open("payment", current) : notify.info("Hội viên không có công nợ.")}>
+              <Button onClick={() => current?.debtAmount ? open("payment", current) : notify.info("Hội viên không có công nợ.")}>
                 <CreditCard size={15} /> Thu tiền
               </Button>
               <Button variant="secondary" onClick={() => open("renew")}>
@@ -552,7 +531,7 @@ export function MemberDetailPage() {
                   {current ? (
                     <>
                       <strong>{current.package.name}</strong>
-                      <span className="cell-secondary">
+                      <span className="cell-secondary mt-0.5 block">
                         {shortDate(current.startsAt)} →{" "}
                         {shortDate(current.expiresAt)}
                       </span>
@@ -626,7 +605,7 @@ export function MemberDetailPage() {
                         .map((coach) => coach.name)
                         .join(", ") || "Chưa phân công Coach"}{" "}
                       · {activeTraining.type}
-                      <span className="cell-secondary">
+                      <span className="cell-secondary mt-0.5 block">
                         {activeTraining.scheduleDays.join(", ") ||
                           "Chưa chọn thứ"}{" "}
                         · {activeTraining.scheduleTime || "Chưa chọn giờ"}

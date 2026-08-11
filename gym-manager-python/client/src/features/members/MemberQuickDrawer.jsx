@@ -2,11 +2,9 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarPlus,
-  CheckCircle2,
   CreditCard,
   Dumbbell,
   ExternalLink,
-  LoaderCircle,
   Pencil,
   TriangleAlert,
 } from "lucide-react";
@@ -125,23 +123,6 @@ export function MemberQuickDrawer({
     },
     onError: (e) => setFormError(e.message),
   });
-  const checkin = useMutation({
-    mutationFn: () =>
-      api("/api/checkins", {
-        method: "POST",
-        body: { memberId: Number(memberId) },
-      }),
-    onSuccess: (data) => {
-      refresh();
-      notify.success(
-        `${member.name} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
-      );
-    },
-    onError: (e) =>
-      /đã check-in/i.test(e.message)
-        ? notify.warning(e.message)
-        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
-  });
   const current = member?.memberships[0];
   const training = member?.training.find((row) => row.status === "active");
   const trainingCoaches = training?.coaches || [];
@@ -214,15 +195,10 @@ export function MemberQuickDrawer({
             {canFinancial && <div className="quick-action-bar">
               <button
                 className="quick-action"
-                onClick={() => checkin.mutate()}
-                disabled={checkin.isPending}
+                onClick={() => openDialog("edit")}
               >
-                {checkin.isPending ? (
-                  <LoaderCircle className="animate-spin" size={17} />
-                ) : (
-                  <CheckCircle2 size={17} />
-                )}
-                <span>{checkin.isPending ? "Đang xử lý…" : "Check-in"}</span>
+                <Pencil size={17} />
+                <span>Sửa hồ sơ</span>
               </button>
               <button
                 className="quick-action"

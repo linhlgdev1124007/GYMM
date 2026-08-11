@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 import hashlib
 import hmac
 import os
@@ -6,10 +6,12 @@ import secrets
 
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .models import AuthSession, User
+from .timeutils import utc_now
 
 PBKDF2_ITERATIONS = 310_000
-SESSION_DAYS = 7
+SESSION_DAYS = settings.session_days
 
 
 def hash_password(password: str) -> str:
@@ -32,8 +34,15 @@ def token_digest(token: str) -> str:
 
 
 def create_session(db: Session, user: User) -> str:
+    now = utc_now()
+    db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
+    existing = db.query(AuthSession).filter(AuthSession.user_id == user.id).order_by(
+        AuthSession.created_at.desc(), AuthSession.id.desc()
+    ).all()
+    for old_session in existing[settings.max_sessions_per_user - 1:]:
+        db.delete(old_session)
     raw_token = secrets.token_urlsafe(32)
-    db.add(AuthSession(user_id=user.id, token_hash=token_digest(raw_token), expires_at=datetime.utcnow() + timedelta(days=SESSION_DAYS)))
+    db.add(AuthSession(user_id=user.id, token_hash=token_digest(raw_token), expires_at=now + timedelta(days=SESSION_DAYS)))
     db.commit()
     return raw_token
 

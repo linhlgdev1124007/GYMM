@@ -1,5 +1,5 @@
-import { X } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { AlertTriangle, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 
 const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl" };
 
@@ -16,16 +16,25 @@ export function Modal({
   const returnFocus = useRef(null);
   const dirtyRef = useRef(dirty);
   const closeRef = useRef(onClose);
+  const discardFocus = useRef(null);
+  const discardPanel = useRef(null);
+  const confirmDiscardRef = useRef(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   dirtyRef.current = dirty;
   closeRef.current = onClose;
   const titleId = useId();
   const descriptionId = useId();
-  const requestClose = () => {
-    if (
-      dirtyRef.current &&
-      !window.confirm("Bạn có thay đổi chưa lưu. Đóng biểu mẫu?")
-    )
+  confirmDiscardRef.current = confirmDiscard;
+  useEffect(() => {
+    if (!open) setConfirmDiscard(false);
+  }, [open]);
+  const requestClose = (force = false) => {
+    if (dirtyRef.current && !force) {
+      setConfirmDiscard(true);
+      requestAnimationFrame(() => discardFocus.current?.focus());
       return;
+    }
+    setConfirmDiscard(false);
     closeRef.current();
   };
   useEffect(() => {
@@ -34,10 +43,14 @@ export function Modal({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const keydown = (event) => {
-      if (event.key === "Escape") requestClose();
+      if (event.key === "Escape") {
+        if (confirmDiscardRef.current) setConfirmDiscard(false);
+        else requestClose();
+      }
       if (event.key !== "Tab") return;
+      const focusRoot = confirmDiscardRef.current ? discardPanel.current : panel.current;
       const focusable = [
-        ...(panel.current?.querySelectorAll(
+        ...(focusRoot?.querySelectorAll(
           'button:not([disabled]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
         ) || []),
       ];
@@ -101,13 +114,32 @@ export function Modal({
           <button
             type="button"
             className="icon-button"
-            onClick={requestClose}
+            onClick={() => requestClose()}
             aria-label="Đóng"
           >
             <X size={17} />
           </button>
         </header>
         {children}
+        {confirmDiscard && (
+          <div className="discard-confirm" role="alertdialog" aria-modal="true" aria-label="Bỏ thay đổi chưa lưu">
+            <div ref={discardPanel} className="discard-confirm-card">
+              <div className="discard-confirm-icon"><AlertTriangle size={18} /></div>
+              <div>
+                <h3>Bỏ các thay đổi chưa lưu?</h3>
+                <p>Dữ liệu bạn vừa nhập trong biểu mẫu này sẽ không được lưu lại.</p>
+              </div>
+              <div className="discard-confirm-actions">
+                <button ref={discardFocus} type="button" className="btn btn-secondary" onClick={() => setConfirmDiscard(false)}>
+                  Tiếp tục chỉnh sửa
+                </button>
+                <button type="button" className="btn btn-danger" onClick={() => requestClose(true)}>
+                  Bỏ thay đổi
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

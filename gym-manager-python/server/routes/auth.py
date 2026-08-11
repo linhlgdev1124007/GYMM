@@ -10,8 +10,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login")
-def login(payload: dict, response: Response, db: Session = Depends(get_db)):
-    return auth_controller.login(payload, response, db)
+def login(payload: dict, request: Request, response: Response, db: Session = Depends(get_db)):
+    return auth_controller.login(payload, request, response, db)
 
 
 @router.post("/logout")
@@ -20,5 +20,5 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-def me(user: User = Depends(current_user)):
-    return auth_controller.me(user)
+def me(request: Request, response: Response, user: User = Depends(current_user)):
+    return auth_controller.me(request, response, user)

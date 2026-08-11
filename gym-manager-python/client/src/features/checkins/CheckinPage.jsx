@@ -1,282 +1,123 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Search, UserRound, XCircle } from "lucide-react";
-import { api, queryString } from "../../services/api";
-import { notify } from "../../services/notify";
-import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useQuery } from "@tanstack/react-query";
+import { Activity, Radio, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { api } from "../../services/api";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { dateTime, shortDate } from "../../utils/format";
+import { dateTime } from "../../utils/format";
 
 export function CheckinPage() {
-  const client = useQueryClient();
-  const [search, setSearch] = useState("");
-  const q = useDebouncedValue(search, 250);
-  const [selected, setSelected] = useState(null);
-  const candidates = useQuery({
-    queryKey: ["checkin-candidates", q],
-    queryFn: () => api(`/api/checkins/candidates?${queryString({ q })}`),
-    enabled: q.length > 1,
-  });
   const recent = useQuery({
     queryKey: ["checkins"],
     queryFn: () => api("/api/checkins?limit=40"),
     refetchInterval: 30000,
   });
-  const refresh = () => {
-    client.invalidateQueries({ queryKey: ["checkins"] });
-    client.invalidateQueries({ queryKey: ["dashboard"] });
-    client.invalidateQueries({ queryKey: ["member"] });
-  };
-  const checkin = useMutation({
-    mutationFn: () =>
-      api("/api/checkins", { method: "POST", body: { memberId: selected.id } }),
-    onSuccess: (data) => {
-      const memberName = selected.name;
-      refresh();
-      setSelected(null);
-      setSearch("");
-      notify.success(
-        `${memberName} đã check-in lúc ${dateTime(data.checkedInAt)}.`,
-      );
-    },
-    onError: (e) =>
-      /đã check-in/i.test(e.message)
-        ? notify.warning(e.message)
-        : notify.errorFrom(e, "Không thể check-in. Vui lòng thử lại."),
-  });
-  const checkout = useMutation({
-    mutationFn: (id) =>
-      api(`/api/checkins/${id}/checkout`, { method: "PATCH" }),
-    onSuccess: (_data, id) => {
-      const memberName = recent.data?.find(
-        (item) => item.id === id,
-      )?.memberName;
-      refresh();
-      notify.success(`Đã check-out${memberName ? ` cho ${memberName}` : ""}.`);
-    },
-    onError: (e) =>
-      notify.errorFrom(e, "Không thể check-out. Vui lòng thử lại."),
-  });
+  const activeSessions = recent.data?.filter((row) => row.status === "open") || [];
+  const lastEvent = recent.data?.[0];
   const columns = [
     {
       key: "member",
       label: "Hội viên",
-      render: (r) => (
-        <div>
-          <span className="cell-primary">{r.memberName}</span>
-          <div className="cell-secondary">{r.memberCode}</div>
-        </div>
+      render: (row) => (
+        <Link className="hover:underline" to={`/members/${row.memberId}`}>
+          <span className="cell-primary">{row.memberName}</span>
+          <span className="cell-secondary block">{row.memberCode}</span>
+        </Link>
       ),
     },
     {
       key: "checkedInAt",
       label: "Giờ vào",
-      render: (r) => dateTime(r.checkedInAt),
+      render: (row) => dateTime(row.checkedInAt),
     },
     {
       key: "checkedOutAt",
       label: "Giờ ra",
-      render: (r) => dateTime(r.checkedOutAt),
+      render: (row) => dateTime(row.checkedOutAt),
     },
     {
       key: "status",
       label: "Trạng thái",
-      render: (r) => <StatusBadge status={r.status} />,
-    },
-    {
-      key: "action",
-      label: "",
-      render: (r) =>
-        r.status === "open" && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => checkout.mutate(r.id)}
-          >
-            Check-out
-          </Button>
-        ),
+      render: (row) => <StatusBadge status={row.status} />,
     },
   ];
+
   return (
     <>
       <PageHeader
         eyebrow="Vận hành"
-        title="Check-in"
-        description="Tìm, xác minh gói tập và check-in hội viên trong vài thao tác."
+        title="Điểm danh"
+        description="Theo dõi dữ liệu vào/ra được hệ thống DAH tự động gửi về."
+        action={(
+          <Button
+            variant="secondary"
+            onClick={() => recent.refetch()}
+            loading={recent.isFetching}
+            loadingText="Đang đồng bộ…"
+          >
+            <RefreshCw size={15} /> Làm mới dữ liệu
+          </Button>
+        )}
       />
-      <div className="grid grid-cols-[minmax(0,1fr)_360px] gap-6 max-[900px]:grid-cols-1">
-        <section>
-          <div className="section-header">
-            <div>
-              <h2>Check-in hội viên</h2>
-              <p>Tìm theo tên, điện thoại, mã hội viên hoặc MBS.</p>
-            </div>
+
+      <div className="mb-7 grid grid-cols-3 gap-4 max-[760px]:grid-cols-1">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+            <Radio size={17} /> Chế độ tự động
           </div>
-          <div className="relative">
-            <div className="search-input h-11">
-              <Search size={17} />
-              <input
-                autoFocus
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setSelected(null);
-                }}
-                placeholder="Tìm hội viên…"
-              />
-            </div>
-            {q.length > 1 && !selected && (
-              <div className="absolute z-10 mt-1 w-full rounded-md border border-slate-200 bg-white p-1 shadow-popover">
-                {candidates.isLoading ? (
-                  <div className="p-3">
-                    <div className="skeleton h-8" />
-                  </div>
-                ) : (
-                  candidates.data?.map((row) => (
-                    <button
-                      key={row.id}
-                      className="flex w-full items-center gap-3 rounded px-3 py-2.5 text-left hover:bg-slate-50"
-                      onClick={() => setSelected(row)}
-                    >
-                      <div className="avatar avatar-md">
-                        <UserRound size={15} />
-                      </div>
-                      <div className="flex-1">
-                        <strong className="text-[13px] font-medium">
-                          {row.name}
-                        </strong>
-                        <p className="text-xs text-slate-400">
-                          {row.code} · {row.phone}
-                        </p>
-                      </div>
-                      {row.eligible ? (
-                        <CheckCircle2 size={17} className="text-emerald-600" />
-                      ) : (
-                        <XCircle size={17} className="text-red-500" />
-                      )}
-                    </button>
-                  ))
-                )}
-                {!candidates.isLoading && !candidates.data?.length && (
-                  <p className="px-3 py-6 text-center text-xs text-slate-400">
-                    Không tìm thấy hội viên.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          {selected && (
-            <div className="mt-4 border-y border-slate-200 bg-white p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-xs text-slate-400">
-                    {selected.code}
-                  </span>
-                  <h3 className="mt-1 text-base font-semibold">
-                    {selected.name}
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {selected.phone}
-                  </p>
-                </div>
-                <button
-                  className="icon-button"
-                  onClick={() => setSelected(null)}
-                  aria-label="Bỏ chọn"
-                >
-                  <XCircle size={18} />
-                </button>
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-4 border-t border-slate-100 pt-4">
-                <div>
-                  <span className="text-[11px] uppercase tracking-wide text-slate-400">
-                    Gói tập
-                  </span>
-                  <p className="mt-1 text-[13px] font-medium">
-                    {selected.membership || "Chưa có gói"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-[11px] uppercase tracking-wide text-slate-400">
-                    Hết hạn
-                  </span>
-                  <p className="mt-1 text-[13px] font-medium">
-                    {shortDate(selected.expiresAt)}
-                  </p>
-                </div>
-              </div>
-              <div
-                className={`mt-4 flex items-center gap-2 rounded-md px-3 py-2.5 text-xs ${selected.eligible ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}
-              >
-                {selected.eligible ? (
-                  <CheckCircle2 size={16} />
-                ) : (
-                  <XCircle size={16} />
-                )}{" "}
-                {selected.eligible ? "Gói tập còn hiệu lực" : selected.reason}
-              </div>
-              <Button
-                className="mt-4 w-full"
-                size="lg"
-                disabled={!selected.eligible}
-                loading={checkin.isPending}
-                loadingText="Đang check-in…"
-                onClick={() => checkin.mutate()}
-              >
-                Xác nhận check-in
-              </Button>
-            </div>
-          )}
-        </section>
-        <aside>
+          <p className="mt-1 text-xs leading-5 text-emerald-700">
+            Màn hình dành cho dữ liệu vào/ra tự động từ DAH, không thao tác thủ công tại đây.
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <span className="text-xs text-slate-500">Đang ở phòng</span>
+          <strong className="mt-1 block text-2xl text-slate-950">{activeSessions.length}</strong>
+          <span className="text-xs text-slate-400">phiên chưa ghi nhận giờ ra</span>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <span className="text-xs text-slate-500">Sự kiện mới nhất</span>
+          <strong className="mt-2 block text-sm text-slate-950">
+            {lastEvent ? dateTime(lastEvent.checkedInAt) : "Chưa có dữ liệu"}
+          </strong>
+          <span className="text-xs text-slate-400">tự làm mới mỗi 30 giây</span>
+        </div>
+      </div>
+
+      {activeSessions.length > 0 && (
+        <section className="mb-7">
           <div className="section-header">
             <div>
               <h2>Đang ở phòng</h2>
-              <p>Các phiên chưa check-out</p>
+              <p>Các phiên DAH chưa gửi thời điểm ra.</p>
             </div>
           </div>
-          <div className="border-y border-slate-200 bg-white divide-y divide-slate-100">
-            {recent.data
-              ?.filter((r) => r.status === "open")
-              .map((row) => (
-                <div
-                  key={row.id}
-                  className="flex items-center justify-between px-3 py-3"
-                >
-                  <div>
-                    <strong className="text-[13px] font-medium">
-                      {row.memberName}
-                    </strong>
-                    <p className="text-[11px] text-slate-400">
-                      Vào lúc {dateTime(row.checkedInAt)}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => checkout.mutate(row.id)}
-                  >
-                    Check-out
-                  </Button>
+          <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
+            {activeSessions.map((row) => (
+              <Link
+                key={row.id}
+                to={`/members/${row.memberId}`}
+                className="rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-sm"
+              >
+                <div className="flex items-center gap-2">
+                  <Activity size={16} className="text-emerald-600" />
+                  <strong className="text-sm text-slate-950">{row.memberName}</strong>
                 </div>
-              ))}
-            {!recent.data?.some((r) => r.status === "open") && (
-              <p className="px-3 py-8 text-center text-xs text-slate-400">
-                Không có phiên đang mở.
-              </p>
-            )}
+                <p className="mt-1 text-xs text-slate-400">
+                  {row.memberCode} · Vào lúc {dateTime(row.checkedInAt)}
+                </p>
+              </Link>
+            ))}
           </div>
-        </aside>
-      </div>
-      <section className="mt-7">
+        </section>
+      )}
+
+      <section>
         <div className="section-header">
           <div>
-            <h2>Check-in gần đây</h2>
-            <p>Lịch sử hoạt động tại quầy</p>
+            <h2>Lịch sử điểm danh DAH</h2>
+            <p>40 sự kiện vào/ra gần nhất được đồng bộ về hệ thống.</p>
           </div>
         </div>
         <DataTable
@@ -285,6 +126,8 @@ export function CheckinPage() {
           loading={recent.isLoading}
           error={recent.error}
           onRetry={recent.refetch}
+          emptyTitle="Chưa nhận được dữ liệu điểm danh"
+          emptyDescription="Sự kiện sẽ xuất hiện khi DAH gửi webhook thành công."
         />
       </section>
     </>

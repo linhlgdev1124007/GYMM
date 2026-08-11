@@ -11,7 +11,7 @@ from .serializers import employee_data
 ROLES = {
     "admin": "Toàn quyền hệ thống, tài khoản và phân quyền",
     "manager": "Quản lý hội viên, gói tập, nhân viên, báo cáo và nhật ký",
-    "receptionist": "Hội viên, đăng ký gói, thanh toán và check-in",
+    "receptionist": "Hội viên, đăng ký gói, thanh toán và giám sát điểm danh",
     "coach": "Hồ sơ hội viên và vận hành PT",
 }
 

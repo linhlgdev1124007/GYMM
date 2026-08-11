@@ -1,11 +1,10 @@
-from datetime import datetime
-
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 
 from .database import get_db
 from .models import AuthSession, User
 from .security import token_digest
+from .timeutils import utc_now
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -13,7 +12,8 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     session = db.query(AuthSession).options(joinedload(AuthSession.user)).filter(
-        AuthSession.token_hash == token_digest(token), AuthSession.expires_at > datetime.utcnow()
+        AuthSession.token_hash == token_digest(token),
+        AuthSession.expires_at > utc_now(),
     ).first()
     if not session or not session.user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")

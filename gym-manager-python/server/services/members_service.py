@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 import secrets
 import json
@@ -14,6 +14,7 @@ from ..models import (
 )
 from .audit_service import member_audit_logs, record_audit
 from .serializers import membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
+from ..timeutils import utc_now
 
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,7 +48,7 @@ async def save_receipt(upload: UploadFile | None) -> str | None:
     content = await upload.read(5 * 1024 * 1024 + 1)
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Ảnh phiếu thu không được vượt quá 5 MB.")
-    filename = f"receipt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}{suffix}"
+    filename = f"receipt-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}{suffix}"
     (RECEIPT_DIR / filename).write_bytes(content)
     return f"/uploads/receipts/{filename}"
 
@@ -308,7 +309,7 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=date.today(), starts_at=starts_at, expires_at=_parse_date(form.get("expiresAt")) or (starts_at + timedelta(days=plan.duration_days) if plan.duration_days else None), remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=max(final_price-paid, 0), debt_due_date=_parse_date(form.get("debtDueDate")), sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status="active")
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if paid:
-        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=_int(form.get("bankAccountId")), payment_no=f"PAY-{row.id:06d}-001", paid_at=datetime.utcnow(), amount=paid, method=form.get("paymentMethod") or "cash", channel="counter", shift_date=date.today(), note="Thanh toán đăng ký gói")
+        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=_int(form.get("bankAccountId")), payment_no=f"PAY-{row.id:06d}-001", paid_at=utc_now(), amount=paid, method=form.get("paymentMethod") or "cash", channel="counter", shift_date=date.today(), note="Thanh toán đăng ký gói")
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
@@ -339,7 +340,7 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     payment = None
     if delta > 0:
         sequence = db.query(Payment).filter(Payment.membership_id == row.id).count() + 1
-        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=datetime.utcnow(), shift_date=date.today(), note="Thanh toán gói", amount=delta, method=form.get("paymentMethod") or "cash", bank_account_id=_int(form.get("bankAccountId")))
+        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=utc_now(), shift_date=date.today(), note="Thanh toán gói", amount=delta, method=form.get("paymentMethod") or "cash", bank_account_id=_int(form.get("bankAccountId")))
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()

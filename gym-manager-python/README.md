@@ -18,6 +18,8 @@ npm --prefix client install
 
 Copy `.env.example` values into your environment and change the default administrator password outside local development.
 
+Production starts fail-closed when secure cookies, explicit HTTPS origins, trusted hosts, a strong administrator secret or a metrics token are missing. See [SECURITY.md](SECURITY.md) before deployment.
+
 ## Development
 
 ```powershell
@@ -59,10 +61,14 @@ Local fallback credentials are `admin` / `PulseFit@2026`. Set explicit secure va
 
 ```powershell
 npm run build
+npm run test:backend
 npm test
 ```
 
 The UI test checks the main routes at 1440, 1280, 1024, 768 and 390 pixel widths.
+The backend suite verifies CSRF, origin/host checks, rate limiting, request limits, session caps, security headers, health probes, request IDs and protected metrics.
+
+Operational endpoints and alert recommendations are documented in [OPERATIONS.md](OPERATIONS.md).
 
 Operational shortcuts:
 

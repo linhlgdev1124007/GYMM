@@ -1,50 +1,115 @@
-# PulseFit UX workflow audit
+# PulseFit operational UX audit
 
-This audit records the operational friction found before the enterprise UX pass and the implemented target flows. The visual identity was intentionally preserved.
+Audit date: 11/08/2026
+Scope: every authenticated route, shared navigation, tables, forms, drawers, dialogs, asynchronous states, permissions and the main cross-module journeys.
 
-## Workflow measurements
+## Product and route map
 
-| Workflow | Before | After | Result |
-|---|---|---|---|
-| Open member | Row menu → View profile → new page | Click row/name → URL-addressable drawer | 3 interactions → 1 |
-| Inspect membership, debt, attendance and PT | Open profile → switch among 3–4 tabs | One quick-detail/Overview summary | Up to 5 interactions → 1 |
-| Check in known member | Open Check-in → search again → select → confirm | Member row/detail → Check-in | 4 interactions → 1–2 |
-| Collect member debt | Navigate Payments → search member → edit package/payment | Member detail → Thu tiền → confirm | 4–5 interactions → 2 before confirmation |
-| Renew membership | Open profile → package tab → create | Member row/detail → Gia hạn | 4 interactions → 1 before form input |
-| Assign PT | Open profile → PT tab → register | Member row/detail → Gán PT | 4 interactions → 1 before selection |
-| Change phone/email/status | Full edit form → locate field → save | Click field → edit inline → save | 4 interactions → 2 |
-| Inspect member from Payments/PT/Dashboard | Leave module → profile → return and recreate context | Member link → drawer over current module | Context loss removed |
-| Find a member globally | Navigate Members → focus search → enter query → open | Ctrl/Cmd+K → type → Enter | Keyboard-first, no manual navigation |
-| Edit plan/employee | More menu → Edit | Click row/name or visible Edit action | 2 interactions → 1 |
-| Find members for a plan/PT | Navigate Members → recreate filters | Click member/client count → prefiltered workspace | 3–4 interactions → 1 |
+| Workspace | Primary user task | Main completion path |
+|---|---|---|
+| Dashboard | Understand today's operational risk | Metric/attention item → member drawer or check-in workspace |
+| Members | Find and operate on a member | Search/filter → row/drawer → check-in, collect debt, renew, assign PT or edit |
+| Memberships | Register and monitor packages | Find member → create package registration → record initial payment |
+| Plans | Maintain the package catalogue | Search → row/edit → save or archive |
+| Staff | Maintain staff and inspect PT load | Search → row/edit; client count → filtered members |
+| PT clients | Review schedules and assignments | Type/filter → row → update coaches and session balance |
+| Check-in | Admit eligible members and close visits | Search → eligibility result → check-in; open visit → check-out |
+| Payments | Reconcile receipts and evidence | Filter → member preview or attach receipt |
+| Reports | Review revenue, attendance and debt | Date range → summary/detail → member preview |
+| Accounts | Maintain access and roles | Create/edit user → validate role and active state |
+| Audit log | Trace operational changes | Filter → inspect event detail/member |
+| Settings | Inspect branches, bank accounts and devices | Read-only operational status |
 
-## Members reference workspace
+## Existing strengths retained
 
-- Search, frequent saved views, status/package/PT filters, sort and pagination are server-driven.
-- Search/filter/sort/page and selected member are represented in the URL.
-- Browser Back closes/restores quick detail predictably.
-- Closing a drawer does not clear search, filters, sort, pagination or scroll context.
-- Rows support mouse and keyboard activation, visible focus, selected state and bulk selection.
-- Primary row actions are visible on hover/focus. Overflow menus are reserved for secondary actions.
-- Initial, filtered-empty, loading and error states are differentiated.
+- React Query provides partial refresh, mutation pending states and targeted cache invalidation; CRUD does not reload the page.
+- Member filters, page, sort, saved views and the selected drawer record are URL-addressable.
+- Cross-module member links open a contextual drawer, preserving the current workspace.
+- Server-side role checks are mirrored by route/action visibility in the UI.
+- Tables have sticky headers, dense rows, skeleton/error/empty states and keyboard-openable rows.
+- Member workflows already expose direct check-in, payment, renewal, PT and inline profile editing.
+- Dates, money and phone numbers are formatted for the Vietnamese locale.
+- The responsive smoke suite passes at 1440, 1280, 1024, 768 and 390 px.
 
-## Shared interaction architecture
+## Prioritized UX debt
 
-- `Drawer`: URL-compatible master-detail inspection with Escape support and responsive full-screen behavior.
-- `DataTable`: clickable keyboard rows, sticky headings, selection, selected state, loading/error/empty states.
-- `InlineEditField`: local field updates without opening a large form.
-- `SearchableSelect`: keyboard-friendly entity lookup for plans and coaches.
-- `GlobalSearch`: Ctrl/Cmd+K search by member name, phone or code with arrow/Enter navigation.
-- `QuickPaymentForm`: focused debt collection without re-entering known member/package data.
+### P0 — Critical
 
-## Context and scalability
+No task-blocking flow was found in the tested seeded-data journeys.
 
-- List queries use remote debounced search and server-side filters, sorting and pagination.
-- No full-page reload is used after CRUD.
-- TanStack Query invalidates only related data and preserves the active workspace.
-- Quick member links from Dashboard, Memberships, PT and Payments are intercepted as contextual previews while retaining semantic full-profile links for new tabs.
-- Routes and sidebar entries are role-filtered, while sensitive API endpoints enforce server-side roles.
+### P1 — High
 
-## Remaining scale boundary
+#### Global search is not actually global
 
-SQLite remains appropriate for the bundled single-instance deployment. Multi-branch, multi-instance or million-record production should migrate persistence to PostgreSQL and add indexed query plans. The UX and API boundaries are prepared for server-side datasets, but no fake branch-switching or unnecessary virtualization was introduced without corresponding backend data.
+- **Current issue:** `Ctrl/Cmd + K` searches members only. It cannot navigate to a workspace or start a frequent action.
+- **Why it is a problem:** staff must remember the sidebar taxonomy and leave the keyboard for common navigation.
+- **Current flow:** shortcut → search member; for modules, close palette → scan sidebar → navigate.
+- **Proposed flow:** one palette returns navigation commands, permitted quick actions, recent members and live member matches.
+- **Expected improvement:** module navigation drops from 2–4 pointer interactions to shortcut → type → Enter.
+
+#### Member row actions are discoverable only as faint icons
+
+- **Current issue:** four icon-only actions have equal weight and low contrast until hover.
+- **Why it is a problem:** frequent reception actions require recognition from icons and are difficult to scan.
+- **Current flow:** locate row → infer icon → hover/read tooltip → click.
+- **Proposed flow:** expose the two highest-frequency actions as labelled `Check-in` and `Thu tiền`; keep renewal/edit in contextual detail where their data is visible.
+- **Expected improvement:** critical actions become self-describing with no tooltip-discovery step.
+
+### P2 — Medium
+
+#### Empty states explain but do not complete the next step
+
+- **Current issue:** shared tables can describe an empty result but cannot render a CTA.
+- **Why it is a problem:** users understand why the table is empty but still need to find the control that resolves it.
+- **Proposed flow:** shared empty state accepts a relevant action such as clear filters, add member or open member search.
+- **Expected improvement:** empty result → next action in one interaction.
+
+#### Unsaved-change warning uses a browser confirm
+
+- **Current issue:** the message is generic and visually inconsistent with the application.
+- **Why it is a problem:** it does not clearly separate continuing work from intentionally discarding changes.
+- **Proposed flow:** application dialog with `Tiếp tục chỉnh sửa` as the safe action and `Bỏ thay đổi` as the destructive action.
+- **Expected improvement:** clearer consequence and consistent keyboard/focus behavior.
+
+#### Profile summary has a dense inline expiry string
+
+- **Current issue:** package and expiry can visually run together at common desktop widths.
+- **Why it is a problem:** a high-value operational date becomes harder to scan.
+- **Proposed flow:** package and expiry use separate aligned text elements.
+- **Expected improvement:** expiry remains readable for long package names.
+
+### P3 — Low
+
+- Add richer command-result highlighting and recent-query history after usage data confirms value.
+- Consider server-backed saved views if staff work across multiple devices.
+- Consider per-user table column preferences instead of browser-only storage.
+
+## Key journeys and interaction counts
+
+| Journey | Baseline | Target after this pass |
+|---|---|---|
+| Open a member without losing filters | Click row → drawer | Retain (1 interaction) |
+| Check in from member list | Interpret icon → click | Click labelled `Check-in` |
+| Collect debt from member list | Click debt or interpret icon | Click debt or labelled `Thu tiền` |
+| Navigate to Payments with keyboard | Close palette → sidebar → Payments | `Ctrl/Cmd+K` → type → Enter |
+| Recover from an empty filtered list | Inspect filters → identify reset controls | Click `Xóa bộ lọc` in empty state |
+| Close a dirty form | Native confirm with generic choices | Explicit discard-changes dialog |
+
+## Business-logic observations
+
+- Membership creation atomically creates the registration, initial payment, receipts and audit entries.
+- Additional collection is represented as a payment delta; collected money cannot be silently reduced.
+- Check-in validates active member status, a valid non-PT package and duplicate open attendance.
+- PT enrolment prevents multiple simultaneous active enrolments and validates coach availability.
+- Staff deletion safely archives referenced employees and hard-deletes only unreferenced records.
+- Membership transfer, package change, upgrade, freeze and cancellation create history/audit records.
+
+Remaining platform risks are outside this UI pass: ad-hoc SQLite migrations, dictionary request bodies instead of typed schemas, no backend test suite and read-only SQLite behavior on Vercel.
+
+## Verification baseline
+
+- `npm run build`: passed.
+- Python compilation: passed.
+- `npm test`: passed all 11 primary routes at five responsive widths.
+- Extended browser journeys pass command-based module navigation, command-based member creation and both branches of the unsaved-change dialog.
+- No full-page reload pattern or uncaught browser error was found in the tested journeys.

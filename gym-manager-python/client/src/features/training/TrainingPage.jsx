@@ -206,6 +206,17 @@ export function TrainingPage() {
             ? "Tất cả khách trong tab này đã có Coach phụ trách."
             : "Đăng ký PT từ hồ sơ hội viên để khách xuất hiện tại đây."
         }
+        emptyAction={
+          search || assignment !== "all" ? (
+            <Button size="sm" variant="secondary" onClick={() => { setSearch(""); setAssignment("all"); setPage(1); }}>
+              Xóa tìm kiếm và bộ lọc
+            </Button>
+          ) : (
+            <Link className="btn btn-primary btn-sm" to="/members?view=no_pt">
+              Tìm hội viên để đăng ký PT
+            </Link>
+          )
+        }
       />
       <Pagination data={query.data?.pagination} onPage={setPage} />
       <TrainingForm

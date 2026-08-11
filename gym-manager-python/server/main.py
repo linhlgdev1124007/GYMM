@@ -1,24 +1,28 @@
 from pathlib import Path
+from contextlib import asynccontextmanager
+import hmac
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import text
 
+from .config import settings
 from .database import Base, ROOT_DIR, SessionLocal, engine, migrate_pt_coaches
+from .models import AuthSession
+from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, insights, members, operations, users
 from .security import ensure_admin_user
+from .timeutils import utc_now
+from .middleware.observability import ObservabilityMiddleware
+from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware
 
-app = FastAPI(title="PulseFit Gym Management API", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(SecurityHeadersMiddleware)
-
-
-@app.on_event("startup")
-def startup():
+def initialize_database():
     if os.getenv("VERCEL"):
         return
     migrate_pt_coaches()
@@ -54,19 +58,82 @@ def startup():
         """)
     db = SessionLocal()
     try:
+        now = utc_now()
+        db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
+        db.commit()
         ensure_admin_user(db)
     finally:
         db.close()
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(
+    title="PulseFit Gym Management API",
+    version="2.0.0",
+    docs_url=None if settings.production else "/api/docs",
+    openapi_url=None if settings.production else "/api/openapi.json",
+    lifespan=lifespan,
+)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+app.add_middleware(RequestSecurityMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(ObservabilityMiddleware)
+configure_open_telemetry(app, engine)
+
+
 @app.exception_handler(RequestValidationError)
-async def validation_error(_request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": "Dữ liệu gửi lên chưa hợp lệ.", "fields": exc.errors()})
+async def validation_error(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={
+        "detail": "Dữ liệu gửi lên chưa hợp lệ.",
+        "fields": exc.errors(),
+        "requestId": getattr(request.state, "request_id", None),
+    })
+
+
+@app.exception_handler(HTTPException)
+async def http_error(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "requestId": getattr(request.state, "request_id", None)},
+        headers=exc.headers,
+    )
 
 
 @app.get("/api/health", tags=["system"])
 def health():
-    return {"status": "ok"}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return {"status": "ready", "database": "ok"}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "unavailable"})
+
+
+@app.get("/api/health/live", tags=["system"])
+def liveness():
+    return {"status": "alive"}
+
+
+@app.get("/api/health/ready", tags=["system"])
+def readiness():
+    return health()
+
+
+@app.get("/api/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request):
+    if settings.metrics_token:
+        authorization = request.headers.get("authorization", "")
+        expected = f"Bearer {settings.metrics_token}"
+        if not hmac.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="Metrics authentication required")
+    return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
 
 
 app.include_router(auth.router)

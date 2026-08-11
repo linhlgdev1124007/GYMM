@@ -8,6 +8,7 @@ export function DataTable({
   onRetry,
   emptyTitle = "Không có dữ liệu",
   emptyDescription = "Thử thay đổi bộ lọc hoặc tạo dữ liệu mới.",
+  emptyAction,
   rowKey = "id",
   onRowClick,
   selectedRowId,
@@ -139,6 +140,7 @@ export function DataTable({
           <div>
             <strong>{emptyTitle}</strong>
             <p>{emptyDescription}</p>
+            {emptyAction && <div className="empty-state-action">{emptyAction}</div>}
           </div>
         </div>
       )}

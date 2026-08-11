@@ -12,6 +12,7 @@ from ..models import (
 )
 from .audit_service import record_audit
 from .serializers import employee_data, pagination, payment_data, pt_data
+from ..timeutils import utc_now
 
 
 def _as_int(value, default=None):
@@ -158,7 +159,7 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     if db.query(AttendanceSession).filter(AttendanceSession.customer_id==member_id,AttendanceSession.status=="open").first(): raise HTTPException(409,"Hội viên đã check-in và chưa check-out.")
     current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=date.today())).first()
     if member.status!="active" or not current: raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
-    row=AttendanceSession(customer_id=member_id,checked_in_at=datetime.utcnow(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
+    row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
     db.commit();return {"id":row.id,"checkedInAt":row.checked_in_at.isoformat()}
 
@@ -167,7 +168,7 @@ def checkout(db: Session, session_id: int, actor: User | None = None):
     row=db.get(AttendanceSession,session_id)
     if not row: raise HTTPException(404,"Không tìm thấy phiên check-in.")
     if row.status!="open": raise HTTPException(409,"Phiên này đã được check-out.")
-    row.checked_out_at=datetime.utcnow();row.status="closed"
+    row.checked_out_at=utc_now();row.status="closed"
     record_audit(db, actor, "checkout", "attendance", row.id, "Check-out hội viên", customer_id=row.customer_id)
     db.commit();return {"ok":True}
 

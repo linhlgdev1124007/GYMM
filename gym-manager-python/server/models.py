@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Stri
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .timeutils import utc_now
 
 
 class User(Base):
@@ -15,7 +16,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(30), default="manager", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), unique=True)
 
     employee: Mapped["Employee | None"] = relationship()
@@ -33,7 +34,7 @@ class AuditLog(Base):
     summary: Mapped[str] = mapped_column(String(255))
     details_json: Mapped[str | None] = mapped_column(Text)
     ip_address: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
     actor: Mapped["User | None"] = relationship()
 
@@ -45,7 +46,7 @@ class AuthSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     user: Mapped[User] = relationship()
 
@@ -166,7 +167,7 @@ class MembershipFreeze(Base):
     compensated_days: Mapped[int] = mapped_column(Integer)
     reason: Mapped[str] = mapped_column(String(255))
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     membership: Mapped[Membership] = relationship(back_populates="freezes")
     created_by: Mapped["User | None"] = relationship()
@@ -186,7 +187,7 @@ class MembershipEvent(Base):
     reason: Mapped[str] = mapped_column(String(255))
     details_json: Mapped[str | None] = mapped_column(Text)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     membership: Mapped[Membership] = relationship(back_populates="events")
     from_customer: Mapped[Customer | None] = relationship(foreign_keys=[from_customer_id])
@@ -216,7 +217,7 @@ class Payment(Base):
     membership_id: Mapped[int | None] = mapped_column(ForeignKey("memberships.id"))
     bank_account_id: Mapped[int | None] = mapped_column(ForeignKey("bank_accounts.id"))
     payment_no: Mapped[str] = mapped_column(String(40), unique=True)
-    paid_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    paid_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     amount: Mapped[float] = mapped_column(Float, default=0)
     method: Mapped[str] = mapped_column(String(40), default="cash")
     channel: Mapped[str] = mapped_column(String(30), default="counter")
@@ -240,7 +241,7 @@ class PaymentReceipt(Base):
     file_path: Mapped[str] = mapped_column(String(255))
     original_name: Mapped[str | None] = mapped_column(String(255))
     uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     payment: Mapped[Payment] = relationship(back_populates="receipts")
     uploaded_by: Mapped["User | None"] = relationship()
@@ -354,7 +355,7 @@ class CashShift(Base):
     branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"))
     opened_by_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     shift_date: Mapped[date] = mapped_column(Date, default=date.today)
-    opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
     expected_amount: Mapped[float] = mapped_column(Float, default=0)
     counted_amount: Mapped[float] = mapped_column(Float, default=0)
@@ -372,7 +373,7 @@ class AttendanceSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
-    checked_in_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    checked_in_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime)
     source: Mapped[str] = mapped_column(String(30), default="manual")
     result: Mapped[str] = mapped_column(String(50), default="allowed")

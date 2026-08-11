@@ -3,9 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkPlus,
   CalendarPlus,
-  CheckCircle2,
   CreditCard,
-  Pencil,
   Plus,
   SlidersHorizontal,
 } from "lucide-react";
@@ -104,6 +102,7 @@ export function MembersPage() {
   const page = Number(params.get("page") || 1);
   const memberId = params.get("member");
   const action = params.get("action");
+  const createRequested = params.get("create") === "1";
   const updateParams = useCallback(
     (changes, options = {}) =>
       setParams((current) => {
@@ -160,24 +159,11 @@ export function MembersPage() {
     },
     onError: (reason) => setError(reason.message),
   });
-  const checkin = useMutation({
-    mutationFn: (id) =>
-      api("/api/checkins", { method: "POST", body: { memberId: id } }),
-    onSuccess: (data, id) => {
-      client.invalidateQueries({ queryKey: ["members"] });
-      client.invalidateQueries({ queryKey: ["dashboard"] });
-      const memberName = members.data?.items?.find(
-        (row) => row.id === id,
-      )?.name;
-      notify.success(
-        `${memberName || "Hội viên"} đã check-in lúc ${new Date(data.checkedInAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}.`,
-      );
-    },
-    onError: (reason) =>
-      /đã check-in/i.test(reason.message)
-        ? notify.warning(reason.message)
-        : notify.errorFrom(reason, "Không thể check-in. Vui lòng thử lại."),
-  });
+  useEffect(() => {
+    if (!createRequested || !canOperate) return;
+    setCreateOpen(true);
+    updateParams({ create: "" }, { replace: true });
+  }, [canOperate, createRequested, updateParams]);
   useEffect(() => {
     const focus = (event) => {
       if (
@@ -243,7 +229,7 @@ export function MembersPage() {
       {
         key: "phone",
         label: "Điện thoại",
-        className: "max-[640px]:hidden",
+        className: "whitespace-nowrap max-[640px]:hidden",
         render: (row) => formatPhone(row.phone) || "—",
       },
       {
@@ -372,16 +358,19 @@ export function MembersPage() {
         render: (row) => canOperate ? (
           <div className="member-row-actions">
             <button
-              title="Check-in"
-              aria-label={`Check-in ${row.name}`}
+              className="row-action-primary"
+              title="Gia hạn gói"
+              aria-label={`Gia hạn gói cho ${row.name}`}
               onClick={(event) => {
                 event.stopPropagation();
-                checkin.mutate(row.id);
+                openMember(row, "renew");
               }}
             >
-              <CheckCircle2 size={15} />
+              <CalendarPlus size={15} />
+              <span>Gia hạn</span>
             </button>
             <button
+              className="row-action-secondary"
               title="Thu tiền"
               aria-label={`Thu tiền ${row.name}`}
               onClick={(event) => {
@@ -390,26 +379,7 @@ export function MembersPage() {
               }}
             >
               <CreditCard size={15} />
-            </button>
-            <button
-              title="Gia hạn"
-              aria-label={`Gia hạn ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                openMember(row, "renew");
-              }}
-            >
-              <CalendarPlus size={15} />
-            </button>
-            <button
-              title="Chỉnh sửa"
-              aria-label={`Chỉnh sửa ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                openMember(row, "edit");
-              }}
-            >
-              <Pencil size={15} />
+              <span>Thu tiền</span>
             </button>
           </div>
         ) : (
@@ -417,7 +387,7 @@ export function MembersPage() {
         ),
       },
     ],
-    [canOperate, checkin, openMember],
+    [canOperate, openMember],
   );
   const activeFilters = [
     status !== "all" && [
@@ -830,6 +800,24 @@ export function MembersPage() {
           search || activeFilters.length || view !== "all"
             ? "Xóa bớt bộ lọc hoặc thử từ khóa khác."
             : "Thêm hội viên đầu tiên để bắt đầu vận hành."
+        }
+        emptyAction={
+          search || activeFilters.length || view !== "all" ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                applySystemView("all");
+                updateParams({ q: "", sort: "" });
+              }}
+            >
+              Xóa tìm kiếm và bộ lọc
+            </Button>
+          ) : canOperate ? (
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus size={14} /> Thêm hội viên
+            </Button>
+          ) : null
         }
       />
       <Pagination

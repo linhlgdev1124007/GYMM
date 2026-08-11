@@ -59,7 +59,7 @@ const groups = [
   {
     label: "Vận hành",
     items: [
-      { to: "/check-in", label: "Check-in", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"] },
+      { to: "/check-in", label: "Điểm danh", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"] },
       { to: "/payments", label: "Thanh toán", icon: CreditCard, roles: ["admin", "manager", "receptionist"] },
     ],
   },

@@ -1,0 +1,75 @@
+name: Quality gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: "1"
+      BASE_URL: http://127.0.0.1:8100
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          npm ci
+          npm --prefix client ci
+          npx playwright install --with-deps chromium
+
+      - name: Audit production dependencies
+        run: |
+          python -m pip_audit -r requirements.txt
+          npm audit --omit=dev --audit-level=high
+          npm --prefix client audit --omit=dev --audit-level=high
+
+      - name: Test and build
+        run: |
+          npm run test:backend
+          npm run build
+
+      - name: Browser smoke test
+        run: |
+          python -m uvicorn server.main:app --host 127.0.0.1 --port 8100 > server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8100/api/health/ready >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:8100/api/health/ready
+          npm test
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-diagnostics
+          path: |
+            server.log
+            screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
