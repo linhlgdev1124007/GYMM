@@ -29,13 +29,14 @@ export function PaymentsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
   const query = useQuery({
-    queryKey: ["payments", q, method, dateFrom, dateTo, page],
+    queryKey: ["payments", q, method, dateFrom, dateTo, page, pageSize],
     queryFn: () =>
       api(
-        `/api/payments?${queryString({ q, method, dateFrom, dateTo, page, pageSize: 20 })}`,
+        `/api/payments?${queryString({ q, method, dateFrom, dateTo, page, pageSize })}`,
       ),
   });
   const uploadReceipts = useMutation({
@@ -53,6 +54,7 @@ export function PaymentsPage() {
     {
       key: "number",
       label: "Phiếu thu",
+      sortValue: (r) => r.number,
       render: (r) => (
         <div>
           <span className="cell-primary">{r.number}</span>
@@ -65,6 +67,7 @@ export function PaymentsPage() {
     {
       key: "member",
       label: "Hội viên",
+      sortValue: (r) => r.memberName,
       render: (r) => (
         <Link
           to={`/members/${r.memberId}`}
@@ -78,6 +81,7 @@ export function PaymentsPage() {
       key: "amount",
       label: "Số tiền",
       className: "text-right",
+      sortValue: (r) => r.amount,
       render: (r) => (
         <span className="font-medium text-slate-900">{money(r.amount)}</span>
       ),
@@ -85,17 +89,25 @@ export function PaymentsPage() {
     {
       key: "method",
       label: "Phương thức",
+      sortValue: (r) => methods[r.method] || r.method,
       render: (r) => methods[r.method] || r.method,
     },
-    { key: "paidAt", label: "Ngày thu", render: (r) => dateTime(r.paidAt) },
+    {
+      key: "paidAt",
+      label: "Ngày thu",
+      sortValue: (r) => r.paidAt,
+      render: (r) => dateTime(r.paidAt),
+    },
     {
       key: "status",
       label: "Trạng thái",
+      sortValue: () => "paid",
       render: (r) => <StatusBadge status="paid" />,
     },
     {
       key: "receipt",
       label: "Chứng từ",
+      sortValue: (r) => r.receiptCount || 0,
       render: (r) => (
         <button
           className="receipt-count-button"
@@ -161,7 +173,15 @@ export function PaymentsPage() {
         error={query.error}
         onRetry={query.refetch}
       />
-      <Pagination data={query.data?.pagination} onPage={setPage} />
+      <Pagination
+        data={query.data?.pagination}
+        onPage={setPage}
+        pageSize={pageSize}
+        onPageSize={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
       <PaymentReceiptModal
         payment={selectedPayment}
         open={!!selectedPayment}

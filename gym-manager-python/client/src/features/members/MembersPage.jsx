@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { addDays, format } from "date-fns";
 import {
   BookmarkPlus,
   CalendarPlus,
@@ -18,7 +19,7 @@ import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { Field, Input, Select, Textarea } from "../../components/ui/Form";
 import { Modal } from "../../components/ui/Modal";
-import { DateOfBirthInput, PhoneInput } from "../../components/ui/SmartInputs";
+import { DateInput, DateOfBirthInput, MoneyInput, PhoneInput } from "../../components/ui/SmartInputs";
 import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -54,6 +55,17 @@ const createInitialForm = () => ({
   salesEmployeeId: "",
   notes: "",
   status: "active",
+  registerMembership: false,
+  membership: {
+    planId: "",
+    startsAt: format(new Date(), "yyyy-MM-dd"),
+    expiresAt: "",
+    finalPrice: 0,
+    paidAmount: 0,
+    debtDueDate: "",
+    paymentMethod: "cash",
+    bankAccountId: "",
+  },
   registerPt: false,
   pt: emptyTrainingForm(),
 });
@@ -82,9 +94,18 @@ const paramDefaults = {
   sort: "newest",
 };
 
+function readTablePrefs(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "{}");
+  } catch {
+    return {};
+  }
+}
+
 export function MembersPage() {
   const { user } = useAuth();
   const canOperate = ["admin", "manager", "receptionist"].includes(user?.role);
+  const tablePrefsKey = `pulsefit-member-table-${user?.id || user?.username || "local"}`;
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
@@ -97,10 +118,12 @@ export function MembersPage() {
       return [];
     }
   });
-  const [density, setDensity] = useState(
-    () => localStorage.getItem("pulsefit-table-density") || "standard",
-  );
-  const [hiddenColumns, setHiddenColumns] = useState([]);
+  const [density, setDensity] = useState(() => {
+    return readTablePrefs(tablePrefsKey).density || "standard";
+  });
+  const [hiddenColumns, setHiddenColumns] = useState(() => {
+    return readTablePrefs(tablePrefsKey).hiddenColumns || [];
+  });
   const [tableOptionsOpen, setTableOptionsOpen] = useState(false);
   const [tableOptionsPosition, setTableOptionsPosition] = useState({
     top: 0,
@@ -122,6 +145,7 @@ export function MembersPage() {
   const packageId = params.get("packageId") || "";
   const trainerId = params.get("trainerId") || "";
   const page = Number(params.get("page") || 1);
+  const pageSize = Number(params.get("pageSize") || readTablePrefs(tablePrefsKey).pageSize || 20);
   const memberId = params.get("member");
   const action = params.get("action");
   const createRequested = params.get("create") === "1";
@@ -151,10 +175,11 @@ export function MembersPage() {
       trainerId,
       sort,
       page,
+      pageSize,
     ],
     queryFn: () =>
       api(
-        `/api/members?${queryString({ q, status, expiringDays, paymentStatus, overdueDays, view, packageId, trainerId, sort, page, pageSize: 20 })}`,
+        `/api/members?${queryString({ q, status, expiringDays, paymentStatus, overdueDays, view, packageId, trainerId, sort, page, pageSize })}`,
       ),
   });
   const options = useQuery({
@@ -203,6 +228,12 @@ export function MembersPage() {
     return () => document.removeEventListener("keydown", focus);
   }, []);
   useEffect(() => {
+    localStorage.setItem(
+      tablePrefsKey,
+      JSON.stringify({ density, hiddenColumns, pageSize }),
+    );
+  }, [density, hiddenColumns, pageSize, tablePrefsKey]);
+  useEffect(() => {
     if (!tableOptionsOpen) return undefined;
     const close = (event) => {
       if (!tableOptionsRef.current?.contains(event.target)) {
@@ -250,6 +281,7 @@ export function MembersPage() {
       {
         key: "member",
         label: "Hội viên",
+        sortValue: (row) => row.name,
         render: (row) => (
           <button
             className="member-cell text-left"
@@ -270,12 +302,14 @@ export function MembersPage() {
         key: "phone",
         label: "Điện thoại",
         className: "whitespace-nowrap max-[640px]:hidden",
+        sortValue: (row) => row.phone,
         render: (row) => formatPhone(row.phone) || "—",
       },
       {
         key: "sale",
         label: "Sale",
         className: "max-[768px]:hidden",
+        sortValue: (row) => row.salesEmployee?.name || "",
         render: (row) =>
           row.salesEmployee ? (
             <div>
@@ -299,6 +333,7 @@ export function MembersPage() {
       {
         key: "membership",
         label: "Gói & hết hạn",
+        sortValue: (row) => row.membership?.expiresAt || "",
         render: (row) =>
           row.membership ? (
             <div>
@@ -317,6 +352,7 @@ export function MembersPage() {
         key: "debt",
         label: "Công nợ",
         className: "text-right",
+        sortValue: (row) => row.membership?.debtAmount || 0,
         render: (row) =>
           row.membership?.debtAmount ? (
             <div>
@@ -343,6 +379,7 @@ export function MembersPage() {
         key: "debtDueDate",
         label: "Hạn thanh toán",
         className: "max-[640px]:hidden",
+        sortValue: (row) => row.membership?.debtDueDate || "",
         render: (row) => {
           if (!row.membership?.debtAmount) return "—";
           if (!row.membership.debtDueDate)
@@ -383,6 +420,7 @@ export function MembersPage() {
         key: "trainer",
         label: "PT",
         className: "max-[640px]:hidden",
+        sortValue: (row) => row.trainers?.map((trainer) => trainer.name).join(", ") || "",
         render: (row) =>
           row.trainers?.length ? (
             <div className="flex max-w-48 flex-wrap gap-1">
@@ -411,6 +449,7 @@ export function MembersPage() {
         key: "status",
         label: "Trạng thái",
         className: "max-[640px]:hidden",
+        sortValue: (row) => row.membership?.status || row.status,
         render: (row) => (
           <StatusBadge status={row.membership?.status || row.status} />
         ),
@@ -419,6 +458,7 @@ export function MembersPage() {
         key: "actions",
         label: "Thao tác nhanh",
         className: "member-quick-cell",
+        sortable: false,
         render: (row) => canOperate ? (
           <div className="member-row-actions">
             <button
@@ -516,6 +556,22 @@ export function MembersPage() {
     setForm(createInitialForm());
     setError("");
   };
+  const updateMembershipDraft = (changes) =>
+    setForm((current) => ({
+      ...current,
+      membership: { ...current.membership, ...changes },
+    }));
+  const selectMembershipPlan = (planId) => {
+    const plan = options.data?.plans.find((row) => String(row.id) === String(planId));
+    const startsAt = form.membership.startsAt || format(new Date(), "yyyy-MM-dd");
+    updateMembershipDraft({
+      planId,
+      finalPrice: plan?.price || 0,
+      expiresAt: plan?.durationDays
+        ? format(addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+        : "",
+    });
+  };
   const saveView = (event) => {
     event.preventDefault();
     const name = viewName.trim();
@@ -534,6 +590,7 @@ export function MembersPage() {
           packageId,
           trainerId,
           sort,
+          pageSize: String(pageSize),
         },
         hiddenColumns,
         density,
@@ -778,7 +835,6 @@ export function MembersPage() {
                   checked={density === "standard"}
                   onChange={() => {
                     setDensity("standard");
-                    localStorage.setItem("pulsefit-table-density", "standard");
                   }}
                 />
                 Tiêu chuẩn
@@ -790,7 +846,6 @@ export function MembersPage() {
                   checked={density === "compact"}
                   onChange={() => {
                     setDensity("compact");
-                    localStorage.setItem("pulsefit-table-density", "compact");
                   }}
                 />
                 Thu gọn
@@ -908,6 +963,8 @@ export function MembersPage() {
       <Pagination
         data={members.data?.pagination}
         onPage={(value) => updateParams({ page: value })}
+        pageSize={pageSize}
+        onPageSize={(value) => updateParams({ pageSize: value, page: "" })}
       />
       <MemberQuickDrawer
         memberId={memberId}
@@ -965,9 +1022,32 @@ export function MembersPage() {
               setError("Số điện thoại cần đủ 10 chữ số.");
               return;
             }
+            if (form.registerMembership) {
+              const debt =
+                Number(form.membership.finalPrice || 0) -
+                Number(form.membership.paidAmount || 0);
+              if (!form.membership.planId) {
+                setError("Vui lòng chọn gói tập.");
+                return;
+              }
+              if (debt > 0 && !form.membership.debtDueDate) {
+                setError("Vui lòng chọn hạn thanh toán cho phần công nợ.");
+                return;
+              }
+              if (
+                Number(form.membership.paidAmount || 0) > 0 &&
+                form.membership.paymentMethod === "bank_transfer" &&
+                !form.membership.bankAccountId
+              ) {
+                setError("Vui lòng chọn tài khoản nhận tiền khi thanh toán chuyển khoản.");
+                return;
+              }
+            }
             const {
               registerPt,
               pt,
+              registerMembership,
+              membership,
               dahIdentityName,
               dahIdentityImageData,
               dahIdentityTime,
@@ -978,6 +1058,7 @@ export function MembersPage() {
               name: form.name.trim(),
               phone: normalizePhone(form.phone),
               email: form.email.trim(),
+              membership: registerMembership ? membership : undefined,
               ptEnrollment: registerPt ? pt : undefined,
             });
           }}
@@ -1114,6 +1195,132 @@ export function MembersPage() {
                   />
                 </Field>
               </div>
+            </section>
+            <section className="form-section">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-navy-900"
+                  checked={form.registerMembership}
+                  onChange={(event) =>
+                    setForm({ ...form, registerMembership: event.target.checked })
+                  }
+                />
+                <span>
+                  <strong className="block text-sm text-slate-800">
+                    Đăng ký gói tập và thu tiền ngay
+                  </strong>
+                  <small className="mt-0.5 block text-xs text-slate-500">
+                    Hồ sơ, gói tập và giao dịch thu tiền sẽ được lưu cùng lúc.
+                  </small>
+                </span>
+              </label>
+              {form.registerMembership && (
+                <div className="mt-4 space-y-4">
+                  <div className="form-grid">
+                    <Field className="form-span" label="Gói tập" required>
+                      <SearchableSelect
+                        value={form.membership.planId}
+                        onChange={selectMembershipPlan}
+                        placeholder="Chọn gói tập"
+                        searchPlaceholder="Tìm theo tên hoặc danh mục..."
+                        options={
+                          options.data?.plans.map((row) => ({
+                            value: row.id,
+                            label: row.name,
+                            meta: `${row.category} · ${money(row.price)} · ${row.durationDays} ngày`,
+                          })) || []
+                        }
+                      />
+                    </Field>
+                    <Field label="Ngày bắt đầu">
+                      <DateInput
+                        value={form.membership.startsAt}
+                        onChange={(startsAt) => {
+                          const plan = options.data?.plans.find(
+                            (row) => String(row.id) === String(form.membership.planId),
+                          );
+                          updateMembershipDraft({
+                            startsAt,
+                            expiresAt:
+                              plan?.durationDays && startsAt
+                                ? format(addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+                                : form.membership.expiresAt,
+                          });
+                        }}
+                      />
+                    </Field>
+                    <Field label="Ngày hết hạn">
+                      <DateInput
+                        value={form.membership.expiresAt}
+                        onChange={(expiresAt) => updateMembershipDraft({ expiresAt })}
+                      />
+                    </Field>
+                    <Field label="Tổng tiền">
+                      <MoneyInput
+                        value={form.membership.finalPrice}
+                        onChange={(finalPrice) => updateMembershipDraft({ finalPrice })}
+                      />
+                    </Field>
+                    <Field label="Thanh toán lần này">
+                      <MoneyInput
+                        value={form.membership.paidAmount}
+                        max={Number(form.membership.finalPrice) || 0}
+                        onChange={(paidAmount) => updateMembershipDraft({ paidAmount })}
+                      />
+                    </Field>
+                    {Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0) > 0 && (
+                      <Field label="Hạn công nợ">
+                        <DateInput
+                          value={form.membership.debtDueDate}
+                          onChange={(debtDueDate) => updateMembershipDraft({ debtDueDate })}
+                        />
+                      </Field>
+                    )}
+                    <Field label="Phương thức">
+                      <Select
+                        value={form.membership.paymentMethod}
+                        onChange={(event) =>
+                          updateMembershipDraft({
+                            paymentMethod: event.target.value,
+                            bankAccountId:
+                              event.target.value === "cash"
+                                ? ""
+                                : form.membership.bankAccountId,
+                          })
+                        }
+                      >
+                        <option value="cash">Tiền mặt</option>
+                        <option value="bank_transfer">Chuyển khoản</option>
+                        <option value="card">Thẻ</option>
+                      </Select>
+                    </Field>
+                    {form.membership.paymentMethod !== "cash" && (
+                      <Field label="Tài khoản nhận" required={form.membership.paymentMethod === "bank_transfer"}>
+                        <Select
+                          value={form.membership.bankAccountId}
+                          onChange={(event) =>
+                            updateMembershipDraft({ bankAccountId: event.target.value })
+                          }
+                        >
+                          <option value="">Chọn tài khoản</option>
+                          {options.data?.bankAccounts.map((row) => (
+                            <option key={row.id} value={row.id}>
+                              {row.label}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                  </div>
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                    <span className="text-slate-500">Công nợ sau khi tạo</span>
+                    <strong className={`ml-2 ${Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0) > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                      {money(Math.max(Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0), 0))}
+                    </strong>
+                  </div>
+                </div>
+              )}
             </section>
             <section className="form-section">
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">

@@ -23,6 +23,7 @@ export function MembershipsPage() {
   const q = useDebouncedValue(search);
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [chooseOpen, setChooseOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const memberQ = useDebouncedValue(memberSearch);
@@ -39,9 +40,9 @@ export function MembershipsPage() {
     }, { replace: true });
   }, [params, setParams]);
   const query = useQuery({
-    queryKey: ["memberships", q, status, page],
+    queryKey: ["memberships", q, status, page, pageSize],
     queryFn: () =>
-      api(`/api/memberships?${queryString({ q, status, page, pageSize: 20 })}`),
+      api(`/api/memberships?${queryString({ q, status, page, pageSize })}`),
   });
   const candidates = useQuery({
     queryKey: ["member-candidates", memberQ],
@@ -72,6 +73,7 @@ export function MembershipsPage() {
     {
       key: "member",
       label: "Hội viên",
+      sortValue: (r) => r.memberName,
       render: (r) => (
         <Link
           className="cell-primary hover:underline"
@@ -82,16 +84,28 @@ export function MembershipsPage() {
         </Link>
       ),
     },
-    { key: "package", label: "Gói tập", render: (r) => r.package.name },
+    {
+      key: "package",
+      label: "Gói tập",
+      sortValue: (r) => r.package.name,
+      render: (r) => r.package.name,
+    },
     {
       key: "period",
       label: "Thời hạn",
+      sortValue: (r) => r.expiresAt,
       render: (r) => `${shortDate(r.startsAt)} → ${shortDate(r.expiresAt)}`,
     },
-    { key: "paid", label: "Đã thanh toán", render: (r) => money(r.paidAmount) },
+    {
+      key: "paid",
+      label: "Đã thanh toán",
+      sortValue: (r) => r.paidAmount,
+      render: (r) => money(r.paidAmount),
+    },
     {
       key: "debt",
       label: "Công nợ",
+      sortValue: (r) => r.debtAmount,
       render: (r) => (
         <span className={r.debtAmount ? "text-red-700" : ""}>
           {money(r.debtAmount)}
@@ -101,6 +115,7 @@ export function MembershipsPage() {
     {
       key: "status",
       label: "Trạng thái",
+      sortValue: (r) => r.status,
       render: (r) => <StatusBadge status={r.status} />,
     },
   ];
@@ -161,7 +176,15 @@ export function MembershipsPage() {
           )
         }
       />
-      <Pagination data={query.data?.pagination} onPage={setPage} />
+      <Pagination
+        data={query.data?.pagination}
+        onPage={setPage}
+        pageSize={pageSize}
+        onPageSize={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
       <Modal
         open={chooseOpen}
         onClose={() => setChooseOpen(false)}

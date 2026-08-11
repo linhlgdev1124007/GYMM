@@ -16,12 +16,14 @@ export function QuickPaymentForm({
   error,
 }) {
   const [form, setForm] = useState({
+    mode: "full",
     amount: 0,
     paymentMethod: "cash",
     bankAccountId: "",
     receipts: [],
   });
   const initial = {
+    mode: "full",
     amount: membership?.debtAmount || 0,
     paymentMethod: "cash",
     bankAccountId: "",
@@ -35,13 +37,24 @@ export function QuickPaymentForm({
   );
   const submit = (event) => {
     event.preventDefault();
+    if (
+      Number(form.amount || 0) > 0 &&
+      form.paymentMethod === "bank_transfer" &&
+      !form.bankAccountId
+    )
+      return;
     const payload = new FormData();
     payload.append("startsAt", membership.startsAt || "");
     payload.append("expiresAt", membership.expiresAt || "");
-    payload.append("finalPrice", membership.finalPrice || 0);
+    payload.append(
+      "finalPrice",
+      form.mode === "waive" ? membership.paidAmount || 0 : membership.finalPrice || 0,
+    );
     payload.append(
       "paidAmount",
-      Number(membership.paidAmount || 0) + Number(form.amount || 0),
+      form.mode === "waive"
+        ? Number(membership.paidAmount || 0)
+        : Number(membership.paidAmount || 0) + Number(form.amount || 0),
     );
     payload.append(
       "debtDueDate",
@@ -54,8 +67,27 @@ export function QuickPaymentForm({
       membership.status === "expiring" ? "active" : membership.status,
     );
     form.receipts.forEach((file) => payload.append("receipts", file));
-    onSubmit(payload, { amount: Number(form.amount || 0) });
+    onSubmit(payload, {
+      amount: Number(form.amount || 0),
+      waived: form.mode === "waive" ? Number(membership.debtAmount || 0) : 0,
+    });
   };
+  const setMode = (mode) =>
+    setForm({
+      ...form,
+      mode,
+      amount:
+        mode === "full"
+          ? membership.debtAmount || 0
+          : mode === "waive"
+            ? 0
+            : form.amount && Number(form.amount) < Number(membership.debtAmount || 0)
+              ? form.amount
+              : 0,
+      paymentMethod: mode === "waive" ? "cash" : form.paymentMethod,
+      bankAccountId: mode === "waive" ? "" : form.bankAccountId,
+      receipts: mode === "waive" ? [] : form.receipts,
+    });
   return (
     <Modal
       open={open}
@@ -83,6 +115,36 @@ export function QuickPaymentForm({
             </div>
           </div>
           <div className="form-grid">
+            <div className="form-span segmented-control">
+              <button
+                type="button"
+                className={form.mode === "full" ? "active" : ""}
+                onClick={() => setMode("full")}
+              >
+                Thu đủ
+              </button>
+              <button
+                type="button"
+                className={form.mode === "partial" ? "active" : ""}
+                onClick={() => setMode("partial")}
+              >
+                Thu một phần
+              </button>
+              <button
+                type="button"
+                className={form.mode === "waive" ? "active" : ""}
+                onClick={() => setMode("waive")}
+              >
+                Miễn/điều chỉnh
+              </button>
+            </div>
+            {form.mode === "waive" && (
+              <div className="form-span rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                Công nợ sẽ được đưa về 0 bằng cách điều chỉnh giá trị gói còn bằng số tiền đã thu. Thao tác này được lưu trong Audit Log.
+              </div>
+            )}
+            {form.mode !== "waive" && (
+              <>
             <Field className="form-span" label="Số tiền thu" required>
               <MoneyInput
                 autoFocus
@@ -110,7 +172,7 @@ export function QuickPaymentForm({
               </Select>
             </Field>
             {form.paymentMethod !== "cash" && (
-              <Field label="Tài khoản nhận">
+              <Field label="Tài khoản nhận" required={form.paymentMethod === "bank_transfer"}>
                 <Select
                   value={form.bankAccountId}
                   onChange={(e) =>
@@ -133,7 +195,16 @@ export function QuickPaymentForm({
                 disabled={pending}
               />
             </Field>
+              </>
+            )}
           </div>
+          {Number(form.amount || 0) > 0 &&
+            form.paymentMethod === "bank_transfer" &&
+            !form.bankAccountId && (
+              <div className="inline-error mt-4">
+                Vui lòng chọn tài khoản nhận tiền khi thanh toán chuyển khoản.
+              </div>
+            )}
           {error && <div className="inline-error mt-4">{error}</div>}
         </div>
         <div className="form-actions">
@@ -144,9 +215,13 @@ export function QuickPaymentForm({
             type="submit"
             loading={pending}
             loadingText="Đang ghi nhận…"
-            disabled={Number(form.amount) <= 0}
+            disabled={
+              form.mode !== "waive" &&
+              (Number(form.amount) <= 0 ||
+                (form.paymentMethod === "bank_transfer" && !form.bankAccountId))
+            }
           >
-            Ghi nhận thanh toán
+            {form.mode === "waive" ? "Ghi nhận điều chỉnh" : "Ghi nhận thanh toán"}
           </Button>
         </div>
       </form>

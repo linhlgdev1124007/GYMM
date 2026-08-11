@@ -14,6 +14,7 @@ from ..timeutils import utc_now
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
 DAH_MODEL = "DAH1017"
+DUPLICATE_SCAN_SECONDS = 60
 
 
 def _clean(value) -> str | None:
@@ -240,43 +241,62 @@ def verify(db: Session, payload: dict):
         action = "unknown_identity"
         note = "PersonUUID chưa khớp hội viên."
     else:
-        if image and (identity_created or not customer.avatar_image_data):
-            customer.avatar_image_data = image
-        open_session = (
-            db.query(AttendanceSession)
-            .filter(AttendanceSession.customer_id == customer.id, AttendanceSession.status == "open")
-            .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        recent_processed = (
+            db.query(DahWebhookEvent)
+            .filter(
+                DahWebhookEvent.person_uuid == _clean(info.get("PersonUUID")),
+                DahWebhookEvent.status == "processed",
+                DahWebhookEvent.action.in_(("checkin", "checkout")),
+            )
+            .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
             .first()
         )
-        if open_session:
-            open_session.checked_out_at = event_time
-            open_session.status = "closed"
-            open_session.note = (open_session.note or "DAH auto")[:255]
-            status = "processed"
-            action = "checkout"
-            session_id = open_session.id
-        elif not _active_regular_membership(db, customer.id):
-            status = "denied"
-            action = "denied"
-            note = "Hội viên không có gói tập còn hiệu lực."
-        elif customer.status != "active":
-            status = "denied"
-            action = "denied"
-            note = "Hội viên không ở trạng thái hoạt động."
+        duplicate_scan = bool(
+            recent_processed and recent_processed.event_time and
+            abs((event_time - recent_processed.event_time).total_seconds()) <= DUPLICATE_SCAN_SECONDS
+        )
+        if duplicate_scan:
+            status = "duplicate"
+            action = "duplicate_scan"
+            note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
         else:
-            session = AttendanceSession(
-                customer_id=customer.id,
-                checked_in_at=event_time,
-                source="dah",
-                result="allowed",
-                status="open",
-                note=f"DAH {device.code}" if device else "DAH",
+            if image and (identity_created or not customer.avatar_image_data):
+                customer.avatar_image_data = image
+            open_session = (
+                db.query(AttendanceSession)
+                .filter(AttendanceSession.customer_id == customer.id, AttendanceSession.status == "open")
+                .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+                .first()
             )
-            db.add(session)
-            db.flush()
-            status = "processed"
-            action = "checkin"
-            session_id = session.id
+            if open_session:
+                open_session.checked_out_at = event_time
+                open_session.status = "closed"
+                open_session.note = (open_session.note or "DAH auto")[:255]
+                status = "processed"
+                action = "checkout"
+                session_id = open_session.id
+            elif not _active_regular_membership(db, customer.id):
+                status = "denied"
+                action = "denied"
+                note = "Hội viên không có gói tập còn hiệu lực."
+            elif customer.status != "active":
+                status = "denied"
+                action = "denied"
+                note = "Hội viên không ở trạng thái hoạt động."
+            else:
+                session = AttendanceSession(
+                    customer_id=customer.id,
+                    checked_in_at=event_time,
+                    source="dah",
+                    result="allowed",
+                    status="open",
+                    note=f"DAH {device.code}" if device else "DAH",
+                )
+                db.add(session)
+                db.flush()
+                status = "processed"
+                action = "checkin"
+                session_id = session.id
 
     event_image = image if status == "unknown" and action == "unknown_identity" else None
     event = DahWebhookEvent(
@@ -318,6 +338,60 @@ def _event_face_name(event: DahWebhookEvent) -> str | None:
         return None
     info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
     return _clean(info.get("Name"))
+
+
+def _event_customer_name(event: DahWebhookEvent) -> str | None:
+    return event.customer.person.display_name if getattr(event, "customer", None) and event.customer.person else None
+
+
+def _event_customer_code(event: DahWebhookEvent) -> str | None:
+    return event.customer.customer_code if getattr(event, "customer", None) else None
+
+
+def _event_data(row: DahWebhookEvent):
+    face_name = _event_face_name(row)
+    return {
+        "id": row.id,
+        "operator": row.operator,
+        "device": row.device.code if row.device else None,
+        "memberId": row.customer_id,
+        "memberName": _event_customer_name(row),
+        "memberCode": _event_customer_code(row),
+        "faceName": face_name,
+        "personUuid": row.person_uuid,
+        "personId": row.person_id,
+        "verifyStatus": row.verify_status,
+        "similarity": row.similarity,
+        "eventTime": row.event_time.isoformat() if row.event_time else None,
+        "receivedAt": row.received_at.isoformat() if row.received_at else None,
+        "status": row.status,
+        "action": row.action,
+        "note": row.note,
+        "imageData": row.image_data,
+    }
+
+
+def dah_events(db: Session, view="all", limit=50):
+    query = (
+        db.query(DahWebhookEvent)
+        .options(
+            joinedload(DahWebhookEvent.device),
+            joinedload(DahWebhookEvent.customer).joinedload(Customer.person),
+        )
+        .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
+    )
+    if view == "allowed":
+        query = query.filter(DahWebhookEvent.status == "processed")
+    elif view == "denied":
+        query = query.filter(DahWebhookEvent.status.in_(("denied", "rejected")))
+    elif view == "unknown":
+        query = query.filter(DahWebhookEvent.status == "unknown")
+    elif view == "duplicates":
+        query = query.filter(DahWebhookEvent.action == "duplicate_scan")
+    elif view == "snapshots":
+        query = query.filter(DahWebhookEvent.operator == "SnapPush")
+    rows = query.limit(max(min(int(limit or 50), 100), 1)).all()
+    return {"items": [_event_data(row) for row in rows]}
 
 
 def identity_candidates(db: Session, limit=12):

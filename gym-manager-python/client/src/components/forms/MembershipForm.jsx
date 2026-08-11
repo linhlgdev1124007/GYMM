@@ -124,6 +124,14 @@ export function MembershipForm({
       setLocalError("Vui lòng chọn hạn thanh toán cho phần công nợ mới.");
       return;
     }
+    if (
+      Number(form.paidAmount || 0) > 0 &&
+      form.paymentMethod === "bank_transfer" &&
+      !form.bankAccountId
+    ) {
+      setLocalError("Vui lòng chọn tài khoản nhận tiền khi thanh toán chuyển khoản.");
+      return;
+    }
     const data = new FormData();
     Object.entries(form).forEach(([key, value]) => {
       if (key !== "receipts" && value != null) data.append(key, value);
@@ -317,14 +325,14 @@ export function MembershipForm({
                 </Select>
               </Field>
               {form.paymentMethod !== "cash" && (
-                <Field label="Tài khoản nhận">
+                <Field label="Tài khoản nhận" required={form.paymentMethod === "bank_transfer"}>
                   <Select
                     value={form.bankAccountId || ""}
                     onChange={(e) =>
                       setForm({ ...form, bankAccountId: e.target.value })
                     }
                   >
-                    <option value="">Không áp dụng</option>
+                    <option value="">Chọn tài khoản</option>
                     {options?.bankAccounts?.map((row) => (
                       <option key={row.id} value={row.id}>
                         {row.label}

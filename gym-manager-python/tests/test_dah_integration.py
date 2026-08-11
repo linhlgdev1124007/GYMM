@@ -97,7 +97,13 @@ def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_p
         assert db.query(AttendanceSession).filter_by(customer_id=customer_id).count() == 1
         assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
 
-        checkout = dah_service.verify(db, verify_payload("2026-08-11T09:10:00", "101"))
+        repeated_scan = dah_service.verify(db, verify_payload("2026-08-11T09:00:30", "101"))
+        assert repeated_scan["action"] == "duplicate_scan"
+        assert repeated_scan["status"] == "duplicate"
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id).count() == 1
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+
+        checkout = dah_service.verify(db, verify_payload("2026-08-11T09:10:00", "102"))
         assert checkout["action"] == "checkout"
         session = db.query(AttendanceSession).filter_by(customer_id=customer_id).one()
         assert session.status == "closed"

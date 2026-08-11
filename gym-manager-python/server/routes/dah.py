@@ -36,6 +36,11 @@ def identity_candidates(limit: int = Query(12, ge=1, le=30), db: Session = Depen
     return dah_service.identity_candidates(db, limit)
 
 
+@router.get("/api/dah/events", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def dah_events(view: str = "all", limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)):
+    return dah_service.dah_events(db, view, limit)
+
+
 @router.post("/api/members/{member_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def assign_identity(member_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
     return dah_service.assign_identity_to_customer(db, member_id, payload.get("eventId"))

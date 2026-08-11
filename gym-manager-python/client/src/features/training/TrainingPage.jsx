@@ -22,14 +22,15 @@ export function TrainingPage() {
   const [search, setSearch] = useState("");
   const [assignment, setAssignment] = useState("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [selected, setSelected] = useState(null);
   const [formError, setFormError] = useState("");
   const q = useDebouncedValue(search);
   const query = useQuery({
-    queryKey: ["training", type, q, assignment, page],
+    queryKey: ["training", type, q, assignment, page, pageSize],
     queryFn: () =>
       api(
-        `/api/training?${queryString({ type, q, assignment, page, pageSize: 20 })}`,
+        `/api/training?${queryString({ type, q, assignment, page, pageSize })}`,
       ),
   });
   const options = useQuery({
@@ -62,6 +63,7 @@ export function TrainingPage() {
     {
       key: "member",
       label: "Hội viên",
+      sortValue: (row) => row.member.name,
       render: (row) => (
         <Link
           to={`/members/${row.memberId}`}
@@ -77,6 +79,7 @@ export function TrainingPage() {
     {
       key: "coach",
       label: "Coach phụ trách",
+      sortValue: (row) => row.coaches?.map((coach) => coach.name).join(", ") || "",
       render: (row) =>
         row.coaches?.length ? (
           <div className="flex max-w-64 flex-wrap gap-1.5">
@@ -101,6 +104,7 @@ export function TrainingPage() {
     {
       key: "schedule",
       label: "Lịch tập",
+      sortValue: (row) => row.scheduleDays?.join(",") || row.schedule || "",
       render: (row) => (
         <ScheduleSummary
           schedule={row.schedule}
@@ -114,22 +118,26 @@ export function TrainingPage() {
     {
       key: "period",
       label: "Thời hạn",
+      sortValue: (row) => row.expiresAt,
       render: (row) =>
         `${shortDate(row.startsAt)} → ${shortDate(row.expiresAt)}`,
     },
     {
       key: "sessions",
       label: "Số buổi",
+      sortValue: (row) => row.remainingSessions,
       render: (row) => `${row.remainingSessions}/${row.totalSessions}`,
     },
     {
       key: "status",
       label: "Trạng thái",
+      sortValue: (row) => row.status,
       render: (row) => <StatusBadge status={row.status} />,
     },
     {
       key: "action",
       label: "",
+      sortable: false,
       render: (row) => (
         <Button size="sm" variant="ghost" onClick={() => edit(row)}>
           {row.coaches?.length ? (
@@ -220,7 +228,15 @@ export function TrainingPage() {
           )
         }
       />
-      <Pagination data={query.data?.pagination} onPage={setPage} />
+      <Pagination
+        data={query.data?.pagination}
+        onPage={setPage}
+        pageSize={pageSize}
+        onPageSize={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
       <TrainingForm
         enrollment={selected}
         options={options.data}

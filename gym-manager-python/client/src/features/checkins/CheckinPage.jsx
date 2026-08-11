@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Radio, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Activity, Link2, Radio, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../../services/api";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -9,13 +10,26 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { dateTime } from "../../utils/format";
 
 export function CheckinPage() {
+  const [eventView, setEventView] = useState("all");
   const recent = useQuery({
     queryKey: ["checkins"],
     queryFn: () => api("/api/checkins?limit=40"),
     refetchInterval: 30000,
   });
+  const events = useQuery({
+    queryKey: ["dah-events", eventView],
+    queryFn: () => api(`/api/dah/events?view=${eventView}&limit=60`),
+    refetchInterval: 5000,
+  });
   const activeSessions = recent.data?.filter((row) => row.status === "open") || [];
   const lastEvent = recent.data?.[0];
+  const eventViews = [
+    ["all", "Tất cả"],
+    ["allowed", "Được vào/ra"],
+    ["denied", "Từ chối"],
+    ["unknown", "Face chưa gán"],
+    ["duplicates", "Quét lặp"],
+  ];
   const columns = [
     {
       key: "member",
@@ -116,18 +130,85 @@ export function CheckinPage() {
       <section>
         <div className="section-header">
           <div>
-            <h2>Lịch sử điểm danh DAH</h2>
-            <p>40 sự kiện vào/ra gần nhất được đồng bộ về hệ thống.</p>
+            <h2>Event DAH</h2>
+            <p>Theo dõi quét thành công, từ chối, face chưa gán và lượt quét lặp.</p>
           </div>
         </div>
+        <div className="tabs mb-4">
+          {eventViews.map(([key, label]) => (
+            <button
+              key={key}
+              className={`tab ${eventView === key ? "active" : ""}`}
+              onClick={() => setEventView(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <DataTable
-          rows={recent.data}
-          columns={columns}
-          loading={recent.isLoading}
-          error={recent.error}
-          onRetry={recent.refetch}
-          emptyTitle="Chưa nhận được dữ liệu điểm danh"
-          emptyDescription="Sự kiện sẽ xuất hiện khi DAH gửi webhook thành công."
+          rows={events.data?.items}
+          columns={[
+            {
+              key: "member",
+              label: "Người quét",
+              sortValue: (row) => row.memberName || row.faceName || row.personUuid || "",
+              render: (row) =>
+                row.memberId ? (
+                  <Link className="hover:underline" to={`/members/${row.memberId}`}>
+                    <span className="cell-primary">{row.memberName}</span>
+                    <span className="cell-secondary block">{row.memberCode}</span>
+                  </Link>
+                ) : (
+                  <div>
+                    <span className="cell-primary">{row.faceName || "Face chưa gán"}</span>
+                    <span className="cell-secondary block">{row.personUuid || row.personId || "Không có UUID"}</span>
+                  </div>
+                ),
+            },
+            {
+              key: "time",
+              label: "Thời điểm",
+              sortValue: (row) => row.eventTime || row.receivedAt,
+              render: (row) => dateTime(row.eventTime || row.receivedAt),
+            },
+            {
+              key: "device",
+              label: "Thiết bị",
+              sortValue: (row) => row.device || "DAH",
+              render: (row) => row.device || "DAH",
+            },
+            {
+              key: "similarity",
+              label: "Độ khớp",
+              className: "text-right",
+              sortValue: (row) => row.similarity || 0,
+              render: (row) => row.similarity ? `${Number(row.similarity).toFixed(1)}%` : "—",
+            },
+            {
+              key: "status",
+              label: "Kết quả",
+              sortValue: (row) => row.status,
+              render: (row) => <StatusBadge status={row.status === "processed" ? "active" : row.status === "duplicate" ? "pending" : row.status === "unknown" ? "lead" : row.status === "denied" || row.status === "rejected" ? "blocked" : row.status} />,
+            },
+            {
+              key: "action",
+              label: "Thao tác",
+              sortable: false,
+              render: (row) =>
+                row.status === "unknown" ? (
+                  <Link className="btn btn-secondary btn-sm" to="/members?create=1">
+                    <Link2 size={13} /> Liên kết
+                  </Link>
+                ) : (
+                  <span className="cell-secondary">{row.action || "—"}</span>
+                ),
+            },
+          ]}
+          loading={events.isLoading}
+          error={events.error}
+          onRetry={events.refetch}
+          emptyTitle="Chưa nhận được event DAH"
+          emptyDescription="Event sẽ xuất hiện khi DAH gửi webhook Verify/Snap."
         />
       </section>
     </>

@@ -304,6 +304,15 @@
   .form-section-title {
     @apply mb-3 text-[13px] font-semibold text-slate-900;
   }
+  .segmented-control {
+    @apply grid grid-cols-3 overflow-hidden rounded-md border border-slate-200 bg-slate-100 p-0.5;
+  }
+  .segmented-control button {
+    @apply min-h-8 rounded px-2 text-xs font-medium text-slate-500 transition hover:text-slate-900;
+  }
+  .segmented-control button.active {
+    @apply bg-white text-slate-950 shadow-sm;
+  }
   .identity-link-summary {
     @apply flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3;
   }
@@ -428,8 +437,20 @@
   .data-table th {
     @apply sticky top-0 z-[1] h-10 whitespace-nowrap border-b border-slate-200 bg-slate-50/95 px-3.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-slate-500;
   }
+  .table-sort-button {
+    @apply inline-flex items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-slate-500 hover:text-slate-900;
+  }
+  .table-sort-button span {
+    @apply text-[10px] text-slate-400;
+  }
   .data-table td {
     @apply h-[50px] border-b border-slate-100 px-3.5 align-middle text-slate-600;
+  }
+  .sticky-action-col {
+    @apply sticky right-0 z-10 bg-white shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)];
+  }
+  .data-table thead .sticky-action-col {
+    @apply z-20 bg-slate-50;
   }
   .table-compact .data-table td {
     height: 42px;
@@ -528,9 +549,18 @@
     @apply text-red-700;
   }
   .pagination {
-    @apply flex items-center justify-between border-t border-slate-200 bg-white px-3.5 py-3 text-xs text-slate-500;
+    @apply flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-3.5 py-3 text-xs text-slate-500;
   }
-  .pagination > div {
+  .pagination-summary {
+    @apply flex flex-wrap items-center gap-3;
+  }
+  .pagination-summary label {
+    @apply flex items-center gap-2;
+  }
+  .pagination-summary select {
+    @apply h-8 w-20 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10;
+  }
+  .pagination-actions {
     @apply flex gap-2;
   }
   .empty-state {

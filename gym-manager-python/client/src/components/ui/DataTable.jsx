@@ -1,4 +1,28 @@
 import { AlertCircle, Inbox } from "lucide-react";
+import { useMemo, useState } from "react";
+
+const collator = new Intl.Collator("vi", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function normalizeSortValue(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return String(value ?? "").trim();
+}
+
+function fallbackSortValue(row, key) {
+  if (row?.[key] != null) return row[key];
+  if (key === "member") return row.memberName || row.member?.name || row.name;
+  if (key === "trainer") return row.trainerName || row.trainer?.name;
+  if (key === "coach") return row.coachName || row.coaches?.map((coach) => coach.name).join(", ");
+  if (key === "package") return row.packageName || row.package?.name || row.package;
+  if (key === "period") return row.expiresAt || row.startsAt;
+  if (key === "time") return row.eventTime || row.receivedAt || row.createdAt;
+  return "";
+}
 
 export function DataTable({
   columns,
@@ -16,6 +40,7 @@ export function DataTable({
   onSelectionChange,
   density = "standard",
 }) {
+  const [sort, setSort] = useState({ key: "", direction: "asc" });
   if (error)
     return (
       <div className="empty-state border-y border-red-100 bg-red-50/40">
@@ -34,54 +59,94 @@ export function DataTable({
         </div>
       </div>
     );
-  const visibleColumns = selection
-    ? [
-        {
-          key: "__select",
-          label: (
-            <input
-              type="checkbox"
-              aria-label="Chọn tất cả"
-              checked={
-                !!rows?.length &&
-                rows.every((row) => selection.includes(row[rowKey]))
-              }
-              onChange={(event) =>
-                onSelectionChange?.(
-                  event.target.checked
-                    ? [
-                        ...new Set([
-                          ...selection,
-                          ...rows.map((row) => row[rowKey]),
-                        ]),
-                      ]
-                    : selection.filter(
-                        (id) => !rows.some((row) => row[rowKey] === id),
-                      ),
-                )
-              }
-            />
-          ),
-          className: "selection-cell",
-          render: (row) => (
-            <input
-              type="checkbox"
-              aria-label={`Chọn ${row.name || row[rowKey]}`}
-              checked={selection.includes(row[rowKey])}
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) =>
-                onSelectionChange?.(
-                  event.target.checked
-                    ? [...selection, row[rowKey]]
-                    : selection.filter((id) => id !== row[rowKey]),
-                )
-              }
-            />
-          ),
-        },
-        ...columns,
-      ]
-    : columns;
+  const dataRows = Array.isArray(rows) ? rows : [];
+  const visibleColumns = useMemo(
+    () =>
+      selection
+        ? [
+            {
+              key: "__select",
+              label: (
+                <input
+                  type="checkbox"
+                  aria-label="Chọn tất cả"
+                  checked={
+                    !!dataRows.length &&
+                    dataRows.every((row) => selection.includes(row[rowKey]))
+                  }
+                  onChange={(event) =>
+                    onSelectionChange?.(
+                      event.target.checked
+                        ? [
+                            ...new Set([
+                              ...selection,
+                              ...dataRows.map((row) => row[rowKey]),
+                            ]),
+                          ]
+                        : selection.filter(
+                            (id) =>
+                              !dataRows.some((row) => row[rowKey] === id),
+                          ),
+                    )
+                  }
+                />
+              ),
+              className: "selection-cell",
+              sortable: false,
+              render: (row) => (
+                <input
+                  type="checkbox"
+                  aria-label={`Chọn ${row.name || row[rowKey]}`}
+                  checked={selection.includes(row[rowKey])}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) =>
+                    onSelectionChange?.(
+                      event.target.checked
+                        ? [...selection, row[rowKey]]
+                        : selection.filter((id) => id !== row[rowKey]),
+                    )
+                  }
+                />
+              ),
+            },
+            ...columns,
+          ]
+        : columns,
+    [columns, dataRows, onSelectionChange, rowKey, selection],
+  );
+  const sortedRows = useMemo(() => {
+    if (!sort.key || !dataRows.length) return dataRows;
+    const column = visibleColumns.find((item) => item.key === sort.key);
+    if (!column || column.sortable === false || column.key === "__select") {
+      return dataRows;
+    }
+    const valueFor = (row) => {
+      const raw = column.sortValue
+        ? column.sortValue(row)
+        : fallbackSortValue(row, column.key);
+      return normalizeSortValue(raw);
+    };
+    return [...dataRows].sort((a, b) => {
+      const left = valueFor(a);
+      const right = valueFor(b);
+      const result =
+        typeof left === "number" && typeof right === "number"
+          ? left - right
+          : collator.compare(String(left), String(right));
+      return sort.direction === "asc" ? result : -result;
+    });
+  }, [dataRows, sort, visibleColumns]);
+  const actionColumn = (column) => ["action", "actions", "receipt"].includes(column.key);
+  const canSortColumn = (column) =>
+    column.sortable !== false && column.key !== "__select" && !actionColumn(column);
+  const sortNext = (column) =>
+    setSort((current) => ({
+      key: column.key,
+      direction:
+        current.key === column.key && current.direction === "asc"
+          ? "desc"
+          : "asc",
+    }));
   return (
     <div
       className={`table-shell ${density === "compact" ? "table-compact" : ""}`}
@@ -91,8 +156,27 @@ export function DataTable({
           <thead>
             <tr>
               {visibleColumns.map((column) => (
-                <th key={column.key} className={column.className}>
-                  {column.label}
+                <th
+                  key={column.key}
+                  className={`${column.className || ""} ${actionColumn(column) ? "sticky-action-col" : ""}`}
+                >
+                  {!canSortColumn(column) ? column.label : (
+                    <button
+                      type="button"
+                      className="table-sort-button"
+                      aria-sort={
+                        sort.key === column.key
+                          ? sort.direction === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
+                      }
+                      onClick={() => sortNext(column)}
+                    >
+                      {column.label}
+                      {sort.key === column.key && <span>{sort.direction === "asc" ? "↑" : "↓"}</span>}
+                    </button>
+                  )}
                 </th>
               ))}
             </tr>
@@ -108,7 +192,7 @@ export function DataTable({
                     ))}
                   </tr>
                 ))
-              : rows?.map((row) => (
+              : sortedRows.map((row) => (
                   <tr
                     key={row[rowKey]}
                     className={`${onRowClick ? "clickable-row" : ""} ${selectedRowId === row[rowKey] ? "selected-row" : ""}`}
@@ -122,10 +206,21 @@ export function DataTable({
                         event.preventDefault();
                         onRowClick(row);
                       }
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        const next =
+                          event.key === "ArrowDown"
+                            ? event.currentTarget.nextElementSibling
+                            : event.currentTarget.previousElementSibling;
+                        next?.focus();
+                      }
                     }}
                   >
                     {visibleColumns.map((column) => (
-                      <td key={column.key} className={column.className}>
+                      <td
+                        key={column.key}
+                        className={`${column.className || ""} ${actionColumn(column) ? "sticky-action-col" : ""}`}
+                      >
                         {column.render ? column.render(row) : row[column.key]}
                       </td>
                     ))}
@@ -134,7 +229,7 @@ export function DataTable({
           </tbody>
         </table>
       </div>
-      {!loading && !rows?.length && (
+      {!loading && !dataRows.length && (
         <div className="empty-state">
           <Inbox size={22} />
           <div>

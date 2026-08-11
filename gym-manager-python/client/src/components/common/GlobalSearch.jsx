@@ -70,6 +70,7 @@ export function GlobalSearch() {
     () => commands.filter((item) => !item.roles || item.roles.includes(user?.role)),
     [user?.role],
   );
+  const canOperateMember = ["admin", "manager", "receptionist"].includes(user?.role);
   const matchedCommands = useMemo(() => {
     const term = normalize(search.trim());
     if (!term) return availableCommands.slice(0, 6);
@@ -80,9 +81,19 @@ export function GlobalSearch() {
   const memberItems = search.trim()
     ? (results.data?.items || [])
     : recent;
+  const memberChoices = memberItems.flatMap((item) => {
+    const base = [{ ...item, kind: "member", action: "", actionLabel: "Mở hồ sơ" }];
+    if (!search.trim() || !canOperateMember) return base;
+    return [
+      ...base,
+      { ...item, kind: "member-action", action: "payment", actionLabel: "Thu tiền" },
+      { ...item, kind: "member-action", action: "renew", actionLabel: item.membership ? "Gia hạn" : "Đăng ký gói" },
+      { ...item, kind: "member-action", action: "training", actionLabel: item.trainers?.length ? "Đổi PT" : "Gán PT" },
+    ];
+  });
   const choices = [
     ...matchedCommands.map((item) => ({ ...item, kind: "command" })),
-    ...memberItems.map((item) => ({ ...item, kind: "member" })),
+    ...memberChoices,
   ];
 
   useEffect(() => {
@@ -104,11 +115,11 @@ export function GlobalSearch() {
   useEffect(() => setActive(0), [q]);
 
   const choose = (item) => {
-    if (item.kind === "member") {
+    if (item.kind === "member" || item.kind === "member-action") {
       const nextRecent = [item, ...recent.filter((row) => row.id !== item.id)].slice(0, 5);
       setRecent(nextRecent);
       localStorage.setItem("pulsefit-recent-members", JSON.stringify(nextRecent));
-      navigate(`/members?member=${item.id}`);
+      navigate(`/members?member=${item.id}${item.action ? `&action=${item.action}` : ""}`);
     } else {
       navigate(item.path);
     }
@@ -188,11 +199,11 @@ export function GlobalSearch() {
                   {search.trim() ? "Hội viên" : "Hội viên gần đây"}
                 </div>
               )}
-              {!results.isLoading && memberItems.map((row, index) => {
+              {!results.isLoading && memberChoices.map((row, index) => {
                 const choiceIndex = matchedCommands.length + index;
                 return (
                   <button
-                    key={`member-${row.id}`}
+                    key={`member-${row.id}-${row.action || "open"}`}
                     className={choiceIndex === active ? "active" : ""}
                     onMouseEnter={() => setActive(choiceIndex)}
                     onClick={() => choose({ ...row, kind: "member" })}
@@ -200,9 +211,11 @@ export function GlobalSearch() {
                     <div className="avatar avatar-md"><UserRound size={15} /></div>
                     <span>
                       <strong>{row.name}</strong>
-                      <small>{row.code} · {row.phone || "Chưa có SĐT"} · {row.membership?.package.name || "Chưa có gói"}</small>
+                      <small>
+                        {row.actionLabel} · {row.code} · {row.phone || "Chưa có SĐT"} · {row.membership?.package.name || "Chưa có gói"}
+                      </small>
                     </span>
-                    <StatusBadge status={row.membership?.status || row.status} />
+                    {row.action ? <kbd>{row.actionLabel}</kbd> : <StatusBadge status={row.membership?.status || row.status} />}
                   </button>
                 );
               })}

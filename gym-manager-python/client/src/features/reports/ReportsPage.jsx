@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { PageHeader } from "../../components/common/PageHeader";
 import { DataTable } from "../../components/ui/DataTable";
 import { DateInput } from "../../components/ui/SmartInputs";
+import { Button } from "../../components/ui/Button";
 import { money, shortDate } from "../../utils/format";
 
 const methodLabels = {
@@ -15,6 +17,7 @@ const methodLabels = {
 export function ReportsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [, setParams] = useSearchParams();
   const query = useQuery({
     queryKey: ["reports", dateFrom, dateTo],
     queryFn: () => api(`/api/reports?${queryString({ dateFrom, dateTo })}`),
@@ -102,23 +105,32 @@ export function ReportsPage() {
             {
               key: "member",
               label: "Hội viên",
-              render: (r) => <span className="cell-primary">{r.member}</span>,
+              sortValue: (r) => r.member,
+              render: (r) => (
+                <Link className="cell-primary hover:underline" to={`/members/${r.memberId}`}>
+                  {r.member}
+                  <span className="cell-secondary block">{r.memberCode}</span>
+                </Link>
+              ),
             },
-            { key: "package", label: "Gói tập" },
+            { key: "package", label: "Gói tập", sortValue: (r) => r.package },
             {
               key: "amount",
               label: "Số tiền",
               className: "text-right",
+              sortValue: (r) => r.amount,
               render: (r) => money(r.amount),
             },
             {
               key: "dueDate",
               label: "Hạn thanh toán",
+              sortValue: (r) => r.dueDate,
               render: (r) => shortDate(r.dueDate),
             },
             {
               key: "status",
               label: "Tình trạng",
+              sortValue: (r) => (r.overdue ? 1 : 0),
               render: (r) => (
                 <span
                   className={
@@ -129,6 +141,28 @@ export function ReportsPage() {
                 >
                   {r.overdue ? "Quá hạn" : "Trong hạn"}
                 </span>
+              ),
+            },
+            {
+              key: "action",
+              label: "Thao tác",
+              className: "text-right",
+              sortable: false,
+              render: (r) => (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    setParams((current) => {
+                      const next = new URLSearchParams(current);
+                      next.set("member", r.memberId);
+                      next.set("action", "payment");
+                      return next;
+                    })
+                  }
+                >
+                  Thu tiền
+                </Button>
               ),
             },
           ]}

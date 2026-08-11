@@ -29,6 +29,7 @@ export function TrainersPage() {
   const q = useDebouncedValue(search);
   const [titleFilter, setTitleFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [confirm, setConfirm] = useState(null);
@@ -49,9 +50,9 @@ export function TrainersPage() {
     [selected, open],
   );
   const query = useQuery({
-    queryKey: ["trainers", q, titleFilter, page],
+    queryKey: ["trainers", q, titleFilter, page, pageSize],
     queryFn: () =>
-      api(`/api/trainers?${queryString({ q, title: titleFilter, page, pageSize: 20 })}`),
+      api(`/api/trainers?${queryString({ q, title: titleFilter, page, pageSize })}`),
   });
   const jobTitles = useMemo(
     () =>
@@ -113,6 +114,7 @@ export function TrainersPage() {
     {
       key: "trainer",
       label: "Nhân viên",
+      sortValue: (r) => r.name,
       render: (r) => (
         <button
           className="member-cell text-left"
@@ -132,13 +134,20 @@ export function TrainersPage() {
     {
       key: "phone",
       label: "Điện thoại",
+      sortValue: (r) => r.phone,
       render: (r) => formatPhone(r.phone) || "—",
     },
-    { key: "title", label: "Chức vụ", render: (r) => r.title || "—" },
+    {
+      key: "title",
+      label: "Chức vụ",
+      sortValue: (r) => r.title || "",
+      render: (r) => r.title || "—",
+    },
     {
       key: "activeClients",
       label: "Khách PT",
       className: "text-right",
+      sortValue: (r) => r.activeClients,
       render: (r) => (
         <Link
           to={`/members?trainerId=${r.id}`}
@@ -149,10 +158,16 @@ export function TrainersPage() {
         </Link>
       ),
     },
-    { key: "ptSessions", label: "Buổi còn lại", className: "text-right" },
+    {
+      key: "ptSessions",
+      label: "Buổi còn lại",
+      className: "text-right",
+      sortValue: (r) => r.ptSessions,
+    },
     {
       key: "actions",
       label: "",
+      sortable: false,
       render: (r) => (
         <div className="flex justify-end gap-1">
           <Button
@@ -221,7 +236,15 @@ export function TrainersPage() {
         onRetry={query.refetch}
         onRowClick={edit}
       />
-      <Pagination data={query.data?.pagination} onPage={setPage} />
+      <Pagination
+        data={query.data?.pagination}
+        onPage={setPage}
+        pageSize={pageSize}
+        onPageSize={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
       <Modal
         open={open}
         onClose={() => setOpen(false)}

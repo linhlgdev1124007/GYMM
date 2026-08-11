@@ -1,12 +1,42 @@
 import { Button } from "./Button";
-export function Pagination({ data, onPage }) {
-  if (!data || data.pages <= 1) return null;
+import { Select } from "./Form";
+
+const defaultOptions = [10, 20, 30, 50, 100];
+
+export function Pagination({
+  data,
+  onPage,
+  pageSize,
+  onPageSize,
+  pageSizeOptions = defaultOptions,
+}) {
+  if (!data || data.total === 0) return null;
+  const currentPageSize = Number(pageSize || data.pageSize || 20);
+  const first = (data.page - 1) * currentPageSize + 1;
+  const last = Math.min(data.page * currentPageSize, data.total);
   return (
     <div className="pagination">
-      <span>
-        Trang {data.page}/{data.pages} · {data.total} kết quả
-      </span>
-      <div>
+      <div className="pagination-summary">
+        <span>
+          {first}-{last}/{data.total} kết quả · Trang {data.page}/{data.pages}
+        </span>
+        {onPageSize && (
+          <label>
+            <span>Số dòng</span>
+            <Select
+              value={currentPageSize}
+              onChange={(event) => onPageSize(Number(event.target.value))}
+            >
+              {pageSizeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </label>
+        )}
+      </div>
+      <div className="pagination-actions">
         <Button
           variant="secondary"
           size="sm"

@@ -48,12 +48,13 @@ export function AuditLogPage() {
   const [entityType, setEntityType] = useState("all");
   const [actorId, setActorId] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
   const [selected, setSelected] = useState(null);
   const query = useQuery({
-    queryKey: ["audit-logs", q, action, entityType, actorId, page],
+    queryKey: ["audit-logs", q, action, entityType, actorId, page, pageSize],
     queryFn: () =>
       api(
-        `/api/audit-logs?${queryString({ q, action, entityType, actorId, page, pageSize: 30 })}`,
+        `/api/audit-logs?${queryString({ q, action, entityType, actorId, page, pageSize })}`,
       ),
   });
   const resetPage = (setter) => (value) => {
@@ -64,6 +65,7 @@ export function AuditLogPage() {
     {
       key: "createdAt",
       label: "Thời gian",
+      sortValue: (row) => row.createdAt,
       render: (row) => (
         <span className="whitespace-nowrap">{dateTime(row.createdAt)}</span>
       ),
@@ -71,6 +73,7 @@ export function AuditLogPage() {
     {
       key: "actor",
       label: "Người thao tác",
+      sortValue: (row) => row.actor.name,
       render: (row) => (
         <div>
           <span className="cell-primary">{row.actor.name}</span>
@@ -83,6 +86,7 @@ export function AuditLogPage() {
     {
       key: "action",
       label: "Hành động",
+      sortValue: (row) => actionLabels[row.action] || row.action,
       render: (row) => (
         <span className={`audit-action audit-${row.action}`}>
           {actionLabels[row.action] || row.action}
@@ -92,6 +96,7 @@ export function AuditLogPage() {
     {
       key: "summary",
       label: "Nội dung",
+      sortValue: (row) => row.summary,
       render: (row) => (
         <div>
           <span className="cell-primary">{row.summary}</span>
@@ -105,6 +110,7 @@ export function AuditLogPage() {
     {
       key: "member",
       label: "Hồ sơ liên quan",
+      sortValue: (row) => row.customerId || 0,
       render: (row) =>
         row.customerId ? (
           <Link
@@ -186,7 +192,15 @@ export function AuditLogPage() {
         emptyTitle="Chưa có nhật ký phù hợp"
         emptyDescription="Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm."
       />
-      <Pagination data={query.data?.pagination} onPage={setPage} />
+      <Pagination
+        data={query.data?.pagination}
+        onPage={setPage}
+        pageSize={pageSize}
+        onPageSize={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
       <Modal
         open={!!selected}
         onClose={() => setSelected(null)}

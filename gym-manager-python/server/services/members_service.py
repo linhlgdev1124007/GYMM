@@ -48,6 +48,16 @@ def _money(value, default=0):
         return default
 
 
+def _require_bank_account_for_payment(db: Session, method: str, bank_account_id: int | None, amount: float):
+    if amount <= 0 or method != "bank_transfer":
+        return
+    if not bank_account_id:
+        raise HTTPException(status_code=422, detail="Vui lòng chọn tài khoản nhận tiền khi thanh toán chuyển khoản.")
+    account = db.query(BankAccount).filter(BankAccount.id == bank_account_id, BankAccount.status == "active").first()
+    if not account:
+        raise HTTPException(status_code=422, detail="Tài khoản nhận tiền không hợp lệ hoặc đã tạm ngừng.")
+
+
 async def save_receipt(upload: UploadFile | None) -> str | None:
     if not upload or not upload.filename:
         return None
@@ -286,6 +296,65 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
             customer_id=member.id,
             details={"coachIds": coach_ids, "schedule": json.loads(schedule_json) if schedule_json else []},
         )
+    membership_payload = payload.get("membership")
+    if isinstance(membership_payload, dict) and _int(membership_payload.get("planId")):
+        plan = db.query(ServicePackage).filter(
+            ServicePackage.id == _int(membership_payload.get("planId")),
+            ServicePackage.is_pt == False,
+            ServicePackage.is_active == True,
+        ).first()
+        if not plan:
+            raise HTTPException(status_code=422, detail="Gói tập không hợp lệ hoặc đã tạm ngừng.")
+        starts_at = _parse_date(membership_payload.get("startsAt")) or date.today()
+        expires_at = _parse_date(membership_payload.get("expiresAt")) or (
+            starts_at + timedelta(days=plan.duration_days) if plan.duration_days else None
+        )
+        if expires_at and expires_at < starts_at:
+            raise HTTPException(status_code=422, detail="Ngày hết hạn gói phải sau ngày bắt đầu.")
+        final_price = _money(membership_payload.get("finalPrice"), plan.price or 0)
+        paid = min(_money(membership_payload.get("paidAmount")), final_price)
+        debt = max(final_price - paid, 0)
+        debt_due_date = _parse_date(membership_payload.get("debtDueDate")) if debt else None
+        if debt and not debt_due_date:
+            raise HTTPException(status_code=422, detail="Vui lòng chọn hạn thanh toán cho phần công nợ.")
+        method = membership_payload.get("paymentMethod") or "cash"
+        bank_account_id = _int(membership_payload.get("bankAccountId"))
+        _require_bank_account_for_payment(db, method, bank_account_id, paid)
+        membership = Membership(
+            customer_id=member.id,
+            package_id=plan.id,
+            code=f"TMP-{secrets.token_hex(6)}",
+            registered_at=date.today(),
+            starts_at=starts_at,
+            expires_at=expires_at,
+            remaining_sessions=None,
+            final_price=final_price,
+            deposit_amount=paid,
+            paid_amount=paid,
+            debt_amount=debt,
+            debt_due_date=debt_due_date,
+            sale_online_employee_id=_int(membership_payload.get("saleOnlineEmployeeId")),
+            direct_sales_employee_id=_int(membership_payload.get("directSaleEmployeeId")),
+            status="active",
+        )
+        db.add(membership); db.flush(); membership.code = f"MS-{membership.id:06d}"
+        if paid:
+            payment = Payment(
+                customer_id=member.id,
+                membership_id=membership.id,
+                bank_account_id=bank_account_id,
+                payment_no=f"PAY-{membership.id:06d}-001",
+                paid_at=utc_now(),
+                amount=paid,
+                method=method,
+                channel="counter",
+                shift_date=date.today(),
+                note="Thanh toán đăng ký gói cùng lúc tạo hội viên",
+            )
+            db.add(payment); db.flush()
+            record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create"})
+        member.status = "active"
+        record_audit(db, actor, "create", "membership", membership.id, f"Đăng ký gói {plan.name} cùng lúc tạo hội viên", customer_id=member.id, details={"startsAt": starts_at, "expiresAt": expires_at, "finalPrice": final_price, "paidAmount": paid})
     db.commit()
     if dah_event_id:
         dah_service.assign_identity_to_customer(db, member.id, dah_event_id)
@@ -375,10 +444,13 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     starts_at = _parse_date(form.get("startsAt")) or date.today()
     final_price = _money(form.get("finalPrice"), plan.price or 0)
     paid = _money(form.get("paidAmount"))
+    method = form.get("paymentMethod") or "cash"
+    bank_account_id = _int(form.get("bankAccountId"))
+    _require_bank_account_for_payment(db, method, bank_account_id, paid)
     row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=date.today(), starts_at=starts_at, expires_at=_parse_date(form.get("expiresAt")) or (starts_at + timedelta(days=plan.duration_days) if plan.duration_days else None), remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=max(final_price-paid, 0), debt_due_date=_parse_date(form.get("debtDueDate")), sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status="active")
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if paid:
-        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=_int(form.get("bankAccountId")), payment_no=f"PAY-{row.id:06d}-001", paid_at=utc_now(), amount=paid, method=form.get("paymentMethod") or "cash", channel="counter", shift_date=date.today(), note="Thanh toán đăng ký gói")
+        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=bank_account_id, payment_no=f"PAY-{row.id:06d}-001", paid_at=utc_now(), amount=paid, method=method, channel="counter", shift_date=date.today(), note="Thanh toán đăng ký gói")
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
@@ -400,6 +472,9 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     next_paid = _money(form.get("paidAmount"), previous_paid)
     if next_paid < previous_paid:
         raise HTTPException(status_code=422, detail="Không thể giảm số tiền đã thu. Hãy tạo nghiệp vụ hoàn tiền riêng.")
+    method = form.get("paymentMethod") or "cash"
+    bank_account_id = _int(form.get("bankAccountId"))
+    _require_bank_account_for_payment(db, method, bank_account_id, next_paid - previous_paid)
     row.paid_amount = next_paid
     row.deposit_amount = row.paid_amount
     row.debt_amount = max(row.final_price - row.paid_amount, 0)
@@ -409,7 +484,7 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     payment = None
     if delta > 0:
         sequence = db.query(Payment).filter(Payment.membership_id == row.id).count() + 1
-        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=utc_now(), shift_date=date.today(), note="Thanh toán gói", amount=delta, method=form.get("paymentMethod") or "cash", bank_account_id=_int(form.get("bankAccountId")))
+        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=utc_now(), shift_date=date.today(), note="Thanh toán gói", amount=delta, method=method, bank_account_id=bank_account_id)
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
