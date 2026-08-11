@@ -6,9 +6,16 @@ from sqlalchemy.orm import Session, joinedload
 from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
 
 
+def active_membership_member_count(db: Session):
+    return db.query(func.count(func.distinct(Membership.customer_id))).join(Membership.package).filter(
+        ServicePackage.is_pt == False,
+        Membership.status == "active",
+    ).scalar() or 0
+
+
 def dashboard(db: Session):
     today=date.today();month_start=today.replace(day=1);soon=today+timedelta(days=14)
-    active_members=db.query(Customer).filter(Customer.status=="active").count()
+    active_members=active_membership_member_count(db)
     total_members=db.query(Customer).count()
     checkins_today=db.query(AttendanceSession).filter(func.date(AttendanceSession.checked_in_at)==today.isoformat()).count()
     expiring=db.query(Membership).join(Membership.package).filter(ServicePackage.is_pt==False,Membership.status=="active",Membership.expires_at>=today,Membership.expires_at<=soon).count()
@@ -47,6 +54,6 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
     by_method={}
     for row in payments:by_method[row.method]=by_method.get(row.method,0)+(row.amount or 0)
     checkins=db.query(AttendanceSession).filter(AttendanceSession.checked_in_at>=start_dt,AttendanceSession.checked_in_at<=end_dt).count()
-    active=db.query(Customer).filter(Customer.status=="active").count()
+    active=active_membership_member_count(db)
     debts=db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person),joinedload(Membership.package)).filter(Membership.debt_amount>0).order_by(Membership.debt_due_date).all()
     return {"period":{"from":start.isoformat(),"to":end.isoformat()},"summary":{"revenue":revenue,"payments":len(payments),"activeMembers":active,"checkins":checkins},"revenueByMethod":[{"method":key,"amount":value} for key,value in by_method.items()],"debts":[{"membershipId":r.id,"memberId":r.customer_id,"member":r.customer.person.display_name,"memberCode":r.customer.customer_code,"package":r.package.name,"amount":r.debt_amount or 0,"dueDate":r.debt_due_date.isoformat() if r.debt_due_date else None,"overdue":bool(r.debt_due_date and r.debt_due_date<date.today())} for r in debts]}
