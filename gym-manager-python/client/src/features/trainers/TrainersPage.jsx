@@ -144,25 +144,34 @@ export function TrainersPage() {
       render: (r) => r.title || "—",
     },
     {
-      key: "activeClients",
-      label: "Khách PT",
+      key: "registeredPtClients",
+      label: "Khách đăng ký",
       className: "text-right",
-      sortValue: (r) => r.activeClients,
-      render: (r) => (
-        <Link
-          to={`/members?trainerId=${r.id}`}
-          className="font-medium text-blue-700 hover:underline"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {r.activeClients}
-        </Link>
-      ),
+      sortValue: (r) => r.registeredPtClients ?? -1,
+      render: (r) =>
+        r.isPtRole ? (
+          <Link
+            to={`/members?trainerId=${r.id}`}
+            className="font-medium text-blue-700 hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {r.registeredPtClients}
+          </Link>
+        ) : "—",
     },
     {
-      key: "ptSessions",
-      label: "Buổi còn lại",
+      key: "activePtClients",
+      label: "Đang hoạt động",
       className: "text-right",
-      sortValue: (r) => r.ptSessions,
+      sortValue: (r) => r.activePtClients ?? -1,
+      render: (r) => (r.isPtRole ? r.activePtClients : "—"),
+    },
+    {
+      key: "expiredPtClients",
+      label: "Hết hạn",
+      className: "text-right",
+      sortValue: (r) => r.expiredPtClients ?? -1,
+      render: (r) => (r.isPtRole ? r.expiredPtClients : "—"),
     },
     {
       key: "actions",
@@ -195,7 +204,7 @@ export function TrainersPage() {
       <PageHeader
         eyebrow="Quản lý"
         title="Nhân viên"
-        description="Click nhân viên để chỉnh sửa; số khách PT mở danh sách đã lọc."
+        description="Click nhân viên để chỉnh sửa; chỉ chức vụ PT hiển thị thống kê khách đăng ký."
         action={
           <Button onClick={() => edit(null)}>
             <Plus size={16} />

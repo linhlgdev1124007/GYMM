@@ -149,17 +149,24 @@ def pt_role_names(db: Session):
 
 def list_trainers(db: Session, q: str, page: int, page_size: int, title: str = "all"):
     ensure_employee_job_titles(db)
+    pt_titles = pt_role_names(db)
     query = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active")
     if q: query = query.join(Employee.person).filter(or_(Person.display_name.contains(q), Person.phone.contains(q), Employee.employee_code.contains(q), Employee.job_title.contains(q)))
     if title and title != "all":
         query = query.filter(Employee.job_title == title)
     total = query.count(); rows = query.order_by(Employee.id.desc()).offset((page-1)*page_size).limit(page_size).all()
     ids = [row.id for row in rows]
-    counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollmentCoach.enrollment_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
-    sessions = dict(db.query(PtEnrollmentCoach.coach_id, func.sum(PtEnrollment.remaining_sessions)).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active").group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
+    registered_counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollment.customer_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids)).group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
+    active_counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollment.customer_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active", or_(PtEnrollment.expires_at == None, PtEnrollment.expires_at >= date.today())).group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
+    expired_counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollment.customer_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), or_(PtEnrollment.expires_at < date.today(), PtEnrollment.status.in_(("completed", "inactive")))).group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
     items=[]
     for row in rows:
-        item=employee_data(row); item["activeClients"]=counts.get(row.id,0); item["ptSessions"]=sessions.get(row.id,0) or 0; items.append(item)
+        item=employee_data(row)
+        item["isPtRole"] = row.job_title in pt_titles
+        item["registeredPtClients"] = registered_counts.get(row.id, 0) if item["isPtRole"] else None
+        item["activePtClients"] = active_counts.get(row.id, 0) if item["isPtRole"] else None
+        item["expiredPtClients"] = expired_counts.get(row.id, 0) if item["isPtRole"] else None
+        items.append(item)
     return {"items":items,"pagination":pagination(page,page_size,total),"jobTitles":[_job_title_data(row) for row in employee_job_titles(db)]}
 
 

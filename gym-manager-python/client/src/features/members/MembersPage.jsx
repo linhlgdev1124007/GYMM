@@ -8,6 +8,7 @@ import {
   Plus,
   ScanFace,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { api, queryString } from "../../services/api";
@@ -51,7 +52,6 @@ const createInitialForm = () => ({
   dahIdentityName: "",
   dahIdentityImageData: "",
   dahIdentityTime: "",
-  source: "Walk-in",
   salesEmployeeId: "",
   notes: "",
   status: "active",
@@ -290,7 +290,13 @@ export function MembersPage() {
               openMember(row);
             }}
           >
-            <div className="avatar avatar-md">{initials(row.name)}</div>
+            <div className="avatar avatar-md">
+              {row.avatarImageData ? (
+                <img src={row.avatarImageData} alt="" />
+              ) : (
+                initials(row.name)
+              )}
+            </div>
             <div>
               <div className="cell-primary hover:text-blue-700">{row.name}</div>
               <div className="cell-secondary">{row.code}</div>
@@ -572,6 +578,20 @@ export function MembersPage() {
         : "",
     });
   };
+  const savedViewMatches = useCallback(
+    (saved) =>
+      Object.entries(saved.filters).every(
+        ([key, value]) => (params.get(key) || paramDefaults[key] || "") === value,
+      ),
+    [params],
+  );
+  const activeSavedViewId = savedViews.find(savedViewMatches)?.id;
+  const deleteSavedView = (saved) => {
+    const next = savedViews.filter((item) => item.id !== saved.id);
+    setSavedViews(next);
+    localStorage.setItem("pulsefit-member-views", JSON.stringify(next));
+    notify.success(`Đã xóa chế độ xem “${saved.name}”.`);
+  };
   const saveView = (event) => {
     event.preventDefault();
     const name = viewName.trim();
@@ -604,37 +624,319 @@ export function MembersPage() {
   };
   return (
     <>
-      <PageHeader
-        eyebrow="Quản lý"
-        title="Hội viên"
-        description="Không gian vận hành hội viên — xem và xử lý mà không rời danh sách."
-        action={canOperate ? (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus size={16} />
-            Thêm hội viên
-          </Button>
-        ) : null}
-      />
-      <div className="workspace-views">
-        {views.map(([key, label]) => (
-          <button
-            key={key}
-            className={`workspace-view ${view === key ? "active" : ""}`}
-            onClick={() => applySystemView(key)}
-          >
-            {label}
-          </button>
-        ))}
-        {savedViews.map((saved) => {
-          const active = Object.entries(saved.filters).every(
-            ([key, value]) =>
-              (params.get(key) || paramDefaults[key] || "") === value,
-          );
-          return (
+      <div className="members-page">
+        <PageHeader
+          eyebrow="Quản lý"
+          title="Hội viên"
+          description="Không gian vận hành hội viên — xem và xử lý mà không rời danh sách."
+          action={canOperate ? (
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus size={16} />
+              Thêm hội viên
+            </Button>
+          ) : null}
+        />
+        <div className="workspace-views">
+          {views.map(([key, label]) => (
             <button
-              key={saved.id}
-              className={`workspace-view ${active ? "active" : ""}`}
-              onClick={() => {
+              key={key}
+              className={`workspace-view ${!activeSavedViewId && view === key ? "active" : ""}`}
+              onClick={() => applySystemView(key)}
+            >
+              {label}
+            </button>
+          ))}
+          {savedViews.map((saved) => {
+            const active = saved.id === activeSavedViewId;
+            return (
+              <span
+                key={saved.id}
+                className={`saved-workspace-view ${active ? "active" : ""}`}
+              >
+                <button
+                  className="saved-workspace-open"
+                  onClick={() => {
+                    updateParams({
+                      status: "",
+                      expiringDays: "",
+                      paymentStatus: "",
+                      overdueDays: "",
+                      packageId: "",
+                      trainerId: "",
+                      ...saved.filters,
+                      page: "",
+                    });
+                    setHiddenColumns(saved.hiddenColumns || []);
+                    setDensity(saved.density || "standard");
+                  }}
+                >
+                  {saved.name}
+                </button>
+                <button
+                  className="saved-workspace-delete"
+                  aria-label={`Xóa chế độ xem ${saved.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteSavedView(saved);
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            );
+          })}
+          <button
+            className="workspace-view ml-auto inline-flex items-center gap-1"
+            onClick={() => setSaveViewOpen(true)}
+          >
+            <BookmarkPlus size={13} />
+            Lưu chế độ xem
+          </button>
+        </div>
+        {canOperate && selection.length ? (
+          <div className="bulk-bar">
+            <strong>{selection.length} hội viên đã chọn</strong>
+            <Button size="sm" variant="secondary" onClick={exportSelected}>
+              Xuất danh sách
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelection([])}>
+              Bỏ chọn
+            </Button>
+          </div>
+        ) : (
+          <div className="toolbar">
+            <div className="members-search">
+              <SearchInput
+                value={search}
+                onChange={(value) =>
+                  updateParams({ q: value, page: "" }, { replace: true })
+                }
+                placeholder="Tên, điện thoại, mã hội viên…  /"
+              />
+            </div>
+            <Select
+              className="input w-48"
+              value={status}
+              onChange={(e) =>
+                updateParams({
+                  status: e.target.value,
+                  expiringDays: e.target.value === "expiring" ? expiringDays : "",
+                  page: "",
+                })
+              }
+            >
+              <option value="all">Tất cả</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="expired">Hết hạn</option>
+              <option value="expiring">Sắp hết hạn trong X ngày</option>
+              <option value="frozen">Bảo lưu</option>
+              <option value="inactive">Tạm ngừng</option>
+            </Select>
+            {status === "expiring" && (
+              <label className="expiry-days-field">
+                <span>Trong</span>
+                <Input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={expiringDays}
+                  onChange={(event) =>
+                    updateParams(
+                      {
+                        expiringDays: Math.min(
+                          Math.max(Number(event.target.value) || 1, 1),
+                          365,
+                        ),
+                        page: "",
+                      },
+                      { replace: true },
+                    )
+                  }
+                />
+                <span>ngày</span>
+              </label>
+            )}
+            <Select
+              className="input w-52"
+              value={paymentStatus}
+              onChange={(event) =>
+                updateParams({
+                  paymentStatus: event.target.value,
+                  overdueDays:
+                    event.target.value === "overdue" ? overdueDays : "",
+                  page: "",
+                })
+              }
+            >
+              <option value="all">Mọi hạn thanh toán</option>
+              <option value="overdue">Quá hạn thanh toán trong X ngày</option>
+            </Select>
+            {paymentStatus === "overdue" && (
+              <label className="expiry-days-field">
+                <span>Trong</span>
+                <Input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={overdueDays}
+                  onChange={(event) =>
+                    updateParams(
+                      {
+                        overdueDays: Math.min(
+                          Math.max(Number(event.target.value) || 1, 1),
+                          365,
+                        ),
+                        page: "",
+                      },
+                      { replace: true },
+                    )
+                  }
+                />
+                <span>ngày</span>
+              </label>
+            )}
+            <Select
+              className="input w-44"
+              value={packageId}
+              onChange={(e) =>
+                updateParams({ packageId: e.target.value, page: "" })
+              }
+            >
+              <option value="">Mọi gói tập</option>
+              {options.data?.plans.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              className="input w-40"
+              value={trainerId}
+              onChange={(e) =>
+                updateParams({ trainerId: e.target.value, page: "" })
+              }
+            >
+              <option value="">Mọi PT</option>
+              {options.data?.employees
+                .filter((row) => row.isPtRole)
+                .map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
+            </Select>
+            <Select
+              className="input w-36"
+              value={sort}
+              onChange={(e) => updateParams({ sort: e.target.value, page: "" })}
+            >
+              <option value="newest">Mới nhất</option>
+              <option value="name">Tên A–Z</option>
+              <option value="status">Trạng thái</option>
+            </Select>
+            <div className="table-options" ref={tableOptionsRef}>
+              <button
+                type="button"
+                className="table-options-trigger"
+                aria-expanded={tableOptionsOpen}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const width = 224;
+                  setTableOptionsPosition({
+                    top: rect.bottom + 4,
+                    left: Math.max(
+                      8,
+                      Math.min(rect.left, window.innerWidth - width - 8),
+                    ),
+                  });
+                  setTableOptionsOpen((open) => !open);
+                }}
+              >
+                <SlidersHorizontal size={14} />
+                Hiển thị
+              </button>
+              {tableOptionsOpen && <div
+                className="table-options-panel"
+                style={tableOptionsPosition}
+              >
+                <strong>Mật độ bảng</strong>
+                <label>
+                  <input
+                    type="radio"
+                    name="density"
+                    checked={density === "standard"}
+                    onChange={() => {
+                      setDensity("standard");
+                    }}
+                  />
+                  Tiêu chuẩn
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="density"
+                    checked={density === "compact"}
+                    onChange={() => {
+                      setDensity("compact");
+                    }}
+                  />
+                  Thu gọn
+                </label>
+                <hr />
+                <strong>Cột hiển thị</strong>
+                {[
+                  ["phone", "Điện thoại"],
+                  ["sale", "Sale"],
+                  ["membership", "Gói & hết hạn"],
+                  ["debt", "Công nợ"],
+                  ["debtDueDate", "Hạn thanh toán"],
+                  ["trainer", "PT"],
+                  ["status", "Trạng thái"],
+                ].map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={!hiddenColumns.includes(key)}
+                      onChange={() =>
+                        setHiddenColumns((current) =>
+                          current.includes(key)
+                            ? current.filter((item) => item !== key)
+                            : [...current, key],
+                        )
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>}
+            </div>
+            <div className="toolbar-spacer" />
+            <span className="text-xs text-slate-400">
+              {members.data?.pagination.total || 0} hội viên
+            </span>
+          </div>
+        )}
+        {!!activeFilters.length && (
+          <div className="active-filter-bar">
+            {activeFilters.map(([label, value, key]) => (
+              <button
+                key={key}
+                className="filter-chip"
+                onClick={() =>
+                  updateParams({
+                    [key]: "",
+                    ...(key === "status" ? { expiringDays: "" } : {}),
+                    ...(key === "paymentStatus" ? { overdueDays: "" } : {}),
+                    page: "",
+                  })
+                }
+              >
+                {label}: {value} ×
+              </button>
+            ))}
+            <button
+              className="text-xs text-slate-500 hover:text-slate-900"
+              onClick={() =>
                 updateParams({
                   status: "",
                   expiringDays: "",
@@ -642,330 +944,61 @@ export function MembersPage() {
                   overdueDays: "",
                   packageId: "",
                   trainerId: "",
-                  ...saved.filters,
-                  page: "",
-                });
-                setHiddenColumns(saved.hiddenColumns || []);
-                setDensity(saved.density || "standard");
-              }}
-            >
-              {saved.name}
-            </button>
-          );
-        })}
-        <button
-          className="workspace-view ml-auto inline-flex items-center gap-1"
-          onClick={() => setSaveViewOpen(true)}
-        >
-          <BookmarkPlus size={13} />
-          Lưu chế độ xem
-        </button>
-      </div>
-      {canOperate && selection.length ? (
-        <div className="bulk-bar">
-          <strong>{selection.length} hội viên đã chọn</strong>
-          <Button size="sm" variant="secondary" onClick={exportSelected}>
-            Xuất danh sách
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelection([])}>
-            Bỏ chọn
-          </Button>
-        </div>
-      ) : (
-        <div className="toolbar">
-          <div className="members-search">
-            <SearchInput
-              value={search}
-              onChange={(value) =>
-                updateParams({ q: value, page: "" }, { replace: true })
-              }
-              placeholder="Tên, điện thoại, mã hội viên…  /"
-            />
-          </div>
-          <Select
-            className="input w-48"
-            value={status}
-            onChange={(e) =>
-              updateParams({
-                status: e.target.value,
-                expiringDays: e.target.value === "expiring" ? expiringDays : "",
-                page: "",
-              })
-            }
-          >
-            <option value="all">Tất cả</option>
-            <option value="active">Đang hoạt động</option>
-            <option value="expired">Hết hạn</option>
-            <option value="expiring">Sắp hết hạn trong X ngày</option>
-            <option value="frozen">Bảo lưu</option>
-            <option value="inactive">Tạm ngừng</option>
-          </Select>
-          {status === "expiring" && (
-            <label className="expiry-days-field">
-              <span>Trong</span>
-              <Input
-                type="number"
-                min="1"
-                max="365"
-                value={expiringDays}
-                onChange={(event) =>
-                  updateParams(
-                    {
-                      expiringDays: Math.min(
-                        Math.max(Number(event.target.value) || 1, 1),
-                        365,
-                      ),
-                      page: "",
-                    },
-                    { replace: true },
-                  )
-                }
-              />
-              <span>ngày</span>
-            </label>
-          )}
-          <Select
-            className="input w-52"
-            value={paymentStatus}
-            onChange={(event) =>
-              updateParams({
-                paymentStatus: event.target.value,
-                overdueDays:
-                  event.target.value === "overdue" ? overdueDays : "",
-                page: "",
-              })
-            }
-          >
-            <option value="all">Mọi hạn thanh toán</option>
-            <option value="overdue">Quá hạn thanh toán trong X ngày</option>
-          </Select>
-          {paymentStatus === "overdue" && (
-            <label className="expiry-days-field">
-              <span>Trong</span>
-              <Input
-                type="number"
-                min="1"
-                max="365"
-                value={overdueDays}
-                onChange={(event) =>
-                  updateParams(
-                    {
-                      overdueDays: Math.min(
-                        Math.max(Number(event.target.value) || 1, 1),
-                        365,
-                      ),
-                      page: "",
-                    },
-                    { replace: true },
-                  )
-                }
-              />
-              <span>ngày</span>
-            </label>
-          )}
-          <Select
-            className="input w-44"
-            value={packageId}
-            onChange={(e) =>
-              updateParams({ packageId: e.target.value, page: "" })
-            }
-          >
-            <option value="">Mọi gói tập</option>
-            {options.data?.plans.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            className="input w-40"
-            value={trainerId}
-            onChange={(e) =>
-              updateParams({ trainerId: e.target.value, page: "" })
-            }
-          >
-            <option value="">Mọi PT</option>
-            {options.data?.employees
-              .filter((row) => row.isPtRole)
-              .map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-          </Select>
-          <Select
-            className="input w-36"
-            value={sort}
-            onChange={(e) => updateParams({ sort: e.target.value, page: "" })}
-          >
-            <option value="newest">Mới nhất</option>
-            <option value="name">Tên A–Z</option>
-            <option value="status">Trạng thái</option>
-          </Select>
-          <div className="table-options" ref={tableOptionsRef}>
-            <button
-              type="button"
-              className="table-options-trigger"
-              aria-expanded={tableOptionsOpen}
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                const width = 224;
-                setTableOptionsPosition({
-                  top: rect.bottom + 4,
-                  left: Math.max(
-                    8,
-                    Math.min(rect.left, window.innerWidth - width - 8),
-                  ),
-                });
-                setTableOptionsOpen((open) => !open);
-              }}
-            >
-              <SlidersHorizontal size={14} />
-              Hiển thị
-            </button>
-            {tableOptionsOpen && <div
-              className="table-options-panel"
-              style={tableOptionsPosition}
-            >
-              <strong>Mật độ bảng</strong>
-              <label>
-                <input
-                  type="radio"
-                  name="density"
-                  checked={density === "standard"}
-                  onChange={() => {
-                    setDensity("standard");
-                  }}
-                />
-                Tiêu chuẩn
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="density"
-                  checked={density === "compact"}
-                  onChange={() => {
-                    setDensity("compact");
-                  }}
-                />
-                Thu gọn
-              </label>
-              <hr />
-              <strong>Cột hiển thị</strong>
-              {[
-                ["phone", "Điện thoại"],
-                ["sale", "Sale"],
-                ["membership", "Gói & hết hạn"],
-                ["debt", "Công nợ"],
-                ["debtDueDate", "Hạn thanh toán"],
-                ["trainer", "PT"],
-                ["status", "Trạng thái"],
-              ].map(([key, label]) => (
-                <label key={key}>
-                  <input
-                    type="checkbox"
-                    checked={!hiddenColumns.includes(key)}
-                    onChange={() =>
-                      setHiddenColumns((current) =>
-                        current.includes(key)
-                          ? current.filter((item) => item !== key)
-                          : [...current, key],
-                      )
-                    }
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>}
-          </div>
-          <div className="toolbar-spacer" />
-          <span className="text-xs text-slate-400">
-            {members.data?.pagination.total || 0} hội viên
-          </span>
-        </div>
-      )}
-      {!!activeFilters.length && (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {activeFilters.map(([label, value, key]) => (
-            <button
-              key={key}
-              className="filter-chip"
-              onClick={() =>
-                updateParams({
-                  [key]: "",
-                  ...(key === "status" ? { expiringDays: "" } : {}),
-                  ...(key === "paymentStatus" ? { overdueDays: "" } : {}),
                   page: "",
                 })
               }
             >
-              {label}: {value} ×
+              Xóa bộ lọc
             </button>
-          ))}
-          <button
-            className="text-xs text-slate-500 hover:text-slate-900"
-            onClick={() =>
-              updateParams({
-                status: "",
-                expiringDays: "",
-                paymentStatus: "",
-                overdueDays: "",
-                packageId: "",
-                trainerId: "",
-                page: "",
-              })
-            }
-          >
-            Xóa bộ lọc
-          </button>
-        </div>
-      )}
-      <DataTable
-        columns={displayColumns}
-        rows={members.data?.items}
-        loading={members.isLoading}
-        error={members.error}
-        onRetry={members.refetch}
-        selection={canOperate ? selection : undefined}
-        onSelectionChange={canOperate ? setSelection : undefined}
-        onRowClick={openMember}
-        selectedRowId={Number(memberId)}
-        density={density}
-        emptyTitle={
-          search || activeFilters.length || view !== "all"
-            ? "Không có hội viên phù hợp"
-            : "Chưa có hội viên"
-        }
-        emptyDescription={
-          search || activeFilters.length || view !== "all"
-            ? "Xóa bớt bộ lọc hoặc thử từ khóa khác."
-            : "Thêm hội viên đầu tiên để bắt đầu vận hành."
-        }
-        emptyAction={
-          search || activeFilters.length || view !== "all" ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                applySystemView("all");
-                updateParams({ q: "", sort: "" });
-              }}
-            >
-              Xóa tìm kiếm và bộ lọc
-            </Button>
-          ) : canOperate ? (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus size={14} /> Thêm hội viên
-            </Button>
-          ) : null
-        }
-      />
-      <Pagination
-        data={members.data?.pagination}
-        onPage={(value) => updateParams({ page: value })}
-        pageSize={pageSize}
-        onPageSize={(value) => updateParams({ pageSize: value, page: "" })}
-      />
+          </div>
+        )}
+        <DataTable
+          columns={displayColumns}
+          rows={members.data?.items}
+          loading={members.isLoading}
+          error={members.error}
+          onRetry={members.refetch}
+          selection={canOperate ? selection : undefined}
+          onSelectionChange={canOperate ? setSelection : undefined}
+          onRowClick={openMember}
+          selectedRowId={Number(memberId)}
+          density={density}
+          emptyTitle={
+            search || activeFilters.length || view !== "all"
+              ? "Không có hội viên phù hợp"
+              : "Chưa có hội viên"
+          }
+          emptyDescription={
+            search || activeFilters.length || view !== "all"
+              ? "Xóa bớt bộ lọc hoặc thử từ khóa khác."
+              : "Thêm hội viên đầu tiên để bắt đầu vận hành."
+          }
+          emptyAction={
+            search || activeFilters.length || view !== "all" ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  applySystemView("all");
+                  updateParams({ q: "", sort: "" });
+                }}
+              >
+                Xóa tìm kiếm và bộ lọc
+              </Button>
+            ) : canOperate ? (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus size={14} /> Thêm hội viên
+              </Button>
+            ) : null
+          }
+        />
+        <Pagination
+          data={members.data?.pagination}
+          onPage={(value) => updateParams({ page: value })}
+          pageSize={pageSize}
+          onPageSize={(value) => updateParams({ pageSize: value, page: "" })}
+        />
+      </div>
       <MemberQuickDrawer
         memberId={memberId}
         onClose={() => updateParams({ member: "", action: "" })}
@@ -1158,16 +1191,8 @@ export function MembersPage() {
               </div>
             </section>
             <section className="form-section">
-              <h3 className="form-section-title">Nguồn và phụ trách</h3>
+              <h3 className="form-section-title">Phụ trách</h3>
               <div className="form-grid">
-                <Field label="Nguồn khách">
-                  <Input
-                    value={form.source}
-                    onChange={(e) =>
-                      setForm({ ...form, source: e.target.value })
-                    }
-                  />
-                </Field>
                 <Field label="Nhân viên phụ trách">
                   <SearchableSelect
                     value={form.salesEmployeeId}

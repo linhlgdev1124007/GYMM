@@ -4,7 +4,7 @@ import secrets
 import json
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import and_, func, or_
+from sqlalchemy import Integer, and_, case, cast, func, or_
 from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..database import ROOT_DIR
@@ -21,6 +21,8 @@ from ..timeutils import utc_now
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+CUSTOMER_CODE_PREFIX = "CUS"
+CUSTOMER_CODE_WIDTH = 7
 
 
 def _parse_date(value):
@@ -46,6 +48,34 @@ def _money(value, default=0):
         return max(float(value), 0) if value not in (None, "") else default
     except (TypeError, ValueError):
         return default
+
+
+def _customer_code_number(code: str | None) -> int | None:
+    if not code or not code.startswith(CUSTOMER_CODE_PREFIX):
+        return None
+    suffix = code[len(CUSTOMER_CODE_PREFIX):]
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _next_customer_code(db: Session) -> str:
+    max_number = 0
+    for (code,) in db.query(Customer.customer_code).filter(
+        Customer.customer_code.like(f"{CUSTOMER_CODE_PREFIX}%")
+    ):
+        max_number = max(max_number, _customer_code_number(code) or 0)
+    next_number = max_number + 1
+    width = max(CUSTOMER_CODE_WIDTH, len(str(next_number)))
+    return f"{CUSTOMER_CODE_PREFIX}{next_number:0{width}d}"
+
+
+def _customer_code_sort_expression(db: Session):
+    suffix = func.substr(Customer.customer_code, len(CUSTOMER_CODE_PREFIX) + 1)
+    number = cast(suffix, Integer)
+    if db.bind and db.bind.dialect.name == "mysql":
+        is_customer_code = Customer.customer_code.op("REGEXP")(f"^{CUSTOMER_CODE_PREFIX}[0-9]+$")
+    else:
+        is_customer_code = Customer.customer_code.op("GLOB")(f"{CUSTOMER_CODE_PREFIX}[0-9]*")
+    return case((is_customer_code, number), else_=0)
 
 
 def _require_bank_account_for_payment(db: Session, method: str, bank_account_id: int | None, amount: float):
@@ -138,10 +168,15 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     if package_id:
         query = query.filter(latest_status_exists(status_membership.package_id == package_id))
     if trainer_id:
-        query = query.filter(db.query(PtEnrollmentCoach.enrollment_id).join(PtEnrollment).filter(PtEnrollment.customer_id == Customer.id, PtEnrollmentCoach.coach_id == trainer_id, PtEnrollment.status == "active").exists())
+        query = query.filter(db.query(PtEnrollmentCoach.enrollment_id).join(PtEnrollment).filter(PtEnrollment.customer_id == Customer.id, PtEnrollmentCoach.coach_id == trainer_id).exists())
     total = query.count()
-    ordering = Person.display_name.asc() if sort == "name" else (Customer.status.asc() if sort == "status" else Customer.id.desc())
-    rows = query.order_by(ordering).offset((page - 1) * page_size).limit(page_size).all()
+    if sort == "name":
+        orderings = [Person.display_name.asc(), Customer.id.desc()]
+    elif sort == "status":
+        orderings = [Customer.status.asc(), Customer.id.desc()]
+    else:
+        orderings = [_customer_code_sort_expression(db).desc(), Customer.id.desc()]
+    rows = query.order_by(*orderings).offset((page - 1) * page_size).limit(page_size).all()
     ids = [row.id for row in rows]
     last_checkins = {}
     trainers = {}
@@ -164,6 +199,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             "code": member.customer_code,
             "mbsCode": member.mbs_card_code,
             "personUuid": member.person_uuid,
+            "avatarImageData": member.avatar_image_data,
             **person_data(member.person),
             "source": member.source,
             "status": member.status,
@@ -256,9 +292,9 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=payload.get("source") or "Walk-in", status=payload.get("status") or "lead", notes=payload.get("notes") or None)
+    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status=payload.get("status") or "lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
-    member.customer_code = f"MB-{member.id:06d}"
+    member.customer_code = _next_customer_code(db)
     record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
     pt_payload = payload.get("ptEnrollment")
     if isinstance(pt_payload, dict):

@@ -579,22 +579,19 @@
     @apply animate-pulse rounded bg-slate-200;
   }
   .row-menu {
-    @apply relative;
+    @apply relative inline-flex;
   }
-  .row-menu summary {
-    @apply flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700;
+  .row-menu > button {
+    @apply flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700;
   }
-  .row-menu summary::-webkit-details-marker {
-    display: none;
+  .row-menu-popover {
+    @apply fixed z-[90] min-w-44 rounded-md border border-slate-200 bg-white p-1 shadow-popover;
   }
-  .row-menu > div {
-    @apply absolute right-0 z-20 mt-1 min-w-36 rounded-md border border-slate-200 bg-white p-1 shadow-popover;
-  }
-  .row-menu button,
-  .row-menu a {
+  .row-menu-popover button,
+  .row-menu-popover a {
     @apply flex w-full items-center rounded px-2.5 py-2 text-left text-xs text-slate-700 hover:bg-slate-50;
   }
-  .row-menu .danger {
+  .row-menu-popover .danger {
     @apply text-red-600;
   }
   .drawer-layer {
@@ -722,6 +719,41 @@
   }
   .workspace-view.active {
     @apply border-navy-800 text-navy-900;
+  }
+  .saved-workspace-view {
+    @apply inline-flex items-center border-b-2 border-transparent text-xs font-medium text-slate-500 hover:text-slate-900;
+  }
+  .saved-workspace-view.active {
+    @apply border-navy-800 text-navy-900;
+  }
+  .saved-workspace-open {
+    @apply px-3 py-2;
+  }
+  .saved-workspace-delete {
+    @apply mr-1 flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-red-600;
+  }
+  .members-page {
+    height: calc(100vh - 64px - 56px);
+    @apply flex min-h-0 flex-col;
+  }
+  .members-page .page-header {
+    @apply shrink-0;
+  }
+  .members-page .workspace-views,
+  .members-page .toolbar,
+  .members-page .bulk-bar,
+  .members-page .active-filter-bar,
+  .members-page .pagination {
+    @apply shrink-0;
+  }
+  .members-page .table-shell {
+    @apply flex min-h-0 flex-1 flex-col;
+  }
+  .members-page .table-scroll {
+    @apply min-h-0 flex-1 overflow-auto;
+  }
+  .active-filter-bar {
+    @apply mb-3 flex flex-wrap gap-2;
   }
   .bulk-bar {
     @apply mb-3 flex min-h-11 items-center gap-2 border-y border-blue-200 bg-blue-50 px-3;

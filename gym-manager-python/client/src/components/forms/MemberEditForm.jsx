@@ -49,17 +49,20 @@ export function MemberEditForm({
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          const phone = normalizePhone(form.phone);
           if (!form.name.trim()) {
             setValidation("Họ tên không được để trống.");
             return;
           }
-          if (form.phone && normalizePhone(form.phone).length !== 10) {
+          if (phone && phone.length !== 10) {
             setValidation("Số điện thoại cần đủ 10 chữ số.");
             return;
           }
+          setValidation("");
           onSubmit({
             ...form,
             name: form.name.trim(),
+            phone,
             email: form.email.trim(),
           });
         }}
@@ -75,7 +78,10 @@ export function MemberEditForm({
             <Field label="Điện thoại">
               <PhoneInput
                 value={form.phone || ""}
-                onChange={(phone) => setForm({ ...form, phone })}
+                onChange={(phone) => {
+                  setValidation("");
+                  setForm({ ...form, phone });
+                }}
               />
             </Field>
             <Field label="Email">

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 import tempfile
-from datetime import timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -97,5 +97,67 @@ def test_settings_returns_single_dah1017_with_heartbeat_status(tmp_path):
         db.query(Device).filter(Device.code == "DAH-2470802").one().last_heartbeat_at = utc_now()
         db.commit()
         assert settings(db)["devices"][0]["status"] == "online"
+    finally:
+        db.close()
+
+
+def test_trainers_show_pt_client_status_counts_only_for_pt_roles(tmp_path):
+    from server.models import Customer, Employee, Person, PtEnrollment, PtEnrollmentCoach
+    from server.services.operations_service import ensure_employee_job_titles, list_trainers
+
+    db = make_session(tmp_path)
+    try:
+        coach_person = Person(display_name="Coach One", phone="0900000001", status="active")
+        sale_person = Person(display_name="Sale One", phone="0900000002", status="active")
+        active_member_person = Person(display_name="Active PT Member", phone="0900000003", status="active")
+        expired_member_person = Person(display_name="Expired PT Member", phone="0900000004", status="active")
+        db.add_all([coach_person, sale_person, active_member_person, expired_member_person])
+        db.flush()
+
+        coach = Employee(person_id=coach_person.id, employee_code="EMP-00001", job_title="Coach", status="active")
+        sale = Employee(person_id=sale_person.id, employee_code="EMP-00002", job_title="Sale", status="active")
+        active_member = Customer(person_id=active_member_person.id, customer_code="CUS0000001", status="active")
+        expired_member = Customer(person_id=expired_member_person.id, customer_code="CUS0000002", status="active")
+        db.add_all([coach, sale, active_member, expired_member])
+        db.flush()
+
+        active = PtEnrollment(
+            customer_id=active_member.id,
+            group_type="1:1",
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 9, 1),
+            total_sessions=12,
+            remaining_sessions=12,
+            status="active",
+        )
+        expired = PtEnrollment(
+            customer_id=expired_member.id,
+            group_type="1:1",
+            starts_at=date(2026, 6, 1),
+            expires_at=date(2026, 7, 1),
+            total_sessions=12,
+            remaining_sessions=0,
+            status="active",
+        )
+        db.add_all([active, expired])
+        db.flush()
+        db.add_all([
+            PtEnrollmentCoach(enrollment_id=active.id, coach_id=coach.id),
+            PtEnrollmentCoach(enrollment_id=expired.id, coach_id=coach.id),
+        ])
+        ensure_employee_job_titles(db)
+        db.commit()
+
+        rows = {row["name"]: row for row in list_trainers(db, q="", title="all", page=1, page_size=20)["items"]}
+
+        assert rows["Coach One"]["isPtRole"] is True
+        assert rows["Coach One"]["registeredPtClients"] == 2
+        assert rows["Coach One"]["activePtClients"] == 1
+        assert rows["Coach One"]["expiredPtClients"] == 1
+        assert "ptSessions" not in rows["Coach One"]
+        assert rows["Sale One"]["isPtRole"] is False
+        assert rows["Sale One"]["registeredPtClients"] is None
+        assert rows["Sale One"]["activePtClients"] is None
+        assert rows["Sale One"]["expiredPtClients"] is None
     finally:
         db.close()
