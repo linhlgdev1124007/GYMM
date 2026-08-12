@@ -509,6 +509,7 @@ def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_p
             "activateNow": "true",
             "finalPrice": "100000",
             "paidAmount": "0",
+            "debtDueDate": "2026-08-20",
             "paymentMethod": "cash",
         }, [], None))
         assert queued["status"] == "pending"
@@ -523,6 +524,7 @@ def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_p
             "activateNow": "true",
             "finalPrice": "100000",
             "paidAmount": "0",
+            "debtDueDate": "2026-08-20",
             "paymentMethod": "cash",
         }, [], None))
         assert overlapping["status"] == "active"
@@ -537,5 +539,93 @@ def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_p
 
         member = get_member(db, customer.id)
         assert member["memberships"][0]["status"] == "active"
+    finally:
+        db.close()
+
+
+def test_membership_payment_validation_is_enforced_by_backend(tmp_path):
+    import asyncio
+    from fastapi import HTTPException
+    from server.services.members_service import create_membership
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=date(2026, 7, 1),
+            activated_at=date(2026, 7, 1),
+        )
+        membership.expires_at = date(2026, 7, 31)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="lớn hơn tổng tiền"):
+            asyncio.run(create_membership(db, {
+                "memberId": str(customer.id),
+                "planId": str(membership.package_id),
+                "startsAt": "2026-08-12",
+                "activateNow": "true",
+                "finalPrice": "100000",
+                "paidAmount": "150000",
+                "paymentMethod": "cash",
+            }, [], None))
+
+        with pytest.raises(HTTPException, match="hạn thanh toán"):
+            asyncio.run(create_membership(db, {
+                "memberId": str(customer.id),
+                "planId": str(membership.package_id),
+                "startsAt": "2026-08-12",
+                "activateNow": "true",
+                "finalPrice": "100000",
+                "paidAmount": "50000",
+                "paymentMethod": "cash",
+            }, [], None))
+    finally:
+        db.close()
+
+
+def test_member_status_syncs_after_cancel_and_transfer(tmp_path):
+    from server.models import Customer, Person
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        customer.status = "active"
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "cancel",
+            "effectiveAt": "2026-08-12",
+            "reason": "Khách yêu cầu hủy",
+        }, None)
+        db.refresh(customer)
+        assert customer.status == "inactive"
+
+        customer.status = "active"
+        membership.status = "active"
+        db.add(Person(display_name="Transfer Target", phone="0900000099", status="active"))
+        db.flush()
+        target_person = db.query(Person).filter_by(phone="0900000099").one()
+        target = Customer(person_id=target_person.id, customer_code="CUS0000099", status="lead")
+        db.add(target)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "transfer",
+            "targetMemberId": target.id,
+            "effectiveAt": "2026-08-12",
+            "reason": "Chuyển nhượng",
+        }, None)
+        db.refresh(customer)
+        db.refresh(target)
+        assert customer.status == "inactive"
+        assert target.status == "active"
     finally:
         db.close()

@@ -153,7 +153,7 @@ export function MembershipsPage() {
           <option value="active">Hoạt động</option>
           <option value="expiring">Sắp hết hạn</option>
           <option value="expired">Hết hạn</option>
-          <option value="frozen">Tạm dừng</option>
+          <option value="frozen">Bảo lưu</option>
         </Select>
       </div>
       <DataTable

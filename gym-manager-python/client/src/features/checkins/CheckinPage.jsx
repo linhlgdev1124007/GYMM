@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { format, subDays } from "date-fns";
-import { Activity, Link2, Radio, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, Link2, Radio, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -71,6 +71,7 @@ export function CheckinPage() {
   });
   const checkins = recent.data?.items || [];
   const activeSessions = checkins.filter((row) => row.status === "open");
+  const warningSessions = activeSessions.filter((row) => row.memberAccessWarning);
   const lastEventAt = recent.data?.lastEventAt;
   const eventViews = [
     ["all", "Tất cả"],
@@ -152,6 +153,19 @@ export function CheckinPage() {
               <p>Các phiên DAH chưa gửi thời điểm ra.</p>
             </div>
           </div>
+          {warningSessions.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                <div>
+                  <strong>Có {warningSessions.length} người đang ở phòng cần kiểm tra gói.</strong>
+                  <p className="mt-1 text-xs leading-5">
+                    Bao gồm khách chưa kích hoạt, gói bảo lưu/tạm dừng hoặc gói đã hết hạn.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
             {activeSessions.map((row) => {
               const name = row.employeeName || row.memberName;
@@ -169,6 +183,12 @@ export function CheckinPage() {
                         ? `${row.employeeCode} · Nhân viên`
                         : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
                     </p>
+                    {row.memberAccessWarning && (
+                      <p className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+                        <AlertTriangle size={13} />
+                        <span className="truncate">{row.memberAccessWarning}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
                 </>

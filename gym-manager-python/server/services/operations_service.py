@@ -36,6 +36,39 @@ def _attendance_iso(value, source: str | None):
     return value.isoformat() if source == "dah" else utc_iso(value)
 
 
+def _member_access_warning(db: Session, member: Customer | None) -> str | None:
+    if not member:
+        return None
+    today = vietnam_today()
+    membership = (
+        db.query(Membership)
+        .join(ServicePackage)
+        .filter(
+            Membership.customer_id == member.id,
+            ServicePackage.is_pt == False,
+        )
+        .order_by(Membership.registered_at.desc(), Membership.id.desc())
+        .first()
+    )
+    if not membership:
+        return "Khách tiềm năng chưa có gói tập."
+    if membership.status == "pending":
+        return "Gói đang chờ kích hoạt."
+    if membership.status == "suspended":
+        return "Gói đang tạm dừng."
+    if membership.status == "frozen":
+        return "Gói đang bảo lưu."
+    if membership.status == "cancelled":
+        return "Gói đã hủy."
+    if membership.expires_at and membership.expires_at < today:
+        return "Gói đã hết hạn."
+    if membership.starts_at and membership.starts_at > today:
+        return "Gói chưa tới ngày bắt đầu."
+    if member.status == "lead":
+        return "Hội viên chưa ở trạng thái hoạt động."
+    return None
+
+
 def _job_title(value, default="Coach"):
     title = str(value or "").strip()
     if not title:
@@ -369,6 +402,7 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
         "memberName":row.customer.person.display_name if row.customer else None,
         "memberCode":row.customer.customer_code if row.customer else None,
         "memberStatus":row.customer.status if row.customer else None,
+        "memberAccessWarning":_member_access_warning(db, row.customer) if row.customer_id else None,
         "memberAvatarImageData":row.customer.avatar_image_data if row.customer else None,
         "employeeId":row.employee_id,
         "employeeName":row.employee.person.display_name if row.employee else None,

@@ -248,3 +248,50 @@ def test_recent_checkins_filters_by_day_and_paginates(tmp_path):
         assert recent_checkins(db, day="2026-08-11", page=1, page_size=20)["pagination"]["total"] == 1
     finally:
         db.close()
+
+
+def test_recent_checkins_flags_members_with_membership_warnings(tmp_path):
+    from server.models import AttendanceSession, Customer, Membership, Person, ServicePackage
+    from server.services.operations_service import recent_checkins
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Pending Checkin", phone="0900000021", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS0000021", status="lead")
+        plan = ServicePackage(
+            code="FIT-WARN",
+            name="Fitness Warning",
+            category="Fitness",
+            duration_days=30,
+            price=100000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add_all([member, plan])
+        db.flush()
+        membership = Membership(
+            customer_id=member.id,
+            package_id=plan.id,
+            code="MS-WARN",
+            registered_at=date(2026, 8, 1),
+            starts_at=date(2026, 8, 20),
+            expires_at=date(2026, 9, 19),
+            activated_at=None,
+            status="pending",
+        )
+        checkin = AttendanceSession(
+            customer_id=member.id,
+            checked_in_at=datetime(2026, 8, 12, 9, 0),
+            source="dah",
+            status="open",
+        )
+        db.add_all([membership, checkin])
+        db.commit()
+
+        data = recent_checkins(db, day="2026-08-12", page=1, page_size=20)
+
+        assert data["items"][0]["memberAccessWarning"] == "Gói đang chờ kích hoạt."
+    finally:
+        db.close()

@@ -166,6 +166,13 @@ def _sync_member_status_from_memberships(db: Session, member: Customer) -> None:
     member.status = "lead" if usable_exists else "inactive"
 
 
+def _sync_customer_statuses(db: Session, *customer_ids: int | None) -> None:
+    for customer_id in dict.fromkeys(customer_id for customer_id in customer_ids if customer_id):
+        customer = db.get(Customer, customer_id)
+        if customer:
+            _sync_member_status_from_memberships(db, customer)
+
+
 def _membership_sort_key(row: Membership):
     today = vietnam_today()
     if row.status == "active" and (not row.expires_at or row.expires_at >= today) and (not row.starts_at or row.starts_at <= today):
@@ -453,7 +460,9 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         if expires_at and expires_at < effective_start:
             raise HTTPException(status_code=422, detail="Ngày hết hạn gói phải sau ngày bắt đầu.")
         final_price = _money(membership_payload.get("finalPrice"), plan.price or 0)
-        paid = min(_money(membership_payload.get("paidAmount")), final_price)
+        paid = _money(membership_payload.get("paidAmount"))
+        if paid > final_price:
+            raise HTTPException(status_code=422, detail="Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.")
         debt = max(final_price - paid, 0)
         debt_due_date = _parse_date(membership_payload.get("debtDueDate")) if debt else None
         if debt and not debt_due_date:
@@ -599,6 +608,12 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     )
     final_price = _money(form.get("finalPrice"), plan.price or 0)
     paid = _money(form.get("paidAmount"))
+    if paid > final_price:
+        raise HTTPException(status_code=422, detail="Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.")
+    debt = max(final_price - paid, 0)
+    debt_due_date = _parse_date(form.get("debtDueDate")) if debt else None
+    if debt and not debt_due_date:
+        raise HTTPException(status_code=422, detail="Vui lòng chọn hạn thanh toán cho phần công nợ.")
     method = form.get("paymentMethod") or "cash"
     bank_account_id = _int(form.get("bankAccountId"))
     _require_bank_account_for_payment(db, method, bank_account_id, paid)
@@ -608,7 +623,7 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     expires_at = expires_at or (effective_start + timedelta(days=plan.duration_days) if plan.duration_days else None)
     if expires_at and expires_at < effective_start:
         raise HTTPException(status_code=422, detail="Ngày hết hạn gói phải sau ngày bắt đầu.")
-    row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=vietnam_today(), starts_at=effective_start, expires_at=expires_at, activated_at=scheduled_activation, remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=max(final_price-paid, 0), debt_due_date=_parse_date(form.get("debtDueDate")), sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status=initial_status)
+    row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=vietnam_today(), starts_at=effective_start, expires_at=expires_at, activated_at=scheduled_activation, remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=debt, debt_due_date=debt_due_date, sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status=initial_status)
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if paid:
         payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=bank_account_id, payment_no=f"PAY-{row.id:06d}-001", paid_at=utc_now(), amount=paid, method=method, channel="counter", shift_date=vietnam_today(), note="Thanh toán đăng ký gói")
@@ -635,6 +650,8 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     next_paid = _money(form.get("paidAmount"), previous_paid)
     if next_paid < previous_paid:
         raise HTTPException(status_code=422, detail="Không thể giảm số tiền đã thu. Hãy tạo nghiệp vụ hoàn tiền riêng.")
+    if next_paid > row.final_price:
+        raise HTTPException(status_code=422, detail="Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.")
     method = form.get("paymentMethod") or "cash"
     bank_account_id = _int(form.get("bankAccountId"))
     _require_bank_account_for_payment(db, method, bank_account_id, next_paid - previous_paid)
@@ -642,6 +659,8 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     row.deposit_amount = row.paid_amount
     row.debt_amount = max(row.final_price - row.paid_amount, 0)
     row.debt_due_date = _parse_date(form.get("debtDueDate")) if row.debt_amount else None
+    if row.debt_amount and not row.debt_due_date:
+        raise HTTPException(status_code=422, detail="Vui lòng chọn hạn thanh toán cho phần công nợ.")
     if form.get("status") in ("active", "pending", "frozen", "cancelled", "suspended", "expired"): row.status = form["status"]
     if "activationDate" in form:
         row.activated_at = _parse_date(form.get("activationDate"))
@@ -655,6 +674,7 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
         db.flush()
         record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts)})
     record_audit(db, actor, "update", "membership", row.id, f"Cập nhật gói {row.package.name}", customer_id=row.customer_id, details={"fields": list(form.keys()), "expiresAt": row.expires_at})
+    _sync_customer_statuses(db, row.customer_id)
     db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)
     return membership_data(row)
@@ -786,6 +806,7 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         )
         db.add(event)
         record_audit(db, actor, action, "membership", row.id, summary, customer_id=old_customer_id, details={**details, "reason": reason})
+        _sync_customer_statuses(db, old_customer_id)
         db.commit()
         return {"membershipId": row.id, "customerId": old_customer_id, "action": action, "summary": summary}
     if action == "adjust_days":
@@ -799,6 +820,8 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
             raise HTTPException(422, "Ngày hết hạn mới không được trước ngày bắt đầu gói.")
         previous_expiry = row.expires_at
         row.expires_at = new_expiry
+        if row.status == "active" and new_expiry < vietnam_today():
+            row.status = "expired"
         if row.status == "expired" and new_expiry >= vietnam_today():
             row.status = "active"
             row.customer.status = "active"
@@ -822,6 +845,7 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         )
         db.add(event)
         record_audit(db, actor, action, "membership", row.id, summary, customer_id=old_customer_id, details={**details, "reason": reason})
+        _sync_customer_statuses(db, old_customer_id)
         db.commit()
         return {"membershipId": row.id, "customerId": old_customer_id, "action": action, "summary": summary}
     if action == "transfer":
@@ -874,11 +898,12 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         effective_at=_parse_date(payload.get("effectiveAt")) or date.today(),
         reason=reason,
         details_json=json.dumps(details, ensure_ascii=False, default=str),
-        created_by_user_id=actor.id,
+        created_by_user_id=actor.id if actor else None,
     )
     db.add(event)
     record_audit(db, actor, action, "membership", row.id, summary, customer_id=new_customer_id, details={**details, "reason": reason})
     if action == "transfer":
         record_audit(db, actor, action, "membership", row.id, summary, customer_id=old_customer_id, details={**details, "reason": reason})
+    _sync_customer_statuses(db, old_customer_id, new_customer_id)
     db.commit()
     return {"membershipId": row.id, "customerId": new_customer_id, "action": action, "summary": summary}
