@@ -13,9 +13,15 @@ import { money, shortDate } from "../../utils/format";
 const today = () => format(new Date(), "yyyy-MM-dd");
 const nextDay = (value) => format(addDays(new Date(`${value || today()}T00:00:00`), 1), "yyyy-MM-dd");
 
-export function MembershipOperationsModal({ membership, memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
+export function MembershipOperationsModal({ membership, memberships = [], memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
   const [form, setForm] = useState({});
+  const adjustableMemberships = useMemo(
+    () =>
+      (memberships.length ? memberships : membership ? [membership] : [])
+        .filter((row) => ["active", "pending", "frozen", "suspended"].includes(row.status) && row.expiresAt),
+    [memberships, membership],
+  );
   const members = useQuery({
     queryKey: ["transfer-candidates"],
     queryFn: () => api("/api/members?pageSize=100&sort=name"),
@@ -23,10 +29,13 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
     staleTime: 60_000,
   });
   useEffect(() => {
+    const eligible = (memberships.length ? memberships : membership ? [membership] : [])
+      .filter((row) => ["active", "pending", "frozen", "suspended"].includes(row.status) && row.expiresAt);
     setForm({
       startsAt: today(),
       endsAt: nextDay(today()),
       targetMemberId: "",
+      membershipId: initialAction === "adjust_days" ? eligible[0]?.id || membership?.id || "" : membership?.id || "",
       planId: "",
       finalPrice: membership?.finalPrice || 0,
       expiresAt: membership?.expiresAt || "",
@@ -35,14 +44,22 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
       reason: "",
     });
     setAction(initialAction || (["pending", "suspended", "frozen"].includes(membership?.status) ? "activate" : "freeze"));
-  }, [membership?.id, open, initialAction]);
+  }, [membership?.id, memberships, open, initialAction]);
+  useEffect(() => {
+    if (action === "adjust_days" && adjustableMemberships.length && !adjustableMemberships.some((row) => String(row.id) === String(form.membershipId))) {
+      setForm((current) => ({ ...current, membershipId: adjustableMemberships[0].id }));
+    }
+  }, [action, adjustableMemberships, form.membershipId]);
+  const targetMembership = action === "adjust_days"
+    ? adjustableMemberships.find((row) => String(row.id) === String(form.membershipId)) || membership
+    : membership;
   const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
   const freezeDays = form.startsAt && form.endsAt
     ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)), 0)
     : 0;
-  const compensatedExpiry = membership?.expiresAt && freezeDays
-    ? format(addDays(new Date(`${membership.expiresAt}T00:00:00`), freezeDays), "yyyy-MM-dd")
-    : membership?.expiresAt;
+  const compensatedExpiry = targetMembership?.expiresAt && freezeDays
+    ? format(addDays(new Date(`${targetMembership.expiresAt}T00:00:00`), freezeDays), "yyyy-MM-dd")
+    : targetMembership?.expiresAt;
   const candidates = useMemo(
     () =>
       (members.data?.items || [])
@@ -59,6 +76,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
     }
     onSubmit({
       action,
+      membershipId: action === "adjust_days" ? form.membershipId : undefined,
       payload: {
         action,
         reason: form.reason,
@@ -77,18 +95,18 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
     (action === "freeze" && freezeDays > 0) ||
     action === "activate" ||
     action === "suspend" ||
-    (action === "adjust_days" && Number(form.days || 0) !== 0) ||
+    (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && Number(form.days || 0) !== 0) ||
     (action === "transfer" && form.targetMemberId) ||
     ((action === "change" || action === "upgrade") && form.planId) ||
     action === "cancel"
   );
   return (
-    <Modal open={open} onClose={onClose} title="Quản lý vòng đời gói" description={`${membership.package.name} · ${membership.code}`} size="lg" dirty={!!form.reason || !!form.targetMemberId || !!form.planId}>
+    <Modal open={open} onClose={onClose} title="Quản lý vòng đời gói" description={`${targetMembership?.package.name || membership.package.name} · ${targetMembership?.code || membership.code}`} size="lg" dirty={!!form.reason || !!form.targetMemberId || !!form.planId || !!form.days}>
       <form onSubmit={submit}>
         <div className="modal-body space-y-5">
           <div className="membership-command-summary">
-            <div><span>Thời hạn hiện tại</span><strong>{shortDate(membership.startsAt)} → {shortDate(membership.expiresAt)}</strong></div>
-            <div><span>Tài chính</span><strong>{money(membership.paidAmount)} đã thu · {money(membership.debtAmount)} nợ</strong></div>
+            <div><span>Thời hạn hiện tại</span><strong>{shortDate(targetMembership?.startsAt)} → {shortDate(targetMembership?.expiresAt)}</strong></div>
+            <div><span>Tài chính</span><strong>{money(targetMembership?.paidAmount)} đã thu · {money(targetMembership?.debtAmount)} nợ</strong></div>
           </div>
           <Field label="Nghiệp vụ cần thực hiện" required>
             <Select value={action} onChange={(event) => setAction(event.target.value)}>
@@ -125,14 +143,23 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
           {action === "adjust_days" && (
             <section className="operation-panel">
               <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>Điều chỉnh trực tiếp ngày hết hạn gói và lưu lịch sử đối soát.</span></div></div>
+              <Field label="Gói áp dụng" required>
+                <Select value={form.membershipId || ""} onChange={(event) => setForm({ ...form, membershipId: event.target.value })}>
+                  {adjustableMemberships.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.package.name} · {shortDate(row.startsAt)} → {shortDate(row.expiresAt)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
               <Field label="Số ngày" required hint="Nhập số dương để cộng, số âm để trừ.">
                 <input className="input tabular-nums" type="number" step="1" value={form.days} onChange={(event) => setForm({ ...form, days: event.target.value })} />
               </Field>
-              {membership.expiresAt && Number(form.days || 0) !== 0 && (
+              {targetMembership?.expiresAt && Number(form.days || 0) !== 0 && (
                 <div className="compensation-preview">
-                  <span>Hạn hiện tại <strong>{shortDate(membership.expiresAt)}</strong></span>
+                  <span>Hạn hiện tại <strong>{shortDate(targetMembership.expiresAt)}</strong></span>
                   <ArrowRightLeft size={14} />
-                  <span>Hạn mới <strong>{shortDate(format(addDays(new Date(`${membership.expiresAt}T00:00:00`), Number(form.days || 0)), "yyyy-MM-dd"))}</strong></span>
+                  <span>Hạn mới <strong>{shortDate(format(addDays(new Date(`${targetMembership.expiresAt}T00:00:00`), Number(form.days || 0)), "yyyy-MM-dd"))}</strong></span>
                 </div>
               )}
             </section>

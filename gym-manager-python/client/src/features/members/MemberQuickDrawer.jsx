@@ -132,11 +132,11 @@ export function MemberQuickDrawer({
     onError: (e) => setFormError(e.message),
   });
   const membershipOperation = useMutation({
-    mutationFn: ({ action, payload }) =>
+    mutationFn: ({ action, membershipId, payload }) =>
       api(
         action === "freeze"
           ? `/api/memberships/${current.id}/freeze`
-          : `/api/memberships/${current.id}/actions`,
+          : `/api/memberships/${membershipId || current.id}/actions`,
         { method: "POST", body: payload },
       ),
     onSuccess: (result, variables) => {
@@ -558,6 +558,7 @@ export function MemberQuickDrawer({
           />
           <MembershipOperationsModal
             membership={current}
+            memberships={member.memberships}
             memberId={member.id}
             options={options.data}
             open={dialog === "operations"}

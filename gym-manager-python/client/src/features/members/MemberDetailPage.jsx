@@ -164,11 +164,11 @@ export function MemberDetailPage() {
     onError: (error) => setFormError(error.message),
   });
   const membershipOperation = useMutation({
-    mutationFn: ({ action, payload }) =>
+    mutationFn: ({ action, membershipId, payload }) =>
       api(
         action === "freeze"
-          ? `/api/memberships/${selectedMembership.id}/freeze`
-          : `/api/memberships/${selectedMembership.id}/actions`,
+          ? `/api/memberships/${(selectedMembership || current).id}/freeze`
+          : `/api/memberships/${membershipId || (selectedMembership || current).id}/actions`,
         { method: "POST", body: payload },
       ),
     onSuccess: (result, variables) => {
@@ -980,6 +980,7 @@ export function MemberDetailPage() {
       />
       <MembershipOperationsModal
         membership={selectedMembership || current}
+        memberships={member.memberships}
         memberId={memberId}
         options={options.data}
         open={dialog === "operations"}
