@@ -128,6 +128,7 @@ export function MemberQuickDrawer({
     onError: (e) => setFormError(e.message),
   });
   const current = member?.memberships[0];
+  const displayStatus = current?.status || member?.status;
   const training = member?.training.find((row) => row.status === "active");
   const trainingCoaches = training?.coaches || [];
   const lastCheckin = member?.checkins[0];
@@ -204,7 +205,7 @@ export function MemberQuickDrawer({
                 </strong>
                 <span className="text-xs text-slate-400">{member.code}</span>
               </div>
-              <StatusBadge status={member.status} />
+              <StatusBadge status={displayStatus} />
             </div>
             {canFinancial && <div className="quick-action-bar">
               <button
@@ -441,7 +442,7 @@ export function MemberQuickDrawer({
                         )}
                       </dd>
                     </div>
-                    <InlineEditField label="Trạng thái" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
+                    <InlineEditField label="Trạng thái hồ sơ" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
                   </>
                 ) : (
                   <>
@@ -450,7 +451,7 @@ export function MemberQuickDrawer({
                     <div className="inline-field"><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
                     <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
                     <div className="inline-field"><dt>Định danh DAH</dt><dd>{member.personUuid || "Chưa liên kết"}</dd></div>
-                    <div className="inline-field"><dt>Trạng thái</dt><dd><StatusBadge status={member.status} /></dd></div>
+                    <div className="inline-field"><dt>Trạng thái hồ sơ</dt><dd><StatusBadge status={member.status} /></dd></div>
                   </>
                 )}
               </dl>

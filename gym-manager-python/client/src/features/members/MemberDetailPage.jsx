@@ -204,6 +204,7 @@ export function MemberDetailPage() {
   if (memberQuery.isError)
     return <div className="inline-error">{memberQuery.error.message}</div>;
   const current = member.memberships[0];
+  const displayStatus = current?.status || member.status;
   const canFinancial = ["admin", "manager", "receptionist"].includes(user.role);
   const canManageLifecycle = ["admin", "manager"].includes(user.role);
   const activeTraining = member.training.find((row) => row.status === "active");
@@ -409,7 +410,7 @@ export function MemberDetailPage() {
         <div className="profile-title">
           <div className="flex items-center gap-3">
             <h1>{member.name}</h1>
-            <StatusBadge status={member.status} />
+            <StatusBadge status={displayStatus} />
           </div>
           <p>
             {member.code} · {member.phone || "Chưa có số điện thoại"} · Tham gia
