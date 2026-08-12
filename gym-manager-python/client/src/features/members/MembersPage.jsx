@@ -54,7 +54,7 @@ const createInitialForm = () => ({
   dahIdentityTime: "",
   salesEmployeeId: "",
   notes: "",
-  status: "active",
+  status: "lead",
   registerMembership: false,
   membership: {
     planId: "",
@@ -1090,6 +1090,7 @@ export function MembersPage() {
               dahIdentityName,
               dahIdentityImageData,
               dahIdentityTime,
+              status,
               ...memberForm
             } = form;
             create.mutate({

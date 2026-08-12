@@ -264,3 +264,22 @@ def migrate_membership_activation():
         connection.exec_driver_sql(
             f"ALTER TABLE {quote('memberships')} ADD COLUMN {quote('activated_at')} DATE"
         )
+
+
+def migrate_membership_freeze_completion():
+    inspector = inspect(engine)
+    if "membership_freezes" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("membership_freezes")}
+    if "completed_at" in columns:
+        return
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"ALTER TABLE {quote('membership_freezes')} ADD COLUMN {quote('completed_at')} DATE"
+        )
+        connection.exec_driver_sql(
+            f"UPDATE {quote('membership_freezes')} "
+            f"SET {quote('completed_at')} = {quote('ends_at')} "
+            f"WHERE {quote('compensated_days')} > 0"
+        )

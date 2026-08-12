@@ -24,8 +24,10 @@ import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
+import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
@@ -42,8 +44,10 @@ export function MemberQuickDrawer({
   const canFinancial = ["admin", "manager", "receptionist"].includes(
     user?.role,
   );
+  const canManageLifecycle = ["admin", "manager"].includes(user?.role);
   const client = useQueryClient();
   const [dialog, setDialog] = useState(null);
+  const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const memberQuery = useQuery({
@@ -127,6 +131,22 @@ export function MemberQuickDrawer({
     },
     onError: (e) => setFormError(e.message),
   });
+  const membershipOperation = useMutation({
+    mutationFn: ({ action, payload }) =>
+      api(
+        action === "freeze"
+          ? `/api/memberships/${current.id}/freeze`
+          : `/api/memberships/${current.id}/actions`,
+        { method: "POST", body: payload },
+      ),
+    onSuccess: (result, variables) => {
+      refresh();
+      setDialog(null);
+      setMembershipOperationAction("");
+      notify.success(variables.action === "freeze" ? "Đã bảo lưu và cộng bù thời hạn gói." : result.summary);
+    },
+    onError: (e) => setFormError(e.message),
+  });
   const current = member?.memberships[0];
   const displayStatus = current?.status || member?.status;
   const training = member?.training.find((row) => row.status === "active");
@@ -135,10 +155,25 @@ export function MemberQuickDrawer({
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
     : null;
-  const openDialog = (name) => {
+  const openDialog = (name, operationAction = "") => {
     setFormError("");
+    setMembershipOperationAction(name === "operations" ? operationAction : "");
     setDialog(name);
   };
+  const lifecycleActions = [];
+  if (current?.status === "pending") {
+    lifecycleActions.push(["activate", "Kích hoạt ngay"]);
+  }
+  if (current?.status === "suspended") {
+    lifecycleActions.push(["activate", "Kích hoạt lại"]);
+  }
+  if (current?.status === "frozen") {
+    lifecycleActions.push(["activate", "Kích hoạt lại"]);
+  }
+  if (current?.status === "active") {
+    lifecycleActions.push(["suspend", "Tạm dừng"]);
+    lifecycleActions.push(["freeze", "Bảo lưu"]);
+  }
   useEffect(() => {
     if (member && initialAction) {
       openDialog(initialAction);
@@ -240,13 +275,15 @@ export function MemberQuickDrawer({
                 <Dumbbell size={17} />
                 <span>{training ? "Đổi PT" : "Gán PT"}</span>
               </button>
-              <button
-                className="quick-action"
-                onClick={() => openDialog("edit")}
-              >
-                <Pencil size={17} />
-                <span>Chỉnh sửa</span>
-              </button>
+              {canManageLifecycle && current && lifecycleActions.length > 0 && (
+                <RowMenu>
+                  {lifecycleActions.map(([action, label]) => (
+                    <button key={action} onClick={() => openDialog("operations", action)}>
+                      {label}
+                    </button>
+                  ))}
+                </RowMenu>
+              )}
             </div>}
             <section className="detail-section">
               {daysLeft != null && daysLeft <= 14 && (
@@ -442,7 +479,7 @@ export function MemberQuickDrawer({
                         )}
                       </dd>
                     </div>
-                    <InlineEditField label="Trạng thái hồ sơ" value={member.status} displayValue={<StatusBadge status={member.status} />} type="select" options={[{ value: "lead", label: "Tiềm năng" }, { value: "active", label: "Đang hoạt động" }, { value: "frozen", label: "Bảo lưu" }, { value: "blocked", label: "Đã khóa" }, { value: "inactive", label: "Tạm ngừng" }]} onSave={(status) => update.mutateAsync({ payload: { status }, silent: true })} pending={update.isPending} />
+                    <div className="inline-field"><dt>Trạng thái hồ sơ</dt><dd><StatusBadge status={displayStatus} /></dd></div>
                   </>
                 ) : (
                   <>
@@ -516,6 +553,20 @@ export function MemberQuickDrawer({
             onClose={() => setDialog(null)}
             onSubmit={(payload) => deadlineSave.mutate(payload)}
             pending={deadlineSave.isPending}
+            error={formError}
+          />
+          <MembershipOperationsModal
+            membership={current}
+            memberId={member.id}
+            options={options.data}
+            open={dialog === "operations"}
+            initialAction={membershipOperationAction}
+            onClose={() => {
+              setDialog(null);
+              setMembershipOperationAction("");
+            }}
+            onSubmit={(variables) => membershipOperation.mutate(variables)}
+            pending={membershipOperation.isPending}
             error={formError}
           />
           <TrainingForm

@@ -4,6 +4,7 @@ from datetime import timedelta
 import asyncio
 import contextlib
 import hmac
+import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -14,7 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import or_, text
 
 from .config import settings
-from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_dah_integration, migrate_membership_activation, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_dah_integration, migrate_membership_activation, migrate_membership_freeze_completion, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
 from .models import (
     AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
 )
@@ -24,7 +25,7 @@ from .security import ensure_admin_user
 from .services.operations_service import ensure_employee_job_titles
 from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS, cleanup_webhook_images
 from .services.membership_lifecycle import refresh_membership_lifecycle
-from .timeutils import utc_now
+from .timeutils import utc_iso, utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware
@@ -35,6 +36,7 @@ def initialize_database():
     migrate_pt_schedule()
     migrate_dah_integration()
     migrate_membership_activation()
+    migrate_membership_freeze_completion()
     if IS_SQLITE:
         with engine.connect() as connection:
             user_columns = {
@@ -89,7 +91,13 @@ async def webhook_image_cleanup_job():
             refresh_membership_lifecycle(db)
         finally:
             db.close()
-        await asyncio.sleep(24 * 60 * 60)
+        interval = 24 * 60 * 60
+        if settings.environment == "test":
+            try:
+                interval = max(float(os.getenv("GYM_TEST_JOB_INTERVAL_SECONDS", "1")), 0.1)
+            except (TypeError, ValueError):
+                interval = 1
+        await asyncio.sleep(interval)
 
 
 @asynccontextmanager
@@ -167,7 +175,7 @@ def health():
             device.last_heartbeat_at >= utc_now() - timedelta(seconds=HEARTBEAT_TIMEOUT_SECONDS)
         )
         result["dah1017"] = "online" if online else "offline"
-        result["lastHeartbeat"] = device.last_heartbeat_at.isoformat() if device and device.last_heartbeat_at else None
+        result["lastHeartbeat"] = utc_iso(device.last_heartbeat_at) if device else None
         result["heartbeatTimeoutSeconds"] = HEARTBEAT_TIMEOUT_SECONDS
         if not online:
             result["status"] = "not_ready"
@@ -204,6 +212,9 @@ app.include_router(members.router)
 app.include_router(operations.router)
 app.include_router(audit.router)
 app.include_router(users.router)
+if settings.environment == "test":
+    from .routes import testhooks
+    app.include_router(testhooks.router)
 
 UPLOAD_DIR = ROOT_DIR / "server" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

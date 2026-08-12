@@ -5,6 +5,7 @@ import tempfile
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import pytest
 
 os.environ.setdefault("GYM_ENV", "test")
 os.environ.setdefault(
@@ -21,15 +22,15 @@ def make_session(tmp_path):
     return sessionmaker(bind=engine)()
 
 
-def seed_member_with_plan(db, status="pending", starts_at=date(2026, 8, 1), activated_at=None):
+def seed_member_with_plan(db, status="pending", starts_at=date(2026, 8, 1), activated_at=None, code="CUS0000001"):
     from server.models import Customer, Membership, Person, ServicePackage
 
     person = Person(display_name="Lifecycle Member", phone="0900000001", status="active")
     db.add(person)
     db.flush()
-    customer = Customer(person_id=person.id, customer_code="CUS0000001", status="lead")
+    customer = Customer(person_id=person.id, customer_code=code, status="lead")
     package = ServicePackage(
-        code="FIT-LIFE",
+        code=f"FIT-LIFE-{code[-1]}",
         name="Fitness Lifecycle",
         category="Fitness",
         duration_days=30,
@@ -42,7 +43,7 @@ def seed_member_with_plan(db, status="pending", starts_at=date(2026, 8, 1), acti
     membership = Membership(
         customer_id=customer.id,
         package_id=package.id,
-        code="MS-LIFE",
+        code=f"MS-LIFE-{code[-1]}",
         registered_at=date(2026, 8, 1),
         starts_at=starts_at,
         expires_at=starts_at + timedelta(days=30),
@@ -111,22 +112,25 @@ def test_first_checkin_activates_pending_membership_before_scheduled_date(tmp_pa
 
 def test_suspended_membership_gets_compensated_when_reactivated(tmp_path):
     from server.services.members_service import membership_action
+    from server.timeutils import vietnam_today
 
     db = make_session(tmp_path)
     try:
+        today = vietnam_today()
+        reactivated_at = today + timedelta(days=5)
         customer, membership = seed_member_with_plan(
             db,
             status="active",
-            starts_at=date(2026, 8, 1),
-            activated_at=date(2026, 8, 1),
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
         )
-        membership.expires_at = date(2026, 8, 31)
+        membership.expires_at = today + timedelta(days=20)
         customer.status = "active"
         db.commit()
 
         membership_action(db, membership.id, {
             "action": "suspend",
-            "suspendedAt": "2026-08-10",
+            "suspendedAt": today.isoformat(),
             "reason": "Kích hoạt nhầm",
         }, actor=None)
         db.refresh(membership)
@@ -134,14 +138,196 @@ def test_suspended_membership_gets_compensated_when_reactivated(tmp_path):
 
         membership_action(db, membership.id, {
             "action": "activate",
-            "activatedAt": "2026-08-15",
+            "activatedAt": reactivated_at.isoformat(),
             "reason": "Khách bắt đầu tập lại",
         }, actor=None)
         db.refresh(membership)
         db.refresh(customer)
 
         assert membership.status == "active"
-        assert membership.expires_at == date(2026, 9, 6)
+        assert membership.starts_at == reactivated_at
+        assert membership.expires_at == reactivated_at + timedelta(days=20)
+        assert customer.status == "active"
+    finally:
+        db.close()
+
+
+def test_freeze_does_not_extend_until_reactivated_and_counts_actual_days(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.members_service import freeze_membership, membership_action
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        original_start = membership.starts_at
+        original_activation = membership.activated_at
+        membership.expires_at = today + timedelta(days=20)
+        customer.status = "active"
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": today.isoformat(),
+            "endsAt": (today + timedelta(days=9)).isoformat(),
+            "reason": "Khách xin bảo lưu",
+        }, actor=None)
+        db.refresh(membership)
+        freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).one()
+        assert membership.status == "frozen"
+        assert membership.expires_at == today + timedelta(days=20)
+        assert freeze.compensated_days == 0
+
+        membership_action(db, membership.id, {
+            "action": "activate",
+            "activatedAt": (today + timedelta(days=4)).isoformat(),
+            "reason": "Khách quay lại sớm",
+        }, actor=None)
+        db.refresh(membership)
+        db.refresh(freeze)
+
+        assert membership.status == "active"
+        assert membership.starts_at == original_start
+        assert membership.activated_at == original_activation
+        assert membership.expires_at == today + timedelta(days=24)
+        assert freeze.ends_at == today + timedelta(days=4)
+        assert freeze.compensated_days == 4
+    finally:
+        db.close()
+
+
+def test_same_day_suspend_or_freeze_reactivation_does_not_add_day(tmp_path):
+    from server.services.members_service import freeze_membership, membership_action
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, suspended_membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        suspended_membership.expires_at = today + timedelta(days=20)
+        db.commit()
+
+        membership_action(db, suspended_membership.id, {
+            "action": "suspend",
+            "suspendedAt": today.isoformat(),
+            "reason": "Bấm nhầm",
+        }, actor=None)
+        membership_action(db, suspended_membership.id, {
+            "action": "activate",
+            "activatedAt": today.isoformat(),
+            "reason": "Kích hoạt lại ngay",
+        }, actor=None)
+        db.refresh(suspended_membership)
+        assert suspended_membership.expires_at == today + timedelta(days=20)
+
+        _customer, frozen_membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+            code="CUS0000002",
+        )
+        frozen_membership.expires_at = today + timedelta(days=20)
+        db.commit()
+
+        freeze_membership(db, frozen_membership.id, {
+            "startsAt": today.isoformat(),
+            "endsAt": (today + timedelta(days=5)).isoformat(),
+            "reason": "Bấm nhầm",
+        }, actor=None)
+        membership_action(db, frozen_membership.id, {
+            "action": "activate",
+            "activatedAt": today.isoformat(),
+            "reason": "Kích hoạt lại ngay",
+        }, actor=None)
+        db.refresh(frozen_membership)
+        assert frozen_membership.expires_at == today + timedelta(days=20)
+    finally:
+        db.close()
+
+
+def test_suspend_and_freeze_dates_cannot_be_invalid_or_past(tmp_path):
+    from fastapi import HTTPException
+    from server.services.members_service import freeze_membership, membership_action
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        membership.expires_at = today + timedelta(days=20)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="Ngày tạm dừng"):
+            membership_action(db, membership.id, {
+                "action": "suspend",
+                "suspendedAt": (today - timedelta(days=1)).isoformat(),
+                "reason": "Ngày cũ",
+            }, actor=None)
+
+        with pytest.raises(HTTPException, match="quá khứ"):
+            freeze_membership(db, membership.id, {
+                "startsAt": (today - timedelta(days=1)).isoformat(),
+                "endsAt": (today + timedelta(days=1)).isoformat(),
+                "reason": "Ngày cũ",
+            }, actor=None)
+
+        with pytest.raises(HTTPException, match="sau ngày bắt đầu"):
+            freeze_membership(db, membership.id, {
+                "startsAt": today.isoformat(),
+                "endsAt": today.isoformat(),
+                "reason": "Không hợp lệ",
+            }, actor=None)
+    finally:
+        db.close()
+
+
+def test_freeze_auto_completes_after_end_and_counts_planned_days(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.members_service import freeze_membership
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        membership.expires_at = today + timedelta(days=20)
+        customer.status = "active"
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": today.isoformat(),
+            "endsAt": (today + timedelta(days=2)).isoformat(),
+            "reason": "Khách xin bảo lưu",
+        }, actor=None)
+        refresh_membership_lifecycle(db, today=today + timedelta(days=3))
+        db.refresh(membership)
+        freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).one()
+
+        assert membership.status == "active"
+        assert membership.expires_at == today + timedelta(days=22)
+        assert freeze.compensated_days == 2
         assert customer.status == "active"
     finally:
         db.close()
@@ -191,7 +377,7 @@ def test_member_status_follows_current_regular_membership(tmp_path):
         )
         old_membership.expires_at = date(2026, 7, 31)
         customer.status = "active"
-        package = db.query(ServicePackage).filter_by(code="FIT-LIFE").one()
+        package = old_membership.package
         new_membership = Membership(
             customer_id=customer.id,
             package_id=package.id,
@@ -218,5 +404,29 @@ def test_member_status_follows_current_regular_membership(tmp_path):
         db.refresh(customer)
         assert new_membership.status == "active"
         assert customer.status == "active"
+    finally:
+        db.close()
+
+
+def test_expiring_membership_still_serializes_as_active(tmp_path):
+    from server.services.members_service import list_members
+    from server.services.serializers import membership_data
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=25),
+            activated_at=today - timedelta(days=25),
+        )
+        membership.expires_at = today + timedelta(days=5)
+        db.commit()
+
+        assert membership_data(membership)["status"] == "active"
+        rows = list_members(db, q="", member_status="expiring", page=1, page_size=20)
+        assert rows["items"][0]["membership"]["status"] == "active"
     finally:
         db.close()

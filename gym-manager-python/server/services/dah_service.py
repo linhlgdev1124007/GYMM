@@ -10,7 +10,7 @@ from ..models import (
     AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent,
     Device, Employee, Membership, ServicePackage,
 )
-from ..timeutils import utc_now, vietnam_today
+from ..timeutils import utc_iso, utc_now, vietnam_today
 from .membership_lifecycle import activate_customer_first_checkin
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
@@ -460,7 +460,7 @@ def _event_data(row: DahWebhookEvent):
         "verifyStatus": row.verify_status,
         "similarity": row.similarity,
         "eventTime": row.event_time.isoformat() if row.event_time else None,
-        "receivedAt": row.received_at.isoformat() if row.received_at else None,
+        "receivedAt": utc_iso(row.received_at),
         "status": row.status,
         "action": row.action,
         "note": row.note,

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import AuthSession, Employee, User
 from ..security import hash_password
+from ..timeutils import utc_iso
 from .audit_service import record_audit
 from .serializers import employee_data
 
@@ -24,7 +25,7 @@ def user_data(user: User):
         "role": user.role,
         "active": user.is_active,
         "employee": employee_data(user.employee) if user.employee else None,
-        "createdAt": user.created_at.isoformat(),
+        "createdAt": utc_iso(user.created_at),
     }
 
 

@@ -1,10 +1,14 @@
-from datetime import datetime
+from datetime import date, datetime
 import json
 
-from ..timeutils import vietnam_today
+from ..timeutils import utc_iso, vietnam_today
 
 
 def iso(value):
+    if isinstance(value, datetime):
+        return utc_iso(value)
+    if isinstance(value, date):
+        return value.isoformat()
     return value.isoformat() if value else None
 
 
@@ -49,7 +53,7 @@ def membership_status(membership) -> str:
     if membership.status not in ("active", "pending"):
         return membership.status
     if any(
-        freeze.starts_at <= today <= freeze.ends_at
+        not freeze.completed_at and freeze.starts_at <= today <= freeze.ends_at
         for freeze in getattr(membership, "freezes", [])
     ):
         return "frozen"
@@ -57,8 +61,6 @@ def membership_status(membership) -> str:
         days = (membership.expires_at - today).days
         if days < 0:
             return "expired"
-        if days <= 14:
-            return "expiring"
     return membership.status
 
 
@@ -69,9 +71,10 @@ def freeze_data(freeze):
         "id": freeze.id,
         "startsAt": iso(freeze.starts_at),
         "endsAt": iso(freeze.ends_at),
+        "completedAt": iso(freeze.completed_at),
         "compensatedDays": freeze.compensated_days,
         "reason": freeze.reason,
-        "status": status,
+        "status": "completed" if freeze.completed_at else status,
         "createdAt": iso(freeze.created_at),
         "createdBy": freeze.created_by.display_name if freeze.created_by else "Hệ thống",
     }

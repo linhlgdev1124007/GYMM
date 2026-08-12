@@ -15,7 +15,7 @@ from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
 from .membership_lifecycle import activate_customer_first_checkin
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
-from ..timeutils import utc_now, vietnam_today
+from ..timeutils import utc_iso, utc_now, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
 DEFAULT_PT_TITLES = {"Coach"}
@@ -28,6 +28,12 @@ def _as_int(value, default=None):
 
 def _as_date(value):
     return date.fromisoformat(value) if value else None
+
+
+def _attendance_iso(value, source: str | None):
+    if not value:
+        return None
+    return value.isoformat() if source == "dah" else utc_iso(value)
 
 
 def _job_title(value, default="Coach"):
@@ -110,7 +116,7 @@ def device_data(row: Device):
         "status": row.status,
         "pendingJobs": row.pending_jobs,
         "errors24h": row.errors_24h,
-        "lastHeartbeat": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
+        "lastHeartbeat": utc_iso(row.last_heartbeat_at),
         "heartbeatTimeoutSeconds": HEARTBEAT_TIMEOUT_SECONDS,
     }
 
@@ -177,7 +183,7 @@ def list_trainers(db: Session, q: str, page: int, page_size: int, title: str = "
             "personUuid": identity.person_uuid,
             "personId": identity.person_id,
             "faceName": identity.face_name,
-            "lastSeenAt": identity.last_seen_at.isoformat() if identity.last_seen_at else None,
+            "lastSeenAt": utc_iso(identity.last_seen_at),
         } if identity else None
         items.append(item)
     return {"items":items,"pagination":pagination(page,page_size,total),"jobTitles":[_job_title_data(row) for row in employee_job_titles(db)]}
@@ -217,8 +223,8 @@ def employee_attendance(db: Session, day: str = ""):
             "phone": employee.person.phone if employee and employee.person else None,
             "title": employee.job_title if employee else None,
             "shiftNo": shift_numbers[row.employee_id],
-            "checkedInAt": checked_in.isoformat() if checked_in else None,
-            "checkedOutAt": checked_out.isoformat() if checked_out else None,
+            "checkedInAt": _attendance_iso(checked_in, row.source),
+            "checkedOutAt": _attendance_iso(checked_out, row.source),
             "durationMinutes": duration_minutes,
             "source": row.source,
             "status": row.status,
@@ -296,7 +302,6 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     db.add(row);db.flush()
     row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
-    member.status="active"
     record_audit(db, actor, "create", "pt_enrollment", row.id, f"Đăng ký PT {kind} · {sessions} buổi", customer_id=member_id, details={"coachIds": coach_ids, "expiresAt": row.expires_at})
     db.commit()
     row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).get(row.id);return pt_data(row)
@@ -368,8 +373,8 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
         "employeeId":row.employee_id,
         "employeeName":row.employee.person.display_name if row.employee else None,
         "employeeCode":row.employee.employee_code if row.employee else None,
-        "checkedInAt":row.checked_in_at.isoformat(),
-        "checkedOutAt":row.checked_out_at.isoformat() if row.checked_out_at else None,
+        "checkedInAt":_attendance_iso(row.checked_in_at, row.source),
+        "checkedOutAt":_attendance_iso(row.checked_out_at, row.source),
         "result":row.result,
         "status":row.status,
     } for row in rows]
@@ -392,7 +397,7 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     if member.status != "lead" and (member.status!="active" or not current): raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
     row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
-    db.commit();return {"id":row.id,"checkedInAt":row.checked_in_at.isoformat()}
+    db.commit();return {"id":row.id,"checkedInAt":utc_iso(row.checked_in_at)}
 
 
 def checkout(db: Session, session_id: int, actor: User | None = None):

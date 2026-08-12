@@ -30,7 +30,6 @@ export function MemberEditForm({
         personUuid: member.personUuid || "",
         source: member.source || "",
         salesEmployeeId: member.salesEmployeeId || "",
-        status: member.status || "active",
         notes: member.notes || "",
       };
       setForm(next);
@@ -131,18 +130,6 @@ export function MemberEditForm({
                   })) || []
                 }
               />
-            </Field>
-            <Field label="Trạng thái">
-              <Select
-                value={form.status || "active"}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-              >
-                <option value="active">Đang hoạt động</option>
-                <option value="lead">Tiềm năng</option>
-                <option value="frozen">Bảo lưu</option>
-                <option value="blocked">Đã khóa</option>
-                <option value="inactive">Tạm ngừng</option>
-              </Select>
             </Field>
             <Field className="form-span" label="Ghi chú">
               <Textarea

@@ -71,3 +71,39 @@ def test_newest_sort_uses_customer_code_number(tmp_path):
         ]
     finally:
         db.close()
+
+
+def test_created_member_without_regular_membership_stays_lead(tmp_path):
+    from server.models import Customer, Employee, Person
+    from server.services.members_service import create_member
+
+    db = make_session(tmp_path)
+    try:
+        member = create_member(db, {
+            "name": "No Package",
+            "phone": "0900000010",
+        })
+        assert member["status"] == "lead"
+        assert db.get(Customer, member["id"]).status == "lead"
+
+        coach_person = Person(display_name="Coach Only", phone="0900000011", status="active")
+        db.add(coach_person)
+        db.flush()
+        coach = Employee(person_id=coach_person.id, employee_code="EMP-00001", job_title="Coach", status="active")
+        db.add(coach)
+        db.commit()
+
+        pt_member = create_member(db, {
+            "name": "PT Only",
+            "phone": "0900000012",
+            "ptEnrollment": {
+                "coachIds": [coach.id],
+                "type": "1:1",
+                "totalSessions": 12,
+                "startsAt": "2026-08-01",
+            },
+        })
+        assert pt_member["status"] == "lead"
+        assert db.get(Customer, pt_member["id"]).status == "lead"
+    finally:
+        db.close()

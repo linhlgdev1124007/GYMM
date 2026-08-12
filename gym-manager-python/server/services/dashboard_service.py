@@ -4,6 +4,13 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
+from ..timeutils import utc_iso
+
+
+def _attendance_iso(value, source: str | None):
+    if not value:
+        return None
+    return value.isoformat() if source == "dah" else utc_iso(value)
 
 
 def active_membership_member_count(db: Session):
@@ -42,7 +49,7 @@ def dashboard(db: Session):
         else:issue=f"Hết hạn {row.expires_at.strftime('%d/%m/%Y')}"
         attention.append({"memberId":row.customer_id,"member":row.customer.person.display_name,"code":row.customer.customer_code,"issue":issue})
     recent=db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(8).all()
-    return {"metrics":{"totalMembers":total_members,"activeMembers":active_members,"checkinsToday":checkins_today,"expiringSoon":expiring,"revenueMonth":revenue,"outstanding":debt},"activity":activity,"membershipStatus":status_counts,"attention":attention,"recentCheckins":[{"id":r.id,"memberId":r.customer_id,"member":r.customer.person.display_name if r.customer else None,"code":r.customer.customer_code if r.customer else None,"time":r.checked_in_at.isoformat(),"status":r.status} for r in recent]}
+    return {"metrics":{"totalMembers":total_members,"activeMembers":active_members,"checkinsToday":checkins_today,"expiringSoon":expiring,"revenueMonth":revenue,"outstanding":debt},"activity":activity,"membershipStatus":status_counts,"attention":attention,"recentCheckins":[{"id":r.id,"memberId":r.customer_id,"member":r.customer.person.display_name if r.customer else None,"code":r.customer.customer_code if r.customer else None,"time":_attendance_iso(r.checked_in_at, r.source),"status":r.status} for r in recent]}
 
 
 def reports(db: Session, date_from: str | None, date_to: str | None):

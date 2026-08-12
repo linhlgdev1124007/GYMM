@@ -17,7 +17,7 @@ from . import dah_service
 from .membership_lifecycle import activate_membership
 from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
-from ..timeutils import utc_now, vietnam_today
+from ..timeutils import utc_iso, utc_now, vietnam_today
 
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -29,6 +29,12 @@ SALES_TITLE_KEYWORDS = ("sale",)
 
 def _parse_date(value):
     return date.fromisoformat(value) if value else None
+
+
+def _attendance_iso(value, source: str | None):
+    if not value:
+        return None
+    return value.isoformat() if source == "dah" else utc_iso(value)
 
 
 def _int(value):
@@ -148,6 +154,7 @@ async def attach_receipts(payment: Payment, uploads: list[UploadFile], actor: Us
 
 
 def list_members(db: Session, q: str, member_status: str, page: int, page_size: int, sort: str = "newest", view: str = "all", package_id: int | None = None, trainer_id: int | None = None, expiring_days: int = 14, payment_status: str = "all", overdue_days: int = 7):
+    today = vietnam_today()
     query = db.query(Customer).options(
         joinedload(Customer.person),
         joinedload(Customer.sales_employee).joinedload(Employee.person),
@@ -166,11 +173,11 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     def latest_status_exists(*conditions):
         return db.query(status_membership.id).filter(status_membership.id == latest_regular_id, *conditions).exists()
     if member_status == "active":
-        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= date.today())))
+        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif member_status == "expired":
-        query = query.filter(latest_status_exists(status_membership.expires_at < date.today()))
+        query = query.filter(latest_status_exists(status_membership.expires_at < today))
     elif member_status == "expiring":
-        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= date.today(), status_membership.expires_at <= date.today() + timedelta(days=expiring_days)))
+        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=expiring_days)))
     elif member_status == "frozen":
         query = query.filter(latest_status_exists(status_membership.status == "frozen"))
     elif member_status == "inactive":
@@ -179,13 +186,13 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         query = query.filter(latest_status_exists(
             status_membership.debt_amount > 0,
             status_membership.debt_due_date != None,
-            status_membership.debt_due_date < date.today(),
-            status_membership.debt_due_date >= date.today() - timedelta(days=overdue_days),
+            status_membership.debt_due_date < today,
+            status_membership.debt_due_date >= today - timedelta(days=overdue_days),
         ))
     if view == "active":
-        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= date.today())))
+        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif view == "expiring":
-        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= date.today(), status_membership.expires_at <= date.today() + timedelta(days=14)))
+        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=14)))
     elif view == "debt":
         query = query.filter(latest_status_exists(status_membership.debt_amount > 0))
     elif view == "no_pt":
@@ -208,7 +215,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     if ids:
         checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id.in_(ids)).order_by(AttendanceSession.checked_in_at.desc()).all()
         for checkin in checkins:
-            last_checkins.setdefault(checkin.customer_id, checkin.checked_in_at.isoformat())
+            last_checkins.setdefault(checkin.customer_id, _attendance_iso(checkin.checked_in_at, checkin.source))
         training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").all()
         for training in training_rows:
             assigned = trainers.setdefault(training.customer_id, [])
@@ -293,7 +300,7 @@ def get_member(db: Session, member_id: int):
         "memberships": [membership_data(row, include_payments=True, include_history=True) for row in memberships if not row.package.is_pt],
         "membershipEvents": [membership_event_data(row) for row in membership_events],
         "training": [pt_data(row) for row in pt_rows],
-        "checkins": [{"id": row.id, "checkedInAt": row.checked_in_at.isoformat(), "checkedOutAt": row.checked_out_at.isoformat() if row.checked_out_at else None, "result": row.result, "status": row.status, "source": row.source} for row in checkins],
+        "checkins": [{"id": row.id, "checkedInAt": _attendance_iso(row.checked_in_at, row.source), "checkedOutAt": _attendance_iso(row.checked_out_at, row.source), "result": row.result, "status": row.status, "source": row.source} for row in checkins],
         "payments": [payment_data(row) for row in payments],
         "auditLogs": member_audit_logs(db, member_id),
     }
@@ -318,7 +325,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_sales_employee_id(db, payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status=payload.get("status") or "lead", notes=payload.get("notes") or None)
+    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_sales_employee_id(db, payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status="lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
     member.customer_code = _next_customer_code(db)
     record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
@@ -351,7 +358,6 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         )
         db.add(enrollment); db.flush()
         enrollment.coach_assignments = [PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
-        member.status = "active"
         record_audit(
             db, actor, "create", "pt_enrollment", enrollment.id,
             f"Đăng ký PT {kind} · {sessions} buổi cùng lúc tạo hội viên",
@@ -452,7 +458,8 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
     if "source" in payload: member.source = payload.get("source") or None
     if "notes" in payload: member.notes = payload.get("notes") or None
     if "salesEmployeeId" in payload: member.sales_employee_id = _sales_employee_id(db, payload.get("salesEmployeeId"))
-    if payload.get("status") in ("lead", "active", "blocked", "inactive", "frozen"): member.status = payload["status"]
+    if "status" in payload:
+        changed_fields = [field for field in changed_fields if field != "status"]
     record_audit(db, actor, "update", "member", member.id, f"Cập nhật hồ sơ {member.person.display_name}", customer_id=member.id, details={"fields": changed_fields, "previousName": old_name})
     db.commit()
     return get_member(db, member_id)
@@ -489,13 +496,14 @@ def update_plan(db: Session, plan_id: int, payload: dict, actor: User | None = N
 
 
 def list_memberships(db: Session, q: str, membership_status: str, page: int, page_size: int):
+    today = vietnam_today()
     query = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).join(Membership.package).filter(ServicePackage.is_pt == False)
     if q:
         query = query.join(Membership.customer).join(Customer.person).filter(or_(Person.display_name.contains(q), Membership.code.contains(q), ServicePackage.name.contains(q)))
     if membership_status == "expiring":
-        query = query.filter(Membership.status == "active", Membership.expires_at >= date.today(), Membership.expires_at <= date.today() + timedelta(days=14))
+        query = query.filter(Membership.status == "active", Membership.expires_at >= today, Membership.expires_at <= today + timedelta(days=14))
     elif membership_status == "expired":
-        query = query.filter(Membership.expires_at < date.today())
+        query = query.filter(Membership.expires_at < today)
     elif membership_status and membership_status != "all":
         query = query.filter(Membership.status == membership_status)
     total = query.count(); rows = query.order_by(Membership.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -604,8 +612,8 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
     starts_at = _parse_date(payload.get("startsAt"))
     ends_at = _parse_date(payload.get("endsAt"))
     reason = str(payload.get("reason", "")).strip()
-    if not starts_at or not ends_at or ends_at < starts_at:
-        raise HTTPException(422, "Khoảng thời gian bảo lưu chưa hợp lệ.")
+    if not starts_at or not ends_at or ends_at <= starts_at:
+        raise HTTPException(422, "Ngày hết bảo lưu phải sau ngày bắt đầu bảo lưu.")
     if starts_at < vietnam_today():
         raise HTTPException(422, "Ngày bắt đầu bảo lưu không được ở quá khứ.")
     if not reason:
@@ -619,16 +627,18 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
         raise HTTPException(409, "Thời gian này trùng với một lần bảo lưu đã có.")
     if not row.expires_at:
         raise HTTPException(422, "Gói không có ngày hết hạn nên không thể cộng bù tự động.")
-    days = (ends_at - starts_at).days + 1
+    planned_days = (ends_at - starts_at).days
     previous_expiry = row.expires_at
-    row.expires_at = row.expires_at + timedelta(days=days)
+    if starts_at <= vietnam_today() <= ends_at:
+        row.status = "frozen"
+        row.customer.status = "lead"
     freeze = MembershipFreeze(
         membership_id=row.id,
         starts_at=starts_at,
         ends_at=ends_at,
-        compensated_days=days,
+        compensated_days=0,
         reason=reason,
-        created_by_user_id=actor.id,
+        created_by_user_id=actor.id if actor else None,
     )
     event = MembershipEvent(
         membership_id=row.id,
@@ -639,12 +649,12 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
         to_package_id=row.package_id,
         effective_at=starts_at,
         reason=reason,
-        created_by_user_id=actor.id,
-        details_json=json.dumps({"startsAt": str(starts_at), "endsAt": str(ends_at), "compensatedDays": days, "previousExpiry": str(previous_expiry), "newExpiry": str(row.expires_at)}, ensure_ascii=False),
+        created_by_user_id=actor.id if actor else None,
+        details_json=json.dumps({"startsAt": str(starts_at), "endsAt": str(ends_at), "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": str(previous_expiry), "newExpiry": str(row.expires_at)}, ensure_ascii=False),
     )
     db.add_all([freeze, event])
     db.flush()
-    record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
+    record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {planned_days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
     db.commit()
     return get_member(db, row.customer_id)
 
@@ -670,6 +680,8 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         return {"membershipId": row.id, "customerId": row.customer_id, "action": action, "summary": summary}
     if action == "suspend":
         suspended_at = _parse_date(payload.get("suspendedAt")) or vietnam_today()
+        if suspended_at < vietnam_today():
+            raise HTTPException(422, "Ngày tạm dừng không được ở quá khứ.")
         row.status = "suspended"
         row.customer.status = "lead"
         summary = f"Tạm dừng gói {old_package_name} của {old_customer_name}"

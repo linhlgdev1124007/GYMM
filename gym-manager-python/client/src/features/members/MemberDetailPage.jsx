@@ -2,12 +2,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  CalendarClock,
   CalendarPlus,
-  CirclePause,
   CreditCard,
   Dumbbell,
-  MoreHorizontal,
   Pencil,
   Plus,
   ReceiptText,
@@ -22,6 +19,7 @@ import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
@@ -217,6 +215,20 @@ export function MemberDetailPage() {
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
     : null;
+  const lifecycleActions = [];
+  if (current?.status === "pending") {
+    lifecycleActions.push(["activate", "Kích hoạt ngay"]);
+  }
+  if (current?.status === "suspended") {
+    lifecycleActions.push(["activate", "Kích hoạt lại"]);
+  }
+  if (current?.status === "frozen") {
+    lifecycleActions.push(["activate", "Kích hoạt lại"]);
+  }
+  if (current?.status === "active") {
+    lifecycleActions.push(["suspend", "Tạm dừng"]);
+    lifecycleActions.push(["freeze", "Bảo lưu"]);
+  }
   const open = (name, record = null, operationAction = "") => {
     setFormError("");
     setMembershipOperationAction(name === "operations" ? operationAction : "");
@@ -435,18 +447,14 @@ export function MemberDetailPage() {
               </Button>
             </>
           )}
-          {canManageLifecycle && current && (
-            <>
-              <Button variant="secondary" onClick={() => open("operations", current, "suspend")}>
-                <CirclePause size={15} /> Tạm dừng
-              </Button>
-              <Button variant="secondary" onClick={() => open("operations", current, "freeze")}>
-                <CalendarClock size={15} /> Bảo lưu
-              </Button>
-              <Button variant="ghost" onClick={() => open("operations", current)}>
-                <MoreHorizontal size={17} /> Quản lý gói
-              </Button>
-            </>
+          {canManageLifecycle && current && lifecycleActions.length > 0 && (
+            <RowMenu>
+              {lifecycleActions.map(([action, label]) => (
+                <button key={action} onClick={() => open("operations", current, action)}>
+                  {label}
+                </button>
+              ))}
+            </RowMenu>
           )}
         </div>
       </header>
@@ -733,7 +741,7 @@ export function MemberDetailPage() {
                 {member.membershipEvents.map((event) => (
                   <div key={event.id}>
                     <time>{shortDate(event.effectiveAt)}</time>
-                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy gói" })[event.action] || event.action}</span>
+                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", unfreeze: "Kết thúc bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy gói" })[event.action] || event.action}</span>
                     <div>
                       <strong>{event.action === "freeze" ? `${event.details?.compensatedDays || ""} ngày bảo lưu` : event.fromPackage && event.toPackage && event.fromPackage !== event.toPackage ? `${event.fromPackage} → ${event.toPackage}` : event.fromMember && event.toMember && event.fromMember !== event.toMember ? `${event.fromMember} → ${event.toMember}` : event.reason}</strong>
                       <p>{event.reason} · {event.createdBy}</p>

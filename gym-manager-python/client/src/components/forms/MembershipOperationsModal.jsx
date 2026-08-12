@@ -11,6 +11,7 @@ import { SearchableSelect } from "../ui/SearchableSelect";
 import { money, shortDate } from "../../utils/format";
 
 const today = () => format(new Date(), "yyyy-MM-dd");
+const nextDay = (value) => format(addDays(new Date(`${value || today()}T00:00:00`), 1), "yyyy-MM-dd");
 
 export function MembershipOperationsModal({ membership, memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
@@ -24,7 +25,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
   useEffect(() => {
     setForm({
       startsAt: today(),
-      endsAt: today(),
+      endsAt: nextDay(today()),
       targetMemberId: "",
       planId: "",
       finalPrice: membership?.finalPrice || 0,
@@ -32,11 +33,11 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
       effectiveAt: today(),
       reason: "",
     });
-    setAction(initialAction || (["pending", "suspended"].includes(membership?.status) ? "activate" : "freeze"));
+    setAction(initialAction || (["pending", "suspended", "frozen"].includes(membership?.status) ? "activate" : "freeze"));
   }, [membership?.id, open, initialAction]);
   const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
   const freezeDays = form.startsAt && form.endsAt
-    ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)) + 1, 0)
+    ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)), 0)
     : 0;
   const compensatedExpiry = membership?.expiresAt && freezeDays
     ? format(addDays(new Date(`${membership.expiresAt}T00:00:00`), freezeDays), "yyyy-MM-dd")
@@ -111,8 +112,8 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
             <section className="operation-panel">
               <div className="operation-heading"><CalendarClock size={17} /><div><strong>Bảo lưu gói</strong><span>Thời hạn được cộng bù tự động theo số ngày bảo lưu.</span></div></div>
               <div className="form-grid">
-                <Field label="Bắt đầu" required><DateInput min={today()} value={form.startsAt} onChange={(startsAt) => setForm({ ...form, startsAt, endsAt: form.endsAt < startsAt ? startsAt : form.endsAt })} /></Field>
-                <Field label="Kết thúc" required><DateInput min={form.startsAt || today()} value={form.endsAt} onChange={(endsAt) => setForm({ ...form, endsAt })} /></Field>
+                <Field label="Bắt đầu" required><DateInput min={today()} value={form.startsAt} onChange={(startsAt) => setForm({ ...form, startsAt, endsAt: form.endsAt <= startsAt ? nextDay(startsAt) : form.endsAt })} /></Field>
+                <Field label="Kết thúc" required><DateInput min={nextDay(form.startsAt)} value={form.endsAt} onChange={(endsAt) => setForm({ ...form, endsAt })} /></Field>
               </div>
               <div className="compensation-preview"><span>Cộng bù <strong>{freezeDays} ngày</strong></span><ArrowRightLeft size={14} /><span>Hạn mới <strong>{shortDate(compensatedExpiry)}</strong></span></div>
             </section>
@@ -146,7 +147,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
           )}
           {action !== "freeze" && (
             <Field label={action === "activate" ? "Ngày kích hoạt" : action === "suspend" ? "Ngày tạm dừng" : "Ngày hiệu lực"}>
-              <DateInput value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
+              <DateInput min={action === "suspend" ? today() : undefined} value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
             </Field>
           )}
           <Field label="Lý do / căn cứ" required hint="Được lưu trong lịch sử gói và Audit Log">

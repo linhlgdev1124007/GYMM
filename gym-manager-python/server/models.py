@@ -166,6 +166,7 @@ class MembershipFreeze(Base):
     membership_id: Mapped[int] = mapped_column(ForeignKey("memberships.id", ondelete="CASCADE"), index=True)
     starts_at: Mapped[date] = mapped_column(Date)
     ends_at: Mapped[date] = mapped_column(Date)
+    completed_at: Mapped[date | None] = mapped_column(Date)
     compensated_days: Mapped[int] = mapped_column(Integer)
     reason: Mapped[str] = mapped_column(String(255))
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

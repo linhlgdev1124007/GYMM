@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import AuditLog, User
 from .serializers import pagination
+from ..timeutils import utc_iso
 
 
 def record_audit(
@@ -55,7 +56,7 @@ def audit_data(row: AuditLog):
         "summary": row.summary,
         "details": details,
         "ipAddress": row.ip_address,
-        "createdAt": row.created_at.isoformat(),
+        "createdAt": utc_iso(row.created_at),
     }
 
 
