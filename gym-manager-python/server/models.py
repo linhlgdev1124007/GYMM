@@ -137,6 +137,7 @@ class Membership(Base):
     registered_at: Mapped[date | None] = mapped_column(Date)
     starts_at: Mapped[date | None] = mapped_column(Date)
     expires_at: Mapped[date | None] = mapped_column(Date)
+    activated_at: Mapped[date | None] = mapped_column(Date)
     remaining_sessions: Mapped[int | None] = mapped_column(Integer)
     final_price: Mapped[float] = mapped_column(Float, default=0)
     deposit_amount: Mapped[float] = mapped_column(Float, default=0)

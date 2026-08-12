@@ -60,6 +60,8 @@ const createInitialForm = () => ({
     planId: "",
     startsAt: format(new Date(), "yyyy-MM-dd"),
     expiresAt: "",
+    activateNow: true,
+    activationDate: "",
     finalPrice: 0,
     paidAmount: 0,
     debtDueDate: "",
@@ -570,11 +572,15 @@ export function MembersPage() {
   const selectMembershipPlan = (planId) => {
     const plan = options.data?.plans.find((row) => String(row.id) === String(planId));
     const startsAt = form.membership.startsAt || format(new Date(), "yyyy-MM-dd");
+    const effectiveStart =
+      form.membership.activateNow === false
+        ? form.membership.activationDate || startsAt
+        : startsAt;
     updateMembershipDraft({
       planId,
       finalPrice: plan?.price || 0,
       expiresAt: plan?.durationDays
-        ? format(addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+        ? format(addDays(new Date(`${effectiveStart}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
         : "",
     });
   };
@@ -1265,11 +1271,15 @@ export function MembersPage() {
                           const plan = options.data?.plans.find(
                             (row) => String(row.id) === String(form.membership.planId),
                           );
+                          const effectiveStart =
+                            form.membership.activateNow === false
+                              ? form.membership.activationDate || startsAt
+                              : startsAt;
                           updateMembershipDraft({
                             startsAt,
                             expiresAt:
                               plan?.durationDays && startsAt
-                                ? format(addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+                                ? format(addDays(new Date(`${effectiveStart}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
                                 : form.membership.expiresAt,
                           });
                         }}
@@ -1281,6 +1291,55 @@ export function MembersPage() {
                         onChange={(expiresAt) => updateMembershipDraft({ expiresAt })}
                       />
                     </Field>
+                    <Field className="form-span" label="Kích hoạt gói">
+                      <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-navy-900"
+                          checked={form.membership.activateNow !== false}
+                          onChange={(event) => {
+                            const activateNow = event.target.checked;
+                            const plan = options.data?.plans.find(
+                              (row) => String(row.id) === String(form.membership.planId),
+                            );
+                            const startsAt = form.membership.startsAt || format(new Date(), "yyyy-MM-dd");
+                            const activationDate = activateNow ? "" : form.membership.activationDate;
+                            const effectiveStart = activateNow ? startsAt : activationDate || startsAt;
+                            updateMembershipDraft({
+                              activateNow,
+                              activationDate,
+                              expiresAt: plan?.durationDays
+                                ? format(addDays(new Date(`${effectiveStart}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+                                : form.membership.expiresAt,
+                            });
+                          }}
+                        />
+                        <span>
+                          <strong className="block text-slate-900">Kích hoạt gói ngay</strong>
+                          <small className="block text-slate-500">Bỏ chọn để gói ở trạng thái chờ kích hoạt.</small>
+                        </span>
+                      </label>
+                    </Field>
+                    {form.membership.activateNow === false && (
+                      <Field label="Kích hoạt lần đầu tập" hint="Có thể để trống; check-in đầu tiên sẽ kích hoạt.">
+                        <DateInput
+                          value={form.membership.activationDate}
+                          onChange={(activationDate) => {
+                            const plan = options.data?.plans.find(
+                              (row) => String(row.id) === String(form.membership.planId),
+                            );
+                            const startsAt = form.membership.startsAt || format(new Date(), "yyyy-MM-dd");
+                            const effectiveStart = activationDate || startsAt;
+                            updateMembershipDraft({
+                              activationDate,
+                              expiresAt: plan?.durationDays
+                                ? format(addDays(new Date(`${effectiveStart}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+                                : form.membership.expiresAt,
+                            });
+                          }}
+                        />
+                      </Field>
+                    )}
                     <Field label="Tổng tiền">
                       <MoneyInput
                         value={form.membership.finalPrice}

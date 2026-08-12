@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { addDays, differenceInCalendarDays, format } from "date-fns";
-import { ArrowRightLeft, CalendarClock, PackageOpen, ShieldAlert } from "lucide-react";
+import { ArrowRightLeft, CalendarClock, CirclePause, PackageOpen, PlayCircle, ShieldAlert } from "lucide-react";
 import { api } from "../../services/api";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
@@ -12,7 +12,7 @@ import { money, shortDate } from "../../utils/format";
 
 const today = () => format(new Date(), "yyyy-MM-dd");
 
-export function MembershipOperationsModal({ membership, memberId, options, open, onClose, onSubmit, pending, error }) {
+export function MembershipOperationsModal({ membership, memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
   const [form, setForm] = useState({});
   const members = useQuery({
@@ -32,8 +32,8 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
       effectiveAt: today(),
       reason: "",
     });
-    setAction("freeze");
-  }, [membership?.id, open]);
+    setAction(initialAction || (["pending", "suspended"].includes(membership?.status) ? "activate" : "freeze"));
+  }, [membership?.id, open, initialAction]);
   const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
   const freezeDays = form.startsAt && form.endsAt
     ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)) + 1, 0)
@@ -61,6 +61,8 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
         action,
         reason: form.reason,
         effectiveAt: form.effectiveAt,
+        ...(action === "activate" ? { activatedAt: form.effectiveAt } : {}),
+        ...(action === "suspend" ? { suspendedAt: form.effectiveAt } : {}),
         ...(action === "transfer" ? { targetMemberId: form.targetMemberId } : {}),
         ...(action === "change" || action === "upgrade"
           ? { planId: form.planId, finalPrice: form.finalPrice, expiresAt: form.expiresAt }
@@ -70,6 +72,8 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
   };
   const valid = String(form.reason || "").trim() && (
     (action === "freeze" && freezeDays > 0) ||
+    action === "activate" ||
+    action === "suspend" ||
     (action === "transfer" && form.targetMemberId) ||
     ((action === "change" || action === "upgrade") && form.planId) ||
     action === "cancel"
@@ -84,6 +88,8 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
           </div>
           <Field label="Nghiệp vụ cần thực hiện" required>
             <Select value={action} onChange={(event) => setAction(event.target.value)}>
+              <option value="activate">Kích hoạt lần đầu tập</option>
+              <option value="suspend">Tạm dừng gói</option>
               <option value="freeze">Bảo lưu và cộng bù thời hạn</option>
               <option value="transfer">Chuyển nhượng sang hội viên khác</option>
               <option value="upgrade">Nâng cấp gói</option>
@@ -91,6 +97,16 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
               <option value="cancel">Hủy gói</option>
             </Select>
           </Field>
+          {action === "activate" && (
+            <section className="operation-panel">
+              <div className="operation-heading"><PlayCircle size={17} /><div><strong>Kích hoạt lần đầu tập</strong><span>Chuyển gói chờ kích hoạt/tạm dừng sang đang hoạt động và ghi nhận ngày kích hoạt.</span></div></div>
+            </section>
+          )}
+          {action === "suspend" && (
+            <section className="operation-panel">
+              <div className="operation-heading"><CirclePause size={17} /><div><strong>Tạm dừng gói</strong><span>Dùng khi kích hoạt nhầm. Khi kích hoạt lại, hệ thống cộng bù số ngày tạm dừng vào hạn gói.</span></div></div>
+            </section>
+          )}
           {action === "freeze" && (
             <section className="operation-panel">
               <div className="operation-heading"><CalendarClock size={17} /><div><strong>Bảo lưu gói</strong><span>Thời hạn được cộng bù tự động theo số ngày bảo lưu.</span></div></div>
@@ -129,7 +145,9 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
             <div className="destructive-notice"><ShieldAlert size={18} /><div><strong>Hủy quyền sử dụng gói</strong><p>Thao tác không tự tạo hoàn tiền và hội viên sẽ không thể dùng gói này để check-in.</p></div></div>
           )}
           {action !== "freeze" && (
-            <Field label="Ngày hiệu lực"><DateInput value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} /></Field>
+            <Field label={action === "activate" ? "Ngày kích hoạt" : action === "suspend" ? "Ngày tạm dừng" : "Ngày hiệu lực"}>
+              <DateInput value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
+            </Field>
           )}
           <Field label="Lý do / căn cứ" required hint="Được lưu trong lịch sử gói và Audit Log">
             <Textarea rows={3} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} placeholder="Ví dụ: Yêu cầu của hội viên ngày…" />
@@ -139,7 +157,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
         <div className="form-actions">
           <Button data-modal-close variant="secondary" onClick={onClose}>Đóng</Button>
           <Button type="submit" variant={action === "cancel" ? "danger" : "primary"} loading={pending} loadingText="Đang xử lý…" disabled={!valid}>
-            {action === "freeze" ? "Xác nhận bảo lưu" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy gói" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
+            {action === "activate" ? "Kích hoạt gói" : action === "suspend" ? "Tạm dừng gói" : action === "freeze" ? "Xác nhận bảo lưu" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy gói" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
           </Button>
         </div>
       </form>

@@ -250,3 +250,17 @@ def migrate_dah_integration():
                 connection.exec_driver_sql(
                     f"CREATE INDEX {quote('ix_dah_webhook_events_employee_id')} ON {quote('dah_webhook_events')} ({quote('employee_id')})"
                 )
+
+
+def migrate_membership_activation():
+    inspector = inspect(engine)
+    if "memberships" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("memberships")}
+    if "activated_at" in columns:
+        return
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"ALTER TABLE {quote('memberships')} ADD COLUMN {quote('activated_at')} DATE"
+        )

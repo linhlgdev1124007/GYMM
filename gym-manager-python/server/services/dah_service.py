@@ -10,7 +10,8 @@ from ..models import (
     AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent,
     Device, Employee, Membership, ServicePackage,
 )
-from ..timeutils import utc_now
+from ..timeutils import utc_now, vietnam_today
+from .membership_lifecycle import activate_customer_first_checkin
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
 DAH_MODEL = "DAH1017"
@@ -122,7 +123,7 @@ def _active_regular_membership(db: Session, customer_id: int):
             Membership.customer_id == customer_id,
             Membership.status == "active",
             ServicePackage.is_pt == False,
-            or_(Membership.expires_at == None, Membership.expires_at >= date.today()),
+            or_(Membership.expires_at == None, Membership.expires_at >= vietnam_today()),
         )
         .order_by(Membership.expires_at.desc(), Membership.id.desc())
         .first()
@@ -245,7 +246,12 @@ def _toggle_customer_attendance(
         db.add(session)
         db.flush()
         return {"status": "processed", "action": "checkin", "note": "Check-in khách tiềm năng.", "session_id": session.id}
-    if not _active_regular_membership(db, customer.id):
+    membership = _active_regular_membership(db, customer.id)
+    if not membership:
+        activated = activate_customer_first_checkin(db, customer.id, event_time)
+        if activated:
+            membership = activated
+    if not membership:
         return {"status": "denied", "action": "denied", "note": "Hội viên không có gói tập còn hiệu lực.", "session_id": None}
     if customer.status != "active":
         return {"status": "denied", "action": "denied", "note": "Hội viên không ở trạng thái hoạt động.", "session_id": None}

@@ -12,9 +12,10 @@ from ..models import (
 )
 from .audit_service import record_audit
 from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
+from .membership_lifecycle import activate_customer_first_checkin
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
-from ..timeutils import utc_now
+from ..timeutils import utc_now, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
 DEFAULT_PT_TITLES = {"Coach"}
@@ -329,9 +330,9 @@ def checkin_candidates(db: Session, q: str):
     rows=db.query(Customer).options(joinedload(Customer.person),joinedload(Customer.memberships).joinedload(Membership.package)).join(Customer.person).filter(or_(Person.display_name.contains(q),Person.phone.contains(q),Customer.customer_code.contains(q),Customer.mbs_card_code.contains(q))).limit(12).all()
     result=[]
     for member in rows:
-        memberships=[m for m in member.memberships if not m.package.is_pt and m.status=="active"]
+        memberships=[m for m in member.memberships if not m.package.is_pt and m.status in ("active", "pending", "suspended")]
         current=sorted(memberships,key=lambda x:x.expires_at or date.max,reverse=True)[0] if memberships else None
-        eligible=member.status=="lead" or (member.status=="active" and bool(current) and (not current.expires_at or current.expires_at>=date.today()))
+        eligible=member.status=="lead" or (bool(current) and (not current.expires_at or current.expires_at>=vietnam_today()))
         result.append({"id":member.id,"code":member.customer_code,"name":member.person.display_name,"phone":member.person.phone,"avatarImageData":member.avatar_image_data,"membership":current.package.name if current else None,"expiresAt":current.expires_at.isoformat() if current and current.expires_at else None,"eligible":eligible,"reason":None if eligible else "Gói tập không hoạt động hoặc đã hết hạn."})
     return result
 
@@ -385,7 +386,9 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     member_id=_as_int(payload.get("memberId"));member=db.get(Customer,member_id)
     if not member: raise HTTPException(404,"Không tìm thấy hội viên.")
     if db.query(AttendanceSession).filter(AttendanceSession.customer_id==member_id,AttendanceSession.status=="open").first(): raise HTTPException(409,"Hội viên đã check-in và chưa check-out.")
-    current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=date.today())).first()
+    current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=vietnam_today())).first()
+    if not current:
+        current = activate_customer_first_checkin(db, member_id, vietnam_today())
     if member.status != "lead" and (member.status!="active" or not current): raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
     row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)

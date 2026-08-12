@@ -9,6 +9,7 @@ const palettes = {
   expiring: ["text-amber-700", "bg-amber-500"],
   pending: ["text-amber-700", "bg-amber-500"],
   maintenance: ["text-amber-700", "bg-amber-500"],
+  suspended: ["text-amber-700", "bg-amber-500"],
   lead: ["text-sky-700", "bg-sky-500"],
   frozen: ["text-cyan-700", "bg-cyan-500"],
   inactive: ["text-slate-600", "bg-slate-400"],

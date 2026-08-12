@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import or_, text
 
 from .config import settings
-from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_dah_integration, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_dah_integration, migrate_membership_activation, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
 from .models import (
     AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
 )
@@ -23,6 +23,7 @@ from .routes import audit, auth, dah, insights, members, operations, users
 from .security import ensure_admin_user
 from .services.operations_service import ensure_employee_job_titles
 from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS, cleanup_webhook_images
+from .services.membership_lifecycle import refresh_membership_lifecycle
 from .timeutils import utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
@@ -33,6 +34,7 @@ def initialize_database():
     migrate_remove_branches()
     migrate_pt_schedule()
     migrate_dah_integration()
+    migrate_membership_activation()
     if IS_SQLITE:
         with engine.connect() as connection:
             user_columns = {
@@ -72,6 +74,7 @@ def initialize_database():
         now = utc_now()
         db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
         ensure_employee_job_titles(db)
+        refresh_membership_lifecycle(db)
         db.commit()
         ensure_admin_user(db)
     finally:
@@ -83,6 +86,7 @@ async def webhook_image_cleanup_job():
         db = SessionLocal()
         try:
             cleanup_webhook_images(db)
+            refresh_membership_lifecycle(db)
         finally:
             db.close()
         await asyncio.sleep(24 * 60 * 60)

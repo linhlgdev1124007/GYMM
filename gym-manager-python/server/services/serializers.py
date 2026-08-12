@@ -1,5 +1,7 @@
-from datetime import date, datetime
+from datetime import datetime
 import json
+
+from ..timeutils import vietnam_today
 
 
 def iso(value):
@@ -43,15 +45,16 @@ def package_data(package):
 
 
 def membership_status(membership) -> str:
+    today = vietnam_today()
     if membership.status not in ("active", "pending"):
         return membership.status
     if any(
-        freeze.starts_at <= date.today() <= freeze.ends_at
+        freeze.starts_at <= today <= freeze.ends_at
         for freeze in getattr(membership, "freezes", [])
     ):
         return "frozen"
     if membership.expires_at:
-        days = (membership.expires_at - date.today()).days
+        days = (membership.expires_at - today).days
         if days < 0:
             return "expired"
         if days <= 14:
@@ -60,7 +63,7 @@ def membership_status(membership) -> str:
 
 
 def freeze_data(freeze):
-    today = date.today()
+    today = vietnam_today()
     status = "active" if freeze.starts_at <= today <= freeze.ends_at else ("scheduled" if today < freeze.starts_at else "completed")
     return {
         "id": freeze.id,
@@ -105,6 +108,7 @@ def membership_data(membership, include_payments=False, include_history=False):
         "registeredAt": iso(membership.registered_at),
         "startsAt": iso(membership.starts_at),
         "expiresAt": iso(membership.expires_at),
+        "activatedAt": iso(membership.activated_at),
         "finalPrice": membership.final_price or 0,
         "depositAmount": membership.deposit_amount or 0,
         "paidAmount": membership.paid_amount or 0,

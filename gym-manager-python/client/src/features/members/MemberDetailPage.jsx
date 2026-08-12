@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  CalendarClock,
   CalendarPlus,
+  CirclePause,
   CreditCard,
   Dumbbell,
   MoreHorizontal,
@@ -60,6 +62,7 @@ export function MemberDetailPage() {
   );
   const [dialog, setDialog] = useState(null);
   const [selectedMembership, setSelectedMembership] = useState(null);
+  const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedTraining, setSelectedTraining] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
@@ -214,8 +217,9 @@ export function MemberDetailPage() {
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
     : null;
-  const open = (name, record = null) => {
+  const open = (name, record = null, operationAction = "") => {
     setFormError("");
+    setMembershipOperationAction(name === "operations" ? operationAction : "");
     if (
       name === "membership" ||
       name === "payment" ||
@@ -432,9 +436,17 @@ export function MemberDetailPage() {
             </>
           )}
           {canManageLifecycle && current && (
-            <Button variant="ghost" onClick={() => open("operations", current)}>
-              <MoreHorizontal size={17} /> Quản lý gói
-            </Button>
+            <>
+              <Button variant="secondary" onClick={() => open("operations", current, "suspend")}>
+                <CirclePause size={15} /> Tạm dừng
+              </Button>
+              <Button variant="secondary" onClick={() => open("operations", current, "freeze")}>
+                <CalendarClock size={15} /> Bảo lưu
+              </Button>
+              <Button variant="ghost" onClick={() => open("operations", current)}>
+                <MoreHorizontal size={17} /> Quản lý gói
+              </Button>
+            </>
           )}
         </div>
       </header>
@@ -962,9 +974,11 @@ export function MemberDetailPage() {
         memberId={memberId}
         options={options.data}
         open={dialog === "operations"}
+        initialAction={membershipOperationAction}
         onClose={() => {
           setDialog(null);
           setSelectedMembership(null);
+          setMembershipOperationAction("");
         }}
         onSubmit={(variables) => membershipOperation.mutate(variables)}
         pending={membershipOperation.isPending}

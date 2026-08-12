@@ -30,6 +30,14 @@ export function MembershipForm({
   const [initial, setInitial] = useState({});
   const [localError, setLocalError] = useState("");
   const isRenewal = !membership && Boolean(currentMembership);
+  const effectiveStart = (draft = form) =>
+    draft.activateNow === false
+      ? draft.activationDate || draft.startsAt || today
+      : draft.startsAt || today;
+  const expiryFor = (draft, plan) =>
+    plan?.durationDays
+      ? format(addDays(new Date(`${effectiveStart(draft)}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
+      : "";
   useEffect(() => {
     const renewalPlan = currentMembership
       ? options?.plans?.find(
@@ -50,18 +58,16 @@ export function MembershipForm({
           paymentMethod: membership.payments?.[0]?.method || "cash",
           bankAccountId: "",
           status: membership.status || "active",
+          activationDate: membership.activatedAt || "",
           receipts: [],
         }
       : {
           memberId,
           planId: renewalPlan?.id || "",
           startsAt: renewalStart,
-          expiresAt: renewalPlan?.durationDays
-            ? format(
-                addDays(parseISO(renewalStart), renewalPlan.durationDays),
-                "yyyy-MM-dd",
-              )
-            : "",
+          activateNow: true,
+          activationDate: "",
+          expiresAt: expiryFor({ startsAt: renewalStart, activateNow: true }, renewalPlan),
           finalPrice: renewalPlan?.price || 0,
           paidAmount: 0,
           debtDueDate: "",
@@ -77,33 +83,28 @@ export function MembershipForm({
   }, [membership, currentMembership, memberId, options, open, today]);
   const planChange = (id) => {
     const plan = options?.plans?.find((row) => String(row.id) === String(id));
+    const next = { ...form, planId: id, finalPrice: plan?.price || 0 };
     setForm({
-      ...form,
-      planId: id,
-      finalPrice: plan?.price || 0,
-      expiresAt: plan?.durationDays
-        ? format(
-            addDays(new Date(form.startsAt || today), plan.durationDays),
-            "yyyy-MM-dd",
-          )
-        : "",
+      ...next,
+      expiresAt: expiryFor(next, plan),
     });
   };
   const startChange = (startsAt) => {
     const plan = options?.plans?.find(
       (row) => String(row.id) === String(form.planId),
     );
-    setForm({
-      ...form,
-      startsAt,
-      expiresAt:
-        !membership && plan?.durationDays && startsAt
-          ? format(
-              addDays(new Date(`${startsAt}T00:00:00`), plan.durationDays),
-              "yyyy-MM-dd",
-            )
-          : form.expiresAt,
-    });
+    const next = { ...form, startsAt };
+    setForm({ ...next, expiresAt: !membership && plan?.durationDays && startsAt ? expiryFor(next, plan) : form.expiresAt });
+  };
+  const activationModeChange = (activateNow) => {
+    const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
+    const next = { ...form, activateNow, activationDate: activateNow ? "" : form.activationDate };
+    setForm({ ...next, expiresAt: !membership ? expiryFor(next, plan) : form.expiresAt });
+  };
+  const activationDateChange = (activationDate) => {
+    const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
+    const next = { ...form, activationDate };
+    setForm({ ...next, expiresAt: !membership ? expiryFor(next, plan) : form.expiresAt });
   };
   const submit = (event) => {
     event.preventDefault();
@@ -239,13 +240,32 @@ export function MembershipForm({
                 </Field>
                 <Field
                   label="Ngày hết hạn"
-                  hint="Tự động theo thời hạn gói; có thể thay đổi."
+                  hint="Tự động theo ngày kích hoạt; có thể thay đổi."
                 >
                   <DateInput
                     value={form.expiresAt || ""}
                     onChange={(expiresAt) => setForm({ ...form, expiresAt })}
                   />
                 </Field>
+              </div>
+              <div className="mt-4 grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-start gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-navy-900"
+                    checked={form.activateNow !== false}
+                    onChange={(event) => activationModeChange(event.target.checked)}
+                  />
+                  <span>
+                    <strong className="block text-slate-900">Kích hoạt gói ngay</strong>
+                    <small className="block text-slate-500">Bỏ chọn nếu khách đăng ký trước và chờ buổi tập đầu tiên.</small>
+                  </span>
+                </label>
+                {form.activateNow === false && (
+                  <Field label="Kích hoạt lần đầu tập" hint="Có thể để trống; hệ thống sẽ kích hoạt khi check-in lần đầu.">
+                    <DateInput value={form.activationDate || ""} onChange={activationDateChange} />
+                  </Field>
+                )}
               </div>
             </section>
           )}
@@ -359,6 +379,8 @@ export function MembershipForm({
                     }
                   >
                     <option value="active">Hoạt động</option>
+                    <option value="pending">Chờ kích hoạt</option>
+                    <option value="suspended">Tạm dừng</option>
                     <option value="frozen">Bảo lưu</option>
                     <option value="cancelled">Tạm ngừng</option>
                   </Select>
@@ -387,6 +409,16 @@ export function MembershipForm({
                   <dt className="text-slate-500">Thời gian áp dụng</dt>
                   <dd className="mt-0.5 font-medium text-slate-950">
                     {shortDate(form.startsAt)} → {shortDate(form.expiresAt)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Kích hoạt</dt>
+                  <dd className="mt-0.5 font-medium text-slate-950">
+                    {form.activateNow !== false
+                      ? "Ngay khi đăng ký"
+                      : form.activationDate
+                        ? shortDate(form.activationDate)
+                        : "Khi check-in lần đầu"}
                   </dd>
                 </div>
                 <div>
