@@ -82,6 +82,7 @@ const views = [
 const statusFilters = {
   all: "Tất cả",
   active: "Đang hoạt động",
+  pending: "Chờ kích hoạt",
   expired: "Hết hạn",
   expiring: "Sắp hết hạn",
   frozen: "Bảo lưu",
@@ -733,6 +734,7 @@ export function MembersPage() {
             >
               <option value="all">Tất cả</option>
               <option value="active">Đang hoạt động</option>
+              <option value="pending">Chờ kích hoạt</option>
               <option value="expired">Hết hạn</option>
               <option value="expiring">Sắp hết hạn trong X ngày</option>
               <option value="frozen">Bảo lưu</option>

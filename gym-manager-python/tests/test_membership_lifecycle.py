@@ -432,6 +432,27 @@ def test_expiring_membership_still_serializes_as_active(tmp_path):
         db.close()
 
 
+def test_pending_member_status_filter_returns_waiting_members(tmp_path):
+    from server.services.members_service import list_members
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="pending",
+            starts_at=date(2026, 8, 20),
+            activated_at=None,
+        )
+
+        rows = list_members(db, q="", member_status="pending", page=1, page_size=20)
+
+        assert rows["pagination"]["total"] == 1
+        assert rows["items"][0]["id"] == customer.id
+        assert rows["items"][0]["membership"]["status"] == "pending"
+    finally:
+        db.close()
+
+
 def test_adjust_membership_days_updates_expiry_and_history(tmp_path):
     from server.models import MembershipEvent
     from server.services.members_service import membership_action

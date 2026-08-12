@@ -245,6 +245,8 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         query = query.filter(latest_status_exists(status_membership.expires_at < today))
     elif member_status == "expiring":
         query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=expiring_days)))
+    elif member_status == "pending":
+        query = query.filter(latest_status_exists(status_membership.status == "pending"))
     elif member_status == "frozen":
         query = query.filter(latest_status_exists(status_membership.status == "frozen"))
     elif member_status == "inactive":
