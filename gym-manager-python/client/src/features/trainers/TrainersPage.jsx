@@ -52,6 +52,7 @@ export function TrainersPage() {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [identityTarget, setIdentityTarget] = useState(null);
+  const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [attendancePreset, setAttendancePreset] = useState("today");
   const [attendanceDate, setAttendanceDate] = useState(isoDay());
   const [confirm, setConfirm] = useState(null);
@@ -170,6 +171,7 @@ export function TrainersPage() {
       link.click();
       URL.revokeObjectURL(url);
       notify.success(`Đã tải ${rows.length} dòng chấm công nhân viên.`);
+      setAttendanceOpen(false);
     },
     onError: (e) =>
       notify.errorFrom(e, "Không thể tải chấm công nhân viên."),
@@ -284,7 +286,7 @@ export function TrainersPage() {
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="secondary"
-              onClick={() => exportAttendance.mutate()}
+              onClick={() => setAttendanceOpen(true)}
               loading={exportAttendance.isPending}
               loadingText="Đang tải..."
             >
@@ -322,27 +324,6 @@ export function TrainersPage() {
             </option>
           ))}
         </Select>
-        <Select
-          className="input w-40"
-          value={attendancePreset}
-          onChange={(event) => {
-            const value = event.target.value;
-            setAttendancePreset(value);
-            if (value === "today") setAttendanceDate(isoDay());
-            if (value === "yesterday") setAttendanceDate(isoDay(-1));
-          }}
-        >
-          <option value="today">Chấm công hôm nay</option>
-          <option value="yesterday">Chấm công hôm qua</option>
-          <option value="custom">Ngày cụ thể</option>
-        </Select>
-        {attendancePreset === "custom" && (
-          <DateInput
-            className="input w-40"
-            value={attendanceDate}
-            onChange={setAttendanceDate}
-          />
-        )}
       </div>
       <DataTable
         columns={columns}
@@ -449,6 +430,58 @@ export function TrainersPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+      <Modal
+        open={attendanceOpen}
+        onClose={() => setAttendanceOpen(false)}
+        title="Tải chấm công nhân viên"
+        description="Chọn ngày cần xuất dữ liệu check-in/check-out theo từng ca."
+      >
+        <div className="modal-body">
+          <div className="form-grid">
+            <Field className="form-span" label="Khoảng ngày">
+              <Select
+                value={attendancePreset}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setAttendancePreset(value);
+                  if (value === "today") setAttendanceDate(isoDay());
+                  if (value === "yesterday") setAttendanceDate(isoDay(-1));
+                }}
+              >
+                <option value="today">Hôm nay</option>
+                <option value="yesterday">Hôm qua</option>
+                <option value="custom">Ngày cụ thể</option>
+              </Select>
+            </Field>
+            {attendancePreset === "custom" && (
+              <Field className="form-span" label="Ngày cụ thể">
+                <DateInput
+                  value={attendanceDate}
+                  onChange={setAttendanceDate}
+                />
+              </Field>
+            )}
+          </div>
+        </div>
+        <div className="form-actions">
+          <Button
+            data-modal-close
+            variant="secondary"
+            onClick={() => setAttendanceOpen(false)}
+          >
+            Hủy
+          </Button>
+          <Button
+            onClick={() => exportAttendance.mutate()}
+            loading={exportAttendance.isPending}
+            loadingText="Đang tải..."
+            disabled={attendancePreset === "custom" && !attendanceDate}
+          >
+            <Download size={16} />
+            Tải file
+          </Button>
+        </div>
       </Modal>
       <Modal
         open={!!confirm}
