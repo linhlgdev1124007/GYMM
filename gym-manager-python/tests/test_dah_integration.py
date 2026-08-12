@@ -293,3 +293,25 @@ def test_dah_allows_lead_customer_checkin_without_membership(tmp_path):
         assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="open").count() == 1
     finally:
         db.close()
+
+
+def test_dah_events_are_paginated(tmp_path):
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        seed_member(db)
+        dah_service.verify(db, verify_payload("2026-08-11T12:00:00", "601"))
+        dah_service.verify(db, verify_payload("2026-08-11T12:05:00", "602"))
+        dah_service.verify(db, verify_payload("2026-08-11T12:10:00", "603"))
+
+        first_page = dah_service.dah_events(db, page=1, page_size=2)
+        second_page = dah_service.dah_events(db, page=2, page_size=2)
+
+        assert first_page["pagination"] == {"page": 1, "pageSize": 2, "total": 3, "pages": 2}
+        assert len(first_page["items"]) == 2
+        assert second_page["pagination"] == {"page": 2, "pageSize": 2, "total": 3, "pages": 2}
+        assert len(second_page["items"]) == 1
+        assert first_page["items"][0]["eventTime"] > second_page["items"][0]["eventTime"]
+    finally:
+        db.close()

@@ -12,6 +12,7 @@ from ..models import (
 )
 from ..timeutils import utc_iso, utc_now, vietnam_today
 from .membership_lifecycle import activate_customer_first_checkin
+from .serializers import pagination
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
 DAH_MODEL = "DAH1017"
@@ -468,7 +469,9 @@ def _event_data(row: DahWebhookEvent):
     }
 
 
-def dah_events(db: Session, view="all", limit=50):
+def dah_events(db: Session, view="all", limit=50, page=1, page_size=None):
+    page = max(int(page or 1), 1)
+    page_size = max(min(int(page_size or limit or 50), 100), 1)
     query = (
         db.query(DahWebhookEvent)
         .options(
@@ -488,8 +491,9 @@ def dah_events(db: Session, view="all", limit=50):
         query = query.filter(DahWebhookEvent.action == "duplicate_scan")
     elif view == "snapshots":
         query = query.filter(DahWebhookEvent.operator == "SnapPush")
-    rows = query.limit(max(min(int(limit or 50), 100), 1)).all()
-    return {"items": [_event_data(row) for row in rows]}
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [_event_data(row) for row in rows], "pagination": pagination(page, page_size, total)}
 
 
 def cleanup_webhook_images(db: Session, retention_days: int = WEBHOOK_IMAGE_RETENTION_DAYS):

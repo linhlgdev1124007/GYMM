@@ -52,6 +52,8 @@ export function CheckinPage() {
   const [customDate, setCustomDate] = useState(today);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [eventPage, setEventPage] = useState(1);
+  const [eventPageSize, setEventPageSize] = useState(20);
   const selectedDate =
     dateView === "yesterday" ? yesterday : dateView === "custom" ? customDate : today;
   const changeDateView = (nextView) => {
@@ -65,8 +67,11 @@ export function CheckinPage() {
     refetchInterval: 30000,
   });
   const events = useQuery({
-    queryKey: ["dah-events", eventView],
-    queryFn: () => api(`/api/dah/events?view=${eventView}&limit=60`),
+    queryKey: ["dah-events", eventView, eventPage, eventPageSize],
+    queryFn: () =>
+      api(
+        `/api/dah/events?${queryString({ view: eventView, page: eventPage, pageSize: eventPageSize })}`,
+      ),
     refetchInterval: 5000,
   });
   const checkins = recent.data?.items || [];
@@ -281,7 +286,10 @@ export function CheckinPage() {
             <button
               key={key}
               className={`tab ${eventView === key ? "active" : ""}`}
-              onClick={() => setEventView(key)}
+              onClick={() => {
+                setEventView(key);
+                setEventPage(1);
+              }}
             >
               {label}
             </button>
@@ -340,6 +348,15 @@ export function CheckinPage() {
           onRetry={events.refetch}
           emptyTitle="Chưa nhận được event DAH"
           emptyDescription="Event sẽ xuất hiện khi DAH gửi webhook Verify/Snap."
+        />
+        <Pagination
+          data={events.data?.pagination}
+          pageSize={eventPageSize}
+          onPage={setEventPage}
+          onPageSize={(value) => {
+            setEventPageSize(value);
+            setEventPage(1);
+          }}
         />
       </section>
     </>
