@@ -7,7 +7,39 @@ import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { dateTime } from "../../utils/format";
+import { dateTime, initials } from "../../utils/format";
+
+function CheckinAvatar({ image, name, compact = false }) {
+  return (
+    <div className={`avatar ${compact ? "avatar-sm" : "avatar-md"}`}>
+      {image ? <img src={image} alt="" /> : initials(name)}
+    </div>
+  );
+}
+
+function PersonCell({ row }) {
+  const name = row.employeeName || row.memberName || row.faceName || "Face chưa gán";
+  const image = row.memberAvatarImageData || row.imageData;
+  const details = row.employeeId
+    ? `${row.employeeCode} · Nhân viên`
+    : row.memberId
+      ? `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`
+      : row.personUuid || row.personId || "Không có UUID";
+  const content = (
+    <div className="member-cell">
+      <CheckinAvatar image={image} name={name} />
+      <div className="min-w-0">
+        <span className="cell-primary block truncate">{name}</span>
+        <span className="cell-secondary block truncate">{details}</span>
+      </div>
+    </div>
+  );
+  return row.memberId ? (
+    <Link className="hover:underline" to={`/members/${row.memberId}`}>
+      {content}
+    </Link>
+  ) : content;
+}
 
 export function CheckinPage() {
   const [eventView, setEventView] = useState("all");
@@ -35,21 +67,7 @@ export function CheckinPage() {
       key: "person",
       label: "Người vào/ra",
       sortValue: (row) => row.employeeName || row.memberName || "",
-      render: (row) =>
-        row.employeeId ? (
-          <div>
-            <span className="cell-primary">{row.employeeName}</span>
-            <span className="cell-secondary block">{row.employeeCode} · Nhân viên</span>
-          </div>
-        ) : (
-          <Link className="hover:underline" to={`/members/${row.memberId}`}>
-            <span className="cell-primary">{row.memberName}</span>
-            <span className="cell-secondary block">
-              {row.memberCode}
-              {row.memberStatus === "lead" ? " · Tiềm năng" : ""}
-            </span>
-          </Link>
-        ),
+      render: (row) => <PersonCell row={row} />,
     },
     {
       key: "checkedInAt",
@@ -119,17 +137,23 @@ export function CheckinPage() {
           </div>
           <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
             {activeSessions.map((row) => {
+              const name = row.employeeName || row.memberName;
               const content = (
                 <>
-                <div className="flex items-center gap-2">
-                  <Activity size={16} className="text-emerald-600" />
-                  <strong className="text-sm text-slate-950">{row.employeeName || row.memberName}</strong>
+                <div className="flex items-center gap-3">
+                  <CheckinAvatar image={row.memberAvatarImageData} name={name} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Activity size={16} className="shrink-0 text-emerald-600" />
+                      <strong className="truncate text-sm text-slate-950">{name}</strong>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-slate-400">
+                      {row.employeeId
+                        ? `${row.employeeCode} · Nhân viên`
+                        : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">
-                  {row.employeeId
-                    ? `${row.employeeCode} · Nhân viên`
-                    : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
-                </p>
                 </>
               );
               return row.employeeId ? (
@@ -178,23 +202,7 @@ export function CheckinPage() {
               key: "member",
               label: "Người quét",
               sortValue: (row) => row.employeeName || row.memberName || row.faceName || row.personUuid || "",
-              render: (row) =>
-                row.employeeId ? (
-                  <div>
-                    <span className="cell-primary">{row.employeeName}</span>
-                    <span className="cell-secondary block">{row.employeeCode} · Nhân viên</span>
-                  </div>
-                ) : row.memberId ? (
-                  <Link className="hover:underline" to={`/members/${row.memberId}`}>
-                    <span className="cell-primary">{row.memberName}</span>
-                    <span className="cell-secondary block">{row.memberCode}</span>
-                  </Link>
-                ) : (
-                  <div>
-                    <span className="cell-primary">{row.faceName || "Face chưa gán"}</span>
-                    <span className="cell-secondary block">{row.personUuid || row.personId || "Không có UUID"}</span>
-                  </div>
-                ),
+              render: (row) => <PersonCell row={row} />,
             },
             {
               key: "time",

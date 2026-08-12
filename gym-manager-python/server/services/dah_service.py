@@ -423,6 +423,10 @@ def _event_customer_code(event: DahWebhookEvent) -> str | None:
     return event.customer.customer_code if getattr(event, "customer", None) else None
 
 
+def _event_customer_avatar(event: DahWebhookEvent) -> str | None:
+    return event.customer.avatar_image_data if getattr(event, "customer", None) else None
+
+
 def _event_employee_name(event: DahWebhookEvent) -> str | None:
     return event.employee.person.display_name if getattr(event, "employee", None) and event.employee.person else None
 
@@ -440,6 +444,7 @@ def _event_data(row: DahWebhookEvent):
         "memberId": row.customer_id,
         "memberName": _event_customer_name(row),
         "memberCode": _event_customer_code(row),
+        "memberAvatarImageData": _event_customer_avatar(row),
         "employeeId": row.employee_id,
         "employeeName": _event_employee_name(row),
         "employeeCode": _event_employee_code(row),
