@@ -379,6 +379,7 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
     target = _as_date(day) or date.today()
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
+    carryover_start = start - timedelta(days=1)
     query = (
         db.query(AttendanceSession)
         .options(
@@ -387,7 +388,11 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
         )
         .filter(or_(
             and_(AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
-            and_(AttendanceSession.status == "open", AttendanceSession.checked_in_at < end),
+            and_(
+                AttendanceSession.status == "open",
+                AttendanceSession.checked_in_at >= carryover_start,
+                AttendanceSession.checked_in_at < end,
+            ),
         ))
     )
     total = query.count()

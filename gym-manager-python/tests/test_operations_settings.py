@@ -240,6 +240,12 @@ def test_recent_checkins_filters_by_day_and_paginates(tmp_path):
                 source="dah",
                 status="open",
             ),
+            AttendanceSession(
+                customer_id=member.id,
+                checked_in_at=datetime(2026, 8, 10, 22, 0),
+                source="dah",
+                status="open",
+            ),
         ])
         db.commit()
 
@@ -251,7 +257,7 @@ def test_recent_checkins_filters_by_day_and_paginates(tmp_path):
         assert first_page["pagination"]["total"] == 3
         assert [row["status"] for row in first_page["items"]] == ["open", "open"]
         assert second_page["items"][0]["status"] == "closed"
-        assert recent_checkins(db, day="2026-08-11", page=1, page_size=20)["pagination"]["total"] == 2
+        assert recent_checkins(db, day="2026-08-11", page=1, page_size=20)["pagination"]["total"] == 3
     finally:
         db.close()
 
