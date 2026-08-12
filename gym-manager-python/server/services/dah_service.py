@@ -395,33 +395,35 @@ def dah_events(db: Session, view="all", limit=50):
 
 
 def identity_candidates(db: Session, limit=12):
-    assigned_identity = (
-        db.query(DahCustomerIdentity.id)
-        .filter(DahCustomerIdentity.person_uuid == DahWebhookEvent.person_uuid)
-        .exists()
-    )
-    assigned_customer = (
-        db.query(Customer.id)
-        .filter(Customer.person_uuid == DahWebhookEvent.person_uuid)
-        .exists()
-    )
+    limit = max(min(int(limit or 12), 30), 1)
     rows = (
         db.query(DahWebhookEvent)
         .options(joinedload(DahWebhookEvent.device))
         .filter(
             DahWebhookEvent.operator == "VerifyPush",
             DahWebhookEvent.person_uuid.is_not(None),
-            ~assigned_identity,
-            ~assigned_customer,
         )
         .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
-        .limit(max(min(int(limit or 12), 30), 1))
+        .limit(limit * 5)
         .all()
     )
+    uuids = {row.person_uuid for row in rows if row.person_uuid}
+    assigned = set()
+    if uuids:
+        assigned.update(
+            uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
+            .filter(DahCustomerIdentity.person_uuid.in_(uuids))
+            .all()
+        )
+        assigned.update(
+            uuid for (uuid,) in db.query(Customer.person_uuid)
+            .filter(Customer.person_uuid.in_(uuids))
+            .all()
+        )
     seen = set()
     candidates = []
     for row in rows:
-        if row.person_uuid in seen:
+        if row.person_uuid in seen or row.person_uuid in assigned:
             continue
         seen.add(row.person_uuid)
         candidates.append({
@@ -434,6 +436,8 @@ def identity_candidates(db: Session, limit=12):
             "eventTime": row.event_time.isoformat() if row.event_time else None,
             "imageData": row.image_data,
         })
+        if len(candidates) >= limit:
+            break
     return {"items": candidates}
 
 
