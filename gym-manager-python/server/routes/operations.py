@@ -14,6 +14,11 @@ def trainers(q: str = "", title: str = "all", page: int = Query(1, ge=1), page_s
     return operations_controller.list_trainers(db, q=q, title=title, page=page, page_size=page_size)
 
 
+@router.get("/trainers/attendance", dependencies=[Depends(require_roles("admin", "manager"))])
+def trainer_attendance(day: str = "", db: Session = Depends(get_db)):
+    return operations_controller.employee_attendance(db, day)
+
+
 @router.post("/trainers", dependencies=[Depends(require_roles("admin", "manager"))])
 def create_trainer(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return operations_controller.create_trainer(db, payload, user)

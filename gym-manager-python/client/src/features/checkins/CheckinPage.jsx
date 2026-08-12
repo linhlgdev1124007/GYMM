@@ -32,14 +32,24 @@ export function CheckinPage() {
   ];
   const columns = [
     {
-      key: "member",
-      label: "Hội viên",
-      render: (row) => (
-        <Link className="hover:underline" to={`/members/${row.memberId}`}>
-          <span className="cell-primary">{row.memberName}</span>
-          <span className="cell-secondary block">{row.memberCode}</span>
-        </Link>
-      ),
+      key: "person",
+      label: "Người vào/ra",
+      sortValue: (row) => row.employeeName || row.memberName || "",
+      render: (row) =>
+        row.employeeId ? (
+          <div>
+            <span className="cell-primary">{row.employeeName}</span>
+            <span className="cell-secondary block">{row.employeeCode} · Nhân viên</span>
+          </div>
+        ) : (
+          <Link className="hover:underline" to={`/members/${row.memberId}`}>
+            <span className="cell-primary">{row.memberName}</span>
+            <span className="cell-secondary block">
+              {row.memberCode}
+              {row.memberStatus === "lead" ? " · Tiềm năng" : ""}
+            </span>
+          </Link>
+        ),
     },
     {
       key: "checkedInAt",
@@ -108,21 +118,37 @@ export function CheckinPage() {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
-            {activeSessions.map((row) => (
-              <Link
-                key={row.id}
-                to={`/members/${row.memberId}`}
-                className="rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-sm"
-              >
+            {activeSessions.map((row) => {
+              const content = (
+                <>
                 <div className="flex items-center gap-2">
                   <Activity size={16} className="text-emerald-600" />
-                  <strong className="text-sm text-slate-950">{row.memberName}</strong>
+                  <strong className="text-sm text-slate-950">{row.employeeName || row.memberName}</strong>
                 </div>
                 <p className="mt-1 text-xs text-slate-400">
-                  {row.memberCode} · Vào lúc {dateTime(row.checkedInAt)}
+                  {row.employeeId
+                    ? `${row.employeeCode} · Nhân viên`
+                    : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
                 </p>
-              </Link>
-            ))}
+                </>
+              );
+              return row.employeeId ? (
+                <div
+                  key={row.id}
+                  className="rounded-lg border border-slate-200 bg-white p-4"
+                >
+                  {content}
+                </div>
+              ) : (
+                <Link
+                  key={row.id}
+                  to={`/members/${row.memberId}`}
+                  className="rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-sm"
+                >
+                  {content}
+                </Link>
+              );
+            })}
           </div>
         </section>
       )}
@@ -151,9 +177,14 @@ export function CheckinPage() {
             {
               key: "member",
               label: "Người quét",
-              sortValue: (row) => row.memberName || row.faceName || row.personUuid || "",
+              sortValue: (row) => row.employeeName || row.memberName || row.faceName || row.personUuid || "",
               render: (row) =>
-                row.memberId ? (
+                row.employeeId ? (
+                  <div>
+                    <span className="cell-primary">{row.employeeName}</span>
+                    <span className="cell-secondary block">{row.employeeCode} · Nhân viên</span>
+                  </div>
+                ) : row.memberId ? (
                   <Link className="hover:underline" to={`/members/${row.memberId}`}>
                     <span className="cell-primary">{row.memberName}</span>
                     <span className="cell-secondary block">{row.memberCode}</span>

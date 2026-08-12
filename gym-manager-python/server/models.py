@@ -406,7 +406,8 @@ class DahCustomerIdentity(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), index=True)
     person_uuid: Mapped[str] = mapped_column(String(80), index=True)
     person_id: Mapped[str | None] = mapped_column(String(80), index=True)
@@ -415,7 +416,8 @@ class DahCustomerIdentity(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
-    customer: Mapped[Customer] = relationship()
+    customer: Mapped[Customer | None] = relationship()
+    employee: Mapped[Employee | None] = relationship()
     device: Mapped[Device | None] = relationship()
 
 
@@ -427,6 +429,7 @@ class DahWebhookEvent(Base):
     operator: Mapped[str] = mapped_column(String(40), index=True)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
     attendance_session_id: Mapped[int | None] = mapped_column(ForeignKey("attendance_sessions.id"))
     person_uuid: Mapped[str | None] = mapped_column(String(80), index=True)
     person_id: Mapped[str | None] = mapped_column(String(80), index=True)
@@ -442,4 +445,5 @@ class DahWebhookEvent(Base):
 
     device: Mapped[Device | None] = relationship()
     customer: Mapped[Customer | None] = relationship()
+    employee: Mapped[Employee | None] = relationship()
     attendance_session: Mapped[AttendanceSession | None] = relationship()

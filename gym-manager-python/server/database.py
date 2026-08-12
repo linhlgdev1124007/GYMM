@@ -219,3 +219,34 @@ def migrate_dah_integration():
             connection.exec_driver_sql(
                 f"CREATE UNIQUE INDEX {quote('ix_customers_person_uuid')} ON {quote('customers')} ({quote('person_uuid')})"
             )
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "dah_customer_identities" in tables:
+        columns = {column["name"] for column in inspector.get_columns("dah_customer_identities")}
+        with engine.begin() as connection:
+            if "employee_id" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('dah_customer_identities')} ADD COLUMN {quote('employee_id')} INTEGER"
+                )
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_dah_customer_identities_employee_id')} ON {quote('dah_customer_identities')} ({quote('employee_id')})"
+                )
+            if not IS_SQLITE:
+                customer_column = next(
+                    column for column in inspector.get_columns("dah_customer_identities")
+                    if column["name"] == "customer_id"
+                )
+                if not customer_column["nullable"]:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {quote('dah_customer_identities')} MODIFY COLUMN {quote('customer_id')} INTEGER NULL"
+                    )
+    if "dah_webhook_events" in tables:
+        columns = {column["name"] for column in inspector.get_columns("dah_webhook_events")}
+        if "employee_id" not in columns:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('dah_webhook_events')} ADD COLUMN {quote('employee_id')} INTEGER"
+                )
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_dah_webhook_events_employee_id')} ON {quote('dah_webhook_events')} ({quote('employee_id')})"
+                )

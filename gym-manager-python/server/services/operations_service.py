@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
-    Customer, Device, Employee, EmployeeJobTitle, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
+    Customer, DahCustomerIdentity, Device, Employee, EmployeeJobTitle, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
     ServicePackage, User,
 )
 from .audit_service import record_audit
@@ -160,14 +160,69 @@ def list_trainers(db: Session, q: str, page: int, page_size: int, title: str = "
     active_counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollment.customer_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), PtEnrollment.status == "active", or_(PtEnrollment.expires_at == None, PtEnrollment.expires_at >= date.today())).group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
     expired_counts = dict(db.query(PtEnrollmentCoach.coach_id, func.count(func.distinct(PtEnrollment.customer_id))).join(PtEnrollment).filter(PtEnrollmentCoach.coach_id.in_(ids), or_(PtEnrollment.expires_at < date.today(), PtEnrollment.status.in_(("completed", "inactive")))).group_by(PtEnrollmentCoach.coach_id).all()) if ids else {}
     items=[]
+    identities = {
+        row.employee_id: row for row in db.query(DahCustomerIdentity)
+        .filter(DahCustomerIdentity.employee_id.in_(ids))
+        .all()
+    } if ids else {}
     for row in rows:
         item=employee_data(row)
         item["isPtRole"] = row.job_title in pt_titles
         item["registeredPtClients"] = registered_counts.get(row.id, 0) if item["isPtRole"] else None
         item["activePtClients"] = active_counts.get(row.id, 0) if item["isPtRole"] else None
         item["expiredPtClients"] = expired_counts.get(row.id, 0) if item["isPtRole"] else None
+        identity = identities.get(row.id)
+        item["dahIdentity"] = {
+            "personUuid": identity.person_uuid,
+            "personId": identity.person_id,
+            "faceName": identity.face_name,
+            "lastSeenAt": identity.last_seen_at.isoformat() if identity.last_seen_at else None,
+        } if identity else None
         items.append(item)
     return {"items":items,"pagination":pagination(page,page_size,total),"jobTitles":[_job_title_data(row) for row in employee_job_titles(db)]}
+
+
+def employee_attendance(db: Session, day: str = ""):
+    target = _as_date(day) or date.today()
+    start = datetime.combine(target, datetime.min.time())
+    end = start + timedelta(days=1)
+    rows = (
+        db.query(AttendanceSession)
+        .options(joinedload(AttendanceSession.employee).joinedload(Employee.person))
+        .filter(
+            AttendanceSession.employee_id.is_not(None),
+            AttendanceSession.checked_in_at >= start,
+            AttendanceSession.checked_in_at < end,
+        )
+        .order_by(AttendanceSession.checked_in_at.asc(), AttendanceSession.id.asc())
+        .all()
+    )
+    items = []
+    shift_numbers = {}
+    for row in rows:
+        employee = row.employee
+        shift_numbers[row.employee_id] = shift_numbers.get(row.employee_id, 0) + 1
+        checked_in = row.checked_in_at
+        checked_out = row.checked_out_at
+        duration_minutes = None
+        if checked_in and checked_out:
+            duration_minutes = max(int((checked_out - checked_in).total_seconds() // 60), 0)
+        items.append({
+            "id": row.id,
+            "date": target.isoformat(),
+            "employeeId": row.employee_id,
+            "employeeCode": employee.employee_code if employee else None,
+            "employeeName": employee.person.display_name if employee and employee.person else None,
+            "phone": employee.person.phone if employee and employee.person else None,
+            "title": employee.job_title if employee else None,
+            "shiftNo": shift_numbers[row.employee_id],
+            "checkedInAt": checked_in.isoformat() if checked_in else None,
+            "checkedOutAt": checked_out.isoformat() if checked_out else None,
+            "durationMinutes": duration_minutes,
+            "source": row.source,
+            "status": row.status,
+        })
+    return {"date": target.isoformat(), "items": items}
 
 
 def create_trainer(db: Session, payload: dict, actor: User | None = None):
@@ -276,14 +331,28 @@ def checkin_candidates(db: Session, q: str):
     for member in rows:
         memberships=[m for m in member.memberships if not m.package.is_pt and m.status=="active"]
         current=sorted(memberships,key=lambda x:x.expires_at or date.max,reverse=True)[0] if memberships else None
-        eligible=member.status=="active" and bool(current) and (not current.expires_at or current.expires_at>=date.today())
+        eligible=member.status=="lead" or (member.status=="active" and bool(current) and (not current.expires_at or current.expires_at>=date.today()))
         result.append({"id":member.id,"code":member.customer_code,"name":member.person.display_name,"phone":member.person.phone,"membership":current.package.name if current else None,"expiresAt":current.expires_at.isoformat() if current and current.expires_at else None,"eligible":eligible,"reason":None if eligible else "Gói tập không hoạt động hoặc đã hết hạn."})
     return result
 
 
 def recent_checkins(db: Session, limit=30):
-    rows=db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(limit).all()
-    return [{"id":row.id,"memberId":row.customer_id,"memberName":row.customer.person.display_name if row.customer else None,"memberCode":row.customer.customer_code if row.customer else None,"checkedInAt":row.checked_in_at.isoformat(),"checkedOutAt":row.checked_out_at.isoformat() if row.checked_out_at else None,"result":row.result,"status":row.status} for row in rows]
+    rows=db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person), joinedload(AttendanceSession.employee).joinedload(Employee.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(limit).all()
+    return [{
+        "id":row.id,
+        "personType":"employee" if row.employee_id else "member",
+        "memberId":row.customer_id,
+        "memberName":row.customer.person.display_name if row.customer else None,
+        "memberCode":row.customer.customer_code if row.customer else None,
+        "memberStatus":row.customer.status if row.customer else None,
+        "employeeId":row.employee_id,
+        "employeeName":row.employee.person.display_name if row.employee else None,
+        "employeeCode":row.employee.employee_code if row.employee else None,
+        "checkedInAt":row.checked_in_at.isoformat(),
+        "checkedOutAt":row.checked_out_at.isoformat() if row.checked_out_at else None,
+        "result":row.result,
+        "status":row.status,
+    } for row in rows]
 
 
 def create_checkin(db: Session, payload: dict, actor: User | None = None):
@@ -291,7 +360,7 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     if not member: raise HTTPException(404,"Không tìm thấy hội viên.")
     if db.query(AttendanceSession).filter(AttendanceSession.customer_id==member_id,AttendanceSession.status=="open").first(): raise HTTPException(409,"Hội viên đã check-in và chưa check-out.")
     current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=date.today())).first()
-    if member.status!="active" or not current: raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
+    if member.status != "lead" and (member.status!="active" or not current): raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
     row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
     db.commit();return {"id":row.id,"checkedInAt":row.checked_in_at.isoformat()}
@@ -302,7 +371,7 @@ def checkout(db: Session, session_id: int, actor: User | None = None):
     if not row: raise HTTPException(404,"Không tìm thấy phiên check-in.")
     if row.status!="open": raise HTTPException(409,"Phiên này đã được check-out.")
     row.checked_out_at=utc_now();row.status="closed"
-    record_audit(db, actor, "checkout", "attendance", row.id, "Check-out hội viên", customer_id=row.customer_id)
+    record_audit(db, actor, "checkout", "attendance", row.id, "Check-out nhân viên" if row.employee_id else "Check-out hội viên", customer_id=row.customer_id)
     db.commit();return {"ok":True}
 
 

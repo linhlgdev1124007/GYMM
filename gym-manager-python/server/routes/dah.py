@@ -32,8 +32,12 @@ async def dah_verify(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/dah/identity-candidates", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
-def identity_candidates(limit: int = Query(12, ge=1, le=30), db: Session = Depends(get_db)):
-    return dah_service.identity_candidates(db, limit)
+def identity_candidates(
+    limit: int = Query(12, ge=1, le=30),
+    targetType: str = Query("member"),
+    db: Session = Depends(get_db),
+):
+    return dah_service.identity_candidates(db, limit, targetType)
 
 
 @router.get("/api/dah/events", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
@@ -44,3 +48,8 @@ def dah_events(view: str = "all", limit: int = Query(50, ge=1, le=100), db: Sess
 @router.post("/api/members/{member_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def assign_identity(member_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
     return dah_service.assign_identity_to_customer(db, member_id, payload.get("eventId"))
+
+
+@router.post("/api/employees/{employee_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager"))])
+def assign_employee_identity(employee_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return dah_service.assign_identity_to_employee(db, employee_id, payload.get("eventId"))

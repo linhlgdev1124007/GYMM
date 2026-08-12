@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
+import { Download, Link2, Pencil, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
@@ -11,13 +11,32 @@ import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { Field, Input, Select } from "../../components/ui/Form";
 import { Modal } from "../../components/ui/Modal";
-import { PhoneInput } from "../../components/ui/SmartInputs";
+import { DateInput, PhoneInput } from "../../components/ui/SmartInputs";
 import { Pagination } from "../../components/ui/Pagination";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { formatPhone, initials, normalizePhone } from "../../utils/format";
+import { DahIdentityLinkModal } from "../members/DahIdentityLinkModal";
 
 const defaultJobTitles = ["Sale", "Coach", "Marketing"];
 const blank = { name: "", phone: "", email: "", title: "Coach" };
+
+const isoDay = (offset = 0) => {
+  const day = new Date();
+  day.setDate(day.getDate() + offset);
+  const year = day.getFullYear();
+  const month = String(day.getMonth() + 1).padStart(2, "0");
+  const date = String(day.getDate()).padStart(2, "0");
+  return `${year}-${month}-${date}`;
+};
+
+const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+
+function minutesLabel(value) {
+  if (value == null) return "";
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
 
 function normalizeJobTitle(value) {
   return String(value || "").trim().slice(0, 80);
@@ -32,6 +51,9 @@ export function TrainersPage() {
   const [pageSize, setPageSize] = useState(20);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [identityTarget, setIdentityTarget] = useState(null);
+  const [attendancePreset, setAttendancePreset] = useState("today");
+  const [attendanceDate, setAttendanceDate] = useState(isoDay());
   const [confirm, setConfirm] = useState(null);
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
@@ -109,6 +131,48 @@ export function TrainersPage() {
     },
     onError: (e) =>
       notify.errorFrom(e, "Không thể xóa nhân viên. Vui lòng thử lại."),
+  });
+  const attendanceDay =
+    attendancePreset === "yesterday"
+      ? isoDay(-1)
+      : attendancePreset === "custom"
+        ? attendanceDate || isoDay()
+        : isoDay();
+  const exportAttendance = useMutation({
+    mutationFn: () =>
+      api(`/api/trainers/attendance?${queryString({ day: attendanceDay })}`),
+    onSuccess: (data) => {
+      const rows = data.items || [];
+      const csv = [
+        "Ngày,Ca,Mã nhân viên,Họ tên,Điện thoại,Chức vụ,Check-in,Check-out,Tổng thời gian,Nguồn,Trạng thái",
+        ...rows.map((row) =>
+          [
+            data.date,
+            row.shiftNo,
+            row.employeeCode,
+            row.employeeName,
+            row.phone,
+            row.title,
+            row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("vi-VN") : "",
+            row.checkedOutAt ? new Date(row.checkedOutAt).toLocaleString("vi-VN") : "",
+            minutesLabel(row.durationMinutes),
+            row.source,
+            row.status,
+          ].map(csvValue).join(","),
+        ),
+      ].join("\n");
+      const url = URL.createObjectURL(
+        new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `pulsefit-employee-attendance-${data.date}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      notify.success(`Đã tải ${rows.length} dòng chấm công nhân viên.`);
+    },
+    onError: (e) =>
+      notify.errorFrom(e, "Không thể tải chấm công nhân viên."),
   });
   const columns = [
     {
@@ -190,6 +254,17 @@ export function TrainersPage() {
             <Pencil size={13} />
             Sửa
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIdentityTarget(r);
+            }}
+          >
+            <Link2 size={13} />
+            {r.dahIdentity ? "Đổi DAH" : "Liên kết DAH"}
+          </Button>
           <RowMenu>
             <button className="danger" onClick={() => setConfirm(r)}>
               Xóa nhân viên
@@ -206,10 +281,21 @@ export function TrainersPage() {
         title="Nhân viên"
         description="Click nhân viên để chỉnh sửa; chỉ chức vụ PT hiển thị thống kê khách đăng ký."
         action={
-          <Button onClick={() => edit(null)}>
-            <Plus size={16} />
-            Thêm nhân viên
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => exportAttendance.mutate()}
+              loading={exportAttendance.isPending}
+              loadingText="Đang tải..."
+            >
+              <Download size={16} />
+              Tải chấm công
+            </Button>
+            <Button onClick={() => edit(null)}>
+              <Plus size={16} />
+              Thêm nhân viên
+            </Button>
+          </div>
         }
       />
       <div className="toolbar">
@@ -236,6 +322,27 @@ export function TrainersPage() {
             </option>
           ))}
         </Select>
+        <Select
+          className="input w-40"
+          value={attendancePreset}
+          onChange={(event) => {
+            const value = event.target.value;
+            setAttendancePreset(value);
+            if (value === "today") setAttendanceDate(isoDay());
+            if (value === "yesterday") setAttendanceDate(isoDay(-1));
+          }}
+        >
+          <option value="today">Chấm công hôm nay</option>
+          <option value="yesterday">Chấm công hôm qua</option>
+          <option value="custom">Ngày cụ thể</option>
+        </Select>
+        {attendancePreset === "custom" && (
+          <DateInput
+            className="input w-40"
+            value={attendanceDate}
+            onChange={setAttendanceDate}
+          />
+        )}
       </div>
       <DataTable
         columns={columns}
@@ -373,6 +480,20 @@ export function TrainersPage() {
           </Button>
         </div>
       </Modal>
+      <DahIdentityLinkModal
+        open={!!identityTarget}
+        onClose={() => setIdentityTarget(null)}
+        memberId={identityTarget?.id}
+        memberName={identityTarget?.name}
+        targetType="employee"
+        onLinked={() => {
+          client.invalidateQueries({ queryKey: ["trainers"] });
+          client.invalidateQueries({ queryKey: ["dah-events"] });
+          client.invalidateQueries({ queryKey: ["checkins"] });
+          setIdentityTarget(null);
+          notify.success(`Đã liên kết DAH cho ${identityTarget?.name}.`);
+        }}
+      />
     </>
   );
 }

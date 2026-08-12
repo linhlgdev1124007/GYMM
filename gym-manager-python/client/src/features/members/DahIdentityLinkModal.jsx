@@ -12,17 +12,18 @@ export function DahIdentityLinkModal({
   memberName,
   onLinked,
   onSelect,
+  targetType = "member",
   error,
 }) {
   const candidates = useQuery({
-    queryKey: ["dah-identity-candidates"],
-    queryFn: () => api("/api/dah/identity-candidates?limit=12"),
+    queryKey: ["dah-identity-candidates", targetType],
+    queryFn: () => api(`/api/dah/identity-candidates?limit=12&targetType=${targetType}`),
     enabled: open,
     refetchInterval: open ? 4000 : false,
   });
   const assign = useMutation({
     mutationFn: (eventId) =>
-      api(`/api/members/${memberId}/dah-identity`, {
+      api(`/${targetType === "employee" ? "api/employees" : "api/members"}/${memberId}/dah-identity`, {
         method: "POST",
         body: { eventId },
       }),
@@ -44,7 +45,7 @@ export function DahIdentityLinkModal({
       open={open}
       onClose={onClose}
       title="Liên kết định danh DAH"
-      description={memberName || "Chọn PersonUUID chưa gán cho hội viên nào"}
+      description={memberName || `Chọn PersonUUID chưa gán cho ${targetType === "employee" ? "nhân viên" : "hội viên"} nào`}
       size="lg"
     >
       <div className="modal-body">
@@ -106,7 +107,7 @@ export function DahIdentityLinkModal({
           <div className="empty-state compact mt-4">
             <ScanFace size={28} />
             <strong>Chưa có face mới chưa gán</strong>
-            <p>Cho khách quét mặt trên DAH rồi bấm làm mới.</p>
+            <p>Cho người cần liên kết quét mặt trên DAH rồi bấm làm mới.</p>
           </div>
         )}
       </div>

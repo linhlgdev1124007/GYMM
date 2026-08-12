@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -159,5 +159,44 @@ def test_trainers_show_pt_client_status_counts_only_for_pt_roles(tmp_path):
         assert rows["Sale One"]["registeredPtClients"] is None
         assert rows["Sale One"]["activePtClients"] is None
         assert rows["Sale One"]["expiredPtClients"] is None
+    finally:
+        db.close()
+
+
+def test_employee_attendance_returns_multiple_shifts_in_one_day(tmp_path):
+    from server.models import AttendanceSession, Employee, Person
+    from server.services.operations_service import employee_attendance
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Coach Shift", phone="0900000010", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00010", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add_all([
+            AttendanceSession(
+                employee_id=employee.id,
+                checked_in_at=datetime(2026, 8, 12, 8, 0),
+                checked_out_at=datetime(2026, 8, 12, 12, 0),
+                source="dah",
+                status="closed",
+            ),
+            AttendanceSession(
+                employee_id=employee.id,
+                checked_in_at=datetime(2026, 8, 12, 14, 0),
+                checked_out_at=datetime(2026, 8, 12, 18, 30),
+                source="dah",
+                status="closed",
+            ),
+        ])
+        db.commit()
+
+        data = employee_attendance(db, "2026-08-12")
+
+        assert [row["shiftNo"] for row in data["items"]] == [1, 2]
+        assert [row["durationMinutes"] for row in data["items"]] == [240, 270]
+        assert all(row["employeeId"] == employee.id for row in data["items"])
     finally:
         db.close()

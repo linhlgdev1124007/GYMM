@@ -77,6 +77,14 @@ def verify_payload(create_time, file_pos="1"):
     }
 
 
+def verify_payload_for_uuid(person_uuid, create_time, file_pos="1"):
+    payload = verify_payload(create_time, file_pos)
+    payload["info"]["PersonUUID"] = person_uuid
+    payload["info"]["PersonID"] = person_uuid
+    payload["info"]["Name"] = f"FACE {person_uuid}"
+    return payload
+
+
 def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_path):
     from server.models import AttendanceSession, DahCustomerIdentity, DahWebhookEvent, Customer
     from server.services import dah_service
@@ -143,5 +151,114 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         assert event.status == "linked"
         assert event.image_data is None
         assert dah_service.identity_candidates(db)["items"] == []
+    finally:
+        db.close()
+
+
+def test_dah_identity_can_be_relinked_to_employee_and_toggles_attendance(tmp_path):
+    from server.models import AttendanceSession, DahCustomerIdentity, DahWebhookEvent, Employee, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Coach DAH", phone="0900000005", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00005", job_title="Coach", status="active")
+        db.add(employee)
+        db.commit()
+
+        unknown = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:00:00", "300"))
+        assert unknown["status"] == "unknown"
+        event_id = db.query(DahWebhookEvent).filter_by(person_uuid="9001").one().id
+
+        linked = dah_service.assign_identity_to_employee(db, employee.id, event_id)
+        assert linked["personUuid"] == "9001"
+        assert db.query(DahCustomerIdentity).filter_by(employee_id=employee.id, person_uuid="9001").count() == 1
+
+        checkin = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:05:00", "301"))
+        assert checkin["action"] == "checkin"
+        assert checkin["employeeId"] == employee.id
+        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="open").count() == 1
+
+        checkout = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:15:00", "302"))
+        assert checkout["action"] == "checkout"
+        session = db.query(AttendanceSession).filter_by(employee_id=employee.id).one()
+        assert session.status == "closed"
+    finally:
+        db.close()
+
+
+def test_dah_identity_linked_to_member_and_employee_records_both_attendances(tmp_path):
+    from server.models import AttendanceSession, Customer, DahCustomerIdentity, Employee, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid=None)
+        customer = db.get(Customer, customer_id)
+        employee_person = Person(display_name="Coach Member", phone="0900000007", status="active")
+        db.add(employee_person)
+        db.flush()
+        employee = Employee(person_id=employee_person.id, employee_code="EMP-00007", job_title="Coach", status="active")
+        db.add(employee)
+        db.commit()
+
+        unknown = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:00:00", "500"))
+        assert unknown["status"] == "unknown"
+        event_id = unknown["eventId"]
+
+        linked_customer = dah_service.assign_identity_to_customer(db, customer.id, event_id)
+        assert linked_customer["personUuid"] == "dual-uuid"
+        employee_candidates = dah_service.identity_candidates(db, target_type="employee")
+        assert employee_candidates["items"][0]["personUuid"] == "dual-uuid"
+
+        linked_employee = dah_service.assign_identity_to_employee(db, employee.id, event_id)
+        assert linked_employee["personUuid"] == "dual-uuid"
+        identity = db.query(DahCustomerIdentity).filter_by(person_uuid="dual-uuid").one()
+        assert identity.customer_id == customer.id
+        assert identity.employee_id == employee.id
+
+        checkin = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:05:00", "501"))
+        assert checkin["action"] == "checkin"
+        assert checkin["memberId"] == customer.id
+        assert checkin["employeeId"] == employee.id
+        assert checkin["memberSessionId"]
+        assert checkin["employeeSessionId"]
+        assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="open").count() == 1
+        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="open").count() == 1
+
+        checkout = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:15:00", "502"))
+        assert checkout["action"] == "checkout"
+        assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="closed").count() == 1
+        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="closed").count() == 1
+    finally:
+        db.close()
+
+
+def test_dah_allows_lead_customer_checkin_without_membership(tmp_path):
+    from server.models import AttendanceSession, Customer, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Lead Customer", phone="0900000006", status="active")
+        db.add(person)
+        db.flush()
+        customer = Customer(
+            person_id=person.id,
+            customer_code="CUS0009001",
+            person_uuid="lead-uuid",
+            status="lead",
+            source="Walk-in",
+        )
+        db.add(customer)
+        db.commit()
+
+        checkin = dah_service.verify(db, verify_payload_for_uuid("lead-uuid", "2026-08-11T12:00:00", "400"))
+
+        assert checkin["action"] == "checkin"
+        assert checkin["memberId"] == customer.id
+        assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="open").count() == 1
     finally:
         db.close()

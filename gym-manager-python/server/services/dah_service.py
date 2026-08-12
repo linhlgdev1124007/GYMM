@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent,
-    Device, Membership, ServicePackage,
+    Device, Employee, Membership, ServicePackage,
 )
 from ..timeutils import utc_now
 
@@ -131,7 +131,7 @@ def _active_regular_membership(db: Session, customer_id: int):
 def _identity_for_uuid(db: Session, device: Device | None, info: dict, event_time: datetime | None):
     person_uuid = _clean(info.get("PersonUUID"))
     if not person_uuid:
-        return None, None, False
+        return None, None, None, False
     person_id = _clean(info.get("PersonID"))
     face_name = _clean(info.get("Name"))
     rfid = _clean(info.get("RFIDCard")) or _clean(info.get("MjCardNo"))
@@ -142,14 +142,15 @@ def _identity_for_uuid(db: Session, device: Device | None, info: dict, event_tim
         identity.face_name = face_name or identity.face_name
         identity.rfid_card = rfid or identity.rfid_card
         identity.last_seen_at = event_time or utc_now()
-        customer = db.get(Customer, identity.customer_id)
+        customer = db.get(Customer, identity.customer_id) if identity.customer_id else None
+        employee = db.get(Employee, identity.employee_id) if identity.employee_id else None
         if customer and not customer.person_uuid:
             customer.person_uuid = person_uuid
-        return identity, customer, False
+        return identity, customer, employee, False
 
     customer = db.query(Customer).filter(Customer.person_uuid == person_uuid).first()
     if not customer:
-        return None, None, False
+        return None, None, None, False
     identity = DahCustomerIdentity(
         customer_id=customer.id,
         device_id=device.id if device else None,
@@ -161,7 +162,103 @@ def _identity_for_uuid(db: Session, device: Device | None, info: dict, event_tim
     )
     db.add(identity)
     db.flush()
-    return identity, customer, True
+    return identity, customer, None, True
+
+
+def _recent_duplicate_scan(db: Session, person_uuid: str | None, event_time: datetime) -> bool:
+    if not person_uuid:
+        return False
+    recent_processed = (
+        db.query(DahWebhookEvent)
+        .filter(
+            DahWebhookEvent.person_uuid == person_uuid,
+            DahWebhookEvent.status == "processed",
+            DahWebhookEvent.action.in_(("checkin", "checkout", "mixed")),
+        )
+        .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
+        .first()
+    )
+    return bool(
+        recent_processed and recent_processed.event_time and
+        abs((event_time - recent_processed.event_time).total_seconds()) <= DUPLICATE_SCAN_SECONDS
+    )
+
+
+def _toggle_employee_attendance(db: Session, employee: Employee, event_time: datetime, device: Device | None) -> dict:
+    if employee.status != "active":
+        return {"status": "denied", "action": "denied", "note": "Nhân viên không ở trạng thái hoạt động.", "session_id": None}
+    open_session = (
+        db.query(AttendanceSession)
+        .filter(AttendanceSession.employee_id == employee.id, AttendanceSession.status == "open")
+        .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        .first()
+    )
+    if open_session:
+        open_session.checked_out_at = event_time
+        open_session.status = "closed"
+        open_session.note = (open_session.note or "DAH employee auto")[:255]
+        return {"status": "processed", "action": "checkout", "note": "Check-out nhân viên.", "session_id": open_session.id}
+    session = AttendanceSession(
+        employee_id=employee.id,
+        checked_in_at=event_time,
+        source="dah",
+        result="allowed",
+        status="open",
+        note=f"DAH {device.code}" if device else "DAH",
+    )
+    db.add(session)
+    db.flush()
+    return {"status": "processed", "action": "checkin", "note": "Check-in nhân viên.", "session_id": session.id}
+
+
+def _toggle_customer_attendance(
+    db: Session,
+    customer: Customer,
+    event_time: datetime,
+    device: Device | None,
+    image: str | None,
+    identity_created: bool,
+) -> dict:
+    if image and (identity_created or not customer.avatar_image_data):
+        customer.avatar_image_data = image
+    open_session = (
+        db.query(AttendanceSession)
+        .filter(AttendanceSession.customer_id == customer.id, AttendanceSession.status == "open")
+        .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        .first()
+    )
+    if open_session:
+        open_session.checked_out_at = event_time
+        open_session.status = "closed"
+        open_session.note = (open_session.note or "DAH auto")[:255]
+        return {"status": "processed", "action": "checkout", "note": "Check-out hội viên.", "session_id": open_session.id}
+    if customer.status == "lead":
+        session = AttendanceSession(
+            customer_id=customer.id,
+            checked_in_at=event_time,
+            source="dah",
+            result="allowed",
+            status="open",
+            note=f"DAH {device.code} · Khách tiềm năng" if device else "DAH · Khách tiềm năng",
+        )
+        db.add(session)
+        db.flush()
+        return {"status": "processed", "action": "checkin", "note": "Check-in khách tiềm năng.", "session_id": session.id}
+    if not _active_regular_membership(db, customer.id):
+        return {"status": "denied", "action": "denied", "note": "Hội viên không có gói tập còn hiệu lực.", "session_id": None}
+    if customer.status != "active":
+        return {"status": "denied", "action": "denied", "note": "Hội viên không ở trạng thái hoạt động.", "session_id": None}
+    session = AttendanceSession(
+        customer_id=customer.id,
+        checked_in_at=event_time,
+        source="dah",
+        result="allowed",
+        status="open",
+        note=f"DAH {device.code}" if device else "DAH",
+    )
+    db.add(session)
+    db.flush()
+    return {"status": "processed", "action": "checkin", "note": "Check-in hội viên.", "session_id": session.id}
 
 
 def heartbeat(db: Session, payload: dict):
@@ -222,11 +319,13 @@ def verify(db: Session, payload: dict):
     event_time = _parse_time(info.get("CreateTime")) or utc_now()
     verify_status = _int(info.get("VerifyStatus"))
     similarity = _float(info.get("Similarity1"))
-    identity, customer, identity_created = _identity_for_uuid(db, device, info, event_time)
+    identity, customer, employee, identity_created = _identity_for_uuid(db, device, info, event_time)
     status = "received"
     action = None
     note = None
     session_id = None
+    member_session_id = None
+    employee_session_id = None
 
     if verify_status != 1:
         status = "rejected"
@@ -236,67 +335,39 @@ def verify(db: Session, payload: dict):
         status = "unknown"
         action = "missing_person_uuid"
         note = "Webhook không có PersonUUID."
-    elif not customer:
+    elif not customer and not employee:
         status = "unknown"
         action = "unknown_identity"
-        note = "PersonUUID chưa khớp hội viên."
+        note = "PersonUUID chưa khớp hội viên hoặc nhân viên."
     else:
-        recent_processed = (
-            db.query(DahWebhookEvent)
-            .filter(
-                DahWebhookEvent.person_uuid == _clean(info.get("PersonUUID")),
-                DahWebhookEvent.status == "processed",
-                DahWebhookEvent.action.in_(("checkin", "checkout")),
-            )
-            .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
-            .first()
-        )
-        duplicate_scan = bool(
-            recent_processed and recent_processed.event_time and
-            abs((event_time - recent_processed.event_time).total_seconds()) <= DUPLICATE_SCAN_SECONDS
-        )
-        if duplicate_scan:
+        if _recent_duplicate_scan(db, _clean(info.get("PersonUUID")), event_time):
             status = "duplicate"
             action = "duplicate_scan"
             note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
         else:
-            if image and (identity_created or not customer.avatar_image_data):
-                customer.avatar_image_data = image
-            open_session = (
-                db.query(AttendanceSession)
-                .filter(AttendanceSession.customer_id == customer.id, AttendanceSession.status == "open")
-                .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
-                .first()
-            )
-            if open_session:
-                open_session.checked_out_at = event_time
-                open_session.status = "closed"
-                open_session.note = (open_session.note or "DAH auto")[:255]
+            results = []
+            if employee:
+                employee_result = _toggle_employee_attendance(db, employee, event_time, device)
+                employee_session_id = employee_result["session_id"]
+                results.append(employee_result)
+            if customer:
+                customer_result = _toggle_customer_attendance(db, customer, event_time, device, image, identity_created)
+                member_session_id = customer_result["session_id"]
+                results.append(customer_result)
+
+            processed = [row for row in results if row["status"] == "processed"]
+            if processed:
                 status = "processed"
-                action = "checkout"
-                session_id = open_session.id
-            elif not _active_regular_membership(db, customer.id):
-                status = "denied"
-                action = "denied"
-                note = "Hội viên không có gói tập còn hiệu lực."
-            elif customer.status != "active":
-                status = "denied"
-                action = "denied"
-                note = "Hội viên không ở trạng thái hoạt động."
+                processed_actions = {row["action"] for row in processed}
+                action = processed[0]["action"] if len(processed_actions) == 1 else "mixed"
+                session_id = member_session_id or employee_session_id
+                notes = [row["note"] for row in results if row.get("note")]
+                note = " ".join(notes)[:255] if notes else None
             else:
-                session = AttendanceSession(
-                    customer_id=customer.id,
-                    checked_in_at=event_time,
-                    source="dah",
-                    result="allowed",
-                    status="open",
-                    note=f"DAH {device.code}" if device else "DAH",
-                )
-                db.add(session)
-                db.flush()
-                status = "processed"
-                action = "checkin"
-                session_id = session.id
+                denied = results[0] if results else {"note": "Không có đối tượng để xử lý."}
+                status = denied.get("status") or "denied"
+                action = denied.get("action") or "denied"
+                note = denied.get("note")
 
     event_image = image if status == "unknown" and action == "unknown_identity" else None
     event = DahWebhookEvent(
@@ -304,6 +375,7 @@ def verify(db: Session, payload: dict):
         operator=operator,
         device_id=device.id if device else None,
         customer_id=customer.id if customer else None,
+        employee_id=employee.id if employee else None,
         attendance_session_id=session_id,
         person_uuid=_clean(info.get("PersonUUID")),
         person_id=_clean(info.get("PersonID")),
@@ -325,7 +397,10 @@ def verify(db: Session, payload: dict):
         "action": action,
         "status": status,
         "memberId": customer.id if customer else None,
+        "employeeId": employee.id if employee else None,
         "sessionId": session_id,
+        "memberSessionId": member_session_id,
+        "employeeSessionId": employee_session_id,
     }
 
 
@@ -348,6 +423,14 @@ def _event_customer_code(event: DahWebhookEvent) -> str | None:
     return event.customer.customer_code if getattr(event, "customer", None) else None
 
 
+def _event_employee_name(event: DahWebhookEvent) -> str | None:
+    return event.employee.person.display_name if getattr(event, "employee", None) and event.employee.person else None
+
+
+def _event_employee_code(event: DahWebhookEvent) -> str | None:
+    return event.employee.employee_code if getattr(event, "employee", None) else None
+
+
 def _event_data(row: DahWebhookEvent):
     face_name = _event_face_name(row)
     return {
@@ -357,6 +440,9 @@ def _event_data(row: DahWebhookEvent):
         "memberId": row.customer_id,
         "memberName": _event_customer_name(row),
         "memberCode": _event_customer_code(row),
+        "employeeId": row.employee_id,
+        "employeeName": _event_employee_name(row),
+        "employeeCode": _event_employee_code(row),
         "faceName": face_name,
         "personUuid": row.person_uuid,
         "personId": row.person_id,
@@ -377,6 +463,7 @@ def dah_events(db: Session, view="all", limit=50):
         .options(
             joinedload(DahWebhookEvent.device),
             joinedload(DahWebhookEvent.customer).joinedload(Customer.person),
+            joinedload(DahWebhookEvent.employee).joinedload(Employee.person),
         )
         .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
     )
@@ -394,8 +481,9 @@ def dah_events(db: Session, view="all", limit=50):
     return {"items": [_event_data(row) for row in rows]}
 
 
-def identity_candidates(db: Session, limit=12):
+def identity_candidates(db: Session, limit=12, target_type="member"):
     limit = max(min(int(limit or 12), 30), 1)
+    target_type = target_type if target_type in {"member", "employee"} else "member"
     rows = (
         db.query(DahWebhookEvent)
         .options(joinedload(DahWebhookEvent.device))
@@ -410,16 +498,23 @@ def identity_candidates(db: Session, limit=12):
     uuids = {row.person_uuid for row in rows if row.person_uuid}
     assigned = set()
     if uuids:
-        assigned.update(
-            uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
-            .filter(DahCustomerIdentity.person_uuid.in_(uuids))
-            .all()
-        )
-        assigned.update(
-            uuid for (uuid,) in db.query(Customer.person_uuid)
-            .filter(Customer.person_uuid.in_(uuids))
-            .all()
-        )
+        if target_type == "employee":
+            assigned.update(
+                uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
+                .filter(DahCustomerIdentity.employee_id.is_not(None), DahCustomerIdentity.person_uuid.in_(uuids))
+                .all()
+            )
+        else:
+            assigned.update(
+                uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
+                .filter(DahCustomerIdentity.customer_id.is_not(None), DahCustomerIdentity.person_uuid.in_(uuids))
+                .all()
+            )
+            assigned.update(
+                uuid for (uuid,) in db.query(Customer.person_uuid)
+                .filter(Customer.person_uuid.in_(uuids))
+                .all()
+            )
     seen = set()
     candidates = []
     for row in rows:
@@ -448,21 +543,19 @@ def assign_identity_to_customer(db: Session, customer_id: int, event_id: int):
     event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
     if not event or event.operator != "VerifyPush" or not event.person_uuid:
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
-    duplicate_identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == event.person_uuid).first()
+    existing_identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == event.person_uuid).first()
     duplicate_customer = db.query(Customer).filter(Customer.person_uuid == event.person_uuid, Customer.id != customer.id).first()
-    if duplicate_identity or duplicate_customer:
+    if (existing_identity and existing_identity.customer_id and existing_identity.customer_id != customer.id) or duplicate_customer:
         raise HTTPException(409, "PersonUUID này đã được gán cho hội viên khác.")
     if customer.person_uuid and customer.person_uuid != event.person_uuid:
         raise HTTPException(409, "Hội viên đã có định danh DAH khác.")
 
-    identity = DahCustomerIdentity(
-        customer_id=customer.id,
-        device_id=event.device_id,
-        person_uuid=event.person_uuid,
-        person_id=event.person_id,
-        face_name=_event_face_name(event),
-        last_seen_at=event.event_time or event.received_at,
-    )
+    identity = existing_identity or DahCustomerIdentity(person_uuid=event.person_uuid)
+    identity.customer_id = customer.id
+    identity.device_id = event.device_id or identity.device_id
+    identity.person_id = event.person_id or identity.person_id
+    identity.face_name = _event_face_name(event) or identity.face_name
+    identity.last_seen_at = event.event_time or event.received_at
     customer.person_uuid = event.person_uuid
     if event.image_data:
         customer.avatar_image_data = event.image_data
@@ -477,4 +570,46 @@ def assign_identity_to_customer(db: Session, customer_id: int, event_id: int):
         "memberId": customer.id,
         "personUuid": customer.person_uuid,
         "avatarImageData": customer.avatar_image_data,
+    }
+
+
+def assign_identity_to_employee(db: Session, employee_id: int, event_id: int):
+    employee = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.id == employee_id).first()
+    if not employee:
+        raise HTTPException(404, "Không tìm thấy nhân viên.")
+    event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
+    if not event or event.operator != "VerifyPush" or not event.person_uuid:
+        raise HTTPException(422, "Định danh DAH không hợp lệ.")
+    existing_identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == event.person_uuid).first()
+    if existing_identity and existing_identity.employee_id and existing_identity.employee_id != employee.id:
+        raise HTTPException(409, "PersonUUID này đã được gán cho nhân viên khác.")
+
+    old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.employee_id == employee.id).all()
+    for old_link in old_links:
+        if old_link.person_uuid == event.person_uuid:
+            continue
+        if old_link.customer_id:
+            old_link.employee_id = None
+        else:
+            db.delete(old_link)
+
+    identity = existing_identity or DahCustomerIdentity(person_uuid=event.person_uuid)
+    identity.employee_id = employee.id
+    identity.device_id = event.device_id or identity.device_id
+    identity.person_id = event.person_id or identity.person_id
+    identity.face_name = _event_face_name(event) or identity.face_name
+    identity.last_seen_at = event.event_time or event.received_at
+    event.employee_id = employee.id
+    event.status = "linked"
+    event.action = "employee_identity_linked"
+    event.note = "Định danh DAH đã được gán cho nhân viên."
+    event.image_data = None
+    db.add(identity)
+    db.commit()
+    return {
+        "employeeId": employee.id,
+        "employeeName": employee.person.display_name,
+        "personUuid": identity.person_uuid,
+        "personId": identity.person_id,
+        "faceName": identity.face_name,
     }
