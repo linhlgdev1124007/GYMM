@@ -124,7 +124,7 @@ export function MemberEditForm({
                 placeholder="Chưa phân công"
                 searchPlaceholder="Tên hoặc mã nhân viên…"
                 options={
-                  options?.employees?.map((row) => ({
+                  options?.salesEmployees?.map((row) => ({
                     value: row.id,
                     label: row.name,
                     meta: `${row.code} · ${row.title || "Nhân viên"}`,

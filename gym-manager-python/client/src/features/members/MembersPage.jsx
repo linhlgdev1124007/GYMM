@@ -1203,7 +1203,7 @@ export function MembersPage() {
                     placeholder="Chưa phân công"
                     searchPlaceholder="Tên hoặc mã nhân viên…"
                     options={
-                      options.data?.employees.map((row) => ({
+                      options.data?.salesEmployees.map((row) => ({
                         value: row.id,
                         label: row.name,
                         meta: `${row.code} · ${row.title || "Nhân viên"}`,

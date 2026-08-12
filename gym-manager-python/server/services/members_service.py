@@ -23,6 +23,7 @@ RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 CUSTOMER_CODE_PREFIX = "CUS"
 CUSTOMER_CODE_WIDTH = 7
+SALES_TITLE_KEYWORDS = ("sale",)
 
 
 def _parse_date(value):
@@ -76,6 +77,21 @@ def _customer_code_sort_expression(db: Session):
     else:
         is_customer_code = Customer.customer_code.op("GLOB")(f"{CUSTOMER_CODE_PREFIX}[0-9]*")
     return case((is_customer_code, number), else_=0)
+
+
+def _is_sales_employee(employee: Employee | None) -> bool:
+    title = str(employee.job_title if employee else "").casefold()
+    return any(keyword in title for keyword in SALES_TITLE_KEYWORDS)
+
+
+def _sales_employee_id(db: Session, value) -> int | None:
+    employee_id = _int(value)
+    if not employee_id:
+        return None
+    employee = db.query(Employee).filter(Employee.id == employee_id, Employee.status == "active").first()
+    if not _is_sales_employee(employee):
+        raise HTTPException(status_code=422, detail="Nhân viên phụ trách phải là nhân viên Sale đang hoạt động.")
+    return employee.id
 
 
 def _require_bank_account_for_payment(db: Session, method: str, bank_account_id: int | None, amount: float):
@@ -222,6 +238,7 @@ def member_options(db: Session):
     } or {"Coach"}
     return {
         "employees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title, "isPtRole": row.job_title in pt_titles} for row in employees],
+        "salesEmployees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title} for row in employees if _is_sales_employee(row)],
         "ptRoleTitles": sorted(pt_titles, key=str.casefold),
         "plans": list_plans(db),
         "bankAccounts": [{"id": row.id, "label": f"{row.bank_name} · {row.account_number}", "visibility": row.visibility} for row in accounts],
@@ -292,7 +309,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
-    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_int(payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status=payload.get("status") or "lead", notes=payload.get("notes") or None)
+    member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_sales_employee_id(db, payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status=payload.get("status") or "lead", notes=payload.get("notes") or None)
     db.add(member); db.flush()
     member.customer_code = _next_customer_code(db)
     record_audit(db, actor, "create", "member", member.id, f"Tạo hội viên {name}", customer_id=member.id, details={"code": member.customer_code, "phone": phone})
@@ -421,7 +438,7 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
         member.person_uuid = person_uuid
     if "source" in payload: member.source = payload.get("source") or None
     if "notes" in payload: member.notes = payload.get("notes") or None
-    if "salesEmployeeId" in payload: member.sales_employee_id = _int(payload.get("salesEmployeeId"))
+    if "salesEmployeeId" in payload: member.sales_employee_id = _sales_employee_id(db, payload.get("salesEmployeeId"))
     if payload.get("status") in ("lead", "active", "blocked", "inactive", "frozen"): member.status = payload["status"]
     record_audit(db, actor, "update", "member", member.id, f"Cập nhật hồ sơ {member.person.display_name}", customer_id=member.id, details={"fields": changed_fields, "previousName": old_name})
     db.commit()
