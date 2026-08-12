@@ -336,9 +336,27 @@ def checkin_candidates(db: Session, q: str):
     return result
 
 
-def recent_checkins(db: Session, limit=30):
-    rows=db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person), joinedload(AttendanceSession.employee).joinedload(Employee.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(limit).all()
-    return [{
+def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 20):
+    target = _as_date(day) or date.today()
+    start = datetime.combine(target, datetime.min.time())
+    end = start + timedelta(days=1)
+    query = (
+        db.query(AttendanceSession)
+        .options(
+            joinedload(AttendanceSession.customer).joinedload(Customer.person),
+            joinedload(AttendanceSession.employee).joinedload(Employee.person),
+        )
+        .filter(AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end)
+    )
+    total = query.count()
+    active_count = query.filter(AttendanceSession.status == "open").count()
+    rows = (
+        query.order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = [{
         "id":row.id,
         "personType":"employee" if row.employee_id else "member",
         "memberId":row.customer_id,
@@ -354,6 +372,13 @@ def recent_checkins(db: Session, limit=30):
         "result":row.result,
         "status":row.status,
     } for row in rows]
+    return {
+        "date": target.isoformat(),
+        "activeCount": active_count,
+        "lastEventAt": items[0]["checkedInAt"] if items else None,
+        "items": items,
+        "pagination": pagination(page, page_size, total),
+    }
 
 
 def create_checkin(db: Session, payload: dict, actor: User | None = None):

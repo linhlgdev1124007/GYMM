@@ -200,3 +200,51 @@ def test_employee_attendance_returns_multiple_shifts_in_one_day(tmp_path):
         assert all(row["employeeId"] == employee.id for row in data["items"])
     finally:
         db.close()
+
+
+def test_recent_checkins_filters_by_day_and_paginates(tmp_path):
+    from server.models import AttendanceSession, Customer, Person
+    from server.services.operations_service import recent_checkins
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Checkin Member", phone="0900000020", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS0000020", status="active")
+        db.add(member)
+        db.flush()
+        db.add_all([
+            AttendanceSession(
+                customer_id=member.id,
+                checked_in_at=datetime(2026, 8, 12, 9, 0),
+                source="dah",
+                status="open",
+            ),
+            AttendanceSession(
+                customer_id=member.id,
+                checked_in_at=datetime(2026, 8, 12, 8, 0),
+                checked_out_at=datetime(2026, 8, 12, 10, 0),
+                source="dah",
+                status="closed",
+            ),
+            AttendanceSession(
+                customer_id=member.id,
+                checked_in_at=datetime(2026, 8, 11, 9, 0),
+                source="dah",
+                status="closed",
+            ),
+        ])
+        db.commit()
+
+        first_page = recent_checkins(db, day="2026-08-12", page=1, page_size=1)
+        second_page = recent_checkins(db, day="2026-08-12", page=2, page_size=1)
+
+        assert first_page["date"] == "2026-08-12"
+        assert first_page["activeCount"] == 1
+        assert first_page["pagination"]["total"] == 2
+        assert first_page["items"][0]["status"] == "open"
+        assert second_page["items"][0]["status"] == "closed"
+        assert recent_checkins(db, day="2026-08-11", page=1, page_size=20)["pagination"]["total"] == 1
+    finally:
+        db.close()

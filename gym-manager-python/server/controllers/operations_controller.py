@@ -10,7 +10,7 @@ def list_pt(db: Session, **params): return operations_service.list_pt(db, **para
 def create_pt(db: Session, member_id: int, payload: dict, actor=None): return operations_service.create_pt(db, member_id, payload, actor)
 def update_pt(db: Session, enrollment_id: int, payload: dict, actor=None): return operations_service.update_pt(db, enrollment_id, payload, actor)
 def checkin_candidates(db: Session, q: str): return operations_service.checkin_candidates(db, q)
-def recent_checkins(db: Session, limit: int): return operations_service.recent_checkins(db, limit)
+def recent_checkins(db: Session, **params): return operations_service.recent_checkins(db, **params)
 def create_checkin(db: Session, payload: dict, actor=None): return operations_service.create_checkin(db, payload, actor)
 def checkout(db: Session, session_id: int, actor=None): return operations_service.checkout(db, session_id, actor)
 def list_payments(db: Session, **params): return operations_service.list_payments(db, **params)

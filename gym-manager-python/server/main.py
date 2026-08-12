@@ -1,6 +1,8 @@
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import timedelta
+import asyncio
+import contextlib
 import hmac
 
 from fastapi import FastAPI, HTTPException, Request
@@ -20,7 +22,7 @@ from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, dah, insights, members, operations, users
 from .security import ensure_admin_user
 from .services.operations_service import ensure_employee_job_titles
-from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
+from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS, cleanup_webhook_images
 from .timeutils import utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
@@ -76,10 +78,26 @@ def initialize_database():
         db.close()
 
 
+async def webhook_image_cleanup_job():
+    while True:
+        db = SessionLocal()
+        try:
+            cleanup_webhook_images(db)
+        finally:
+            db.close()
+        await asyncio.sleep(24 * 60 * 60)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_database()
-    yield
+    cleanup_task = asyncio.create_task(webhook_image_cleanup_job())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(

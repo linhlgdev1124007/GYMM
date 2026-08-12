@@ -1,11 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { format, subDays } from "date-fns";
 import { Activity, Link2, Radio, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api } from "../../services/api";
+import { api, queryString } from "../../services/api";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
+import { DateInput } from "../../components/ui/SmartInputs";
+import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { dateTime, initials } from "../../utils/format";
 
@@ -43,9 +46,22 @@ function PersonCell({ row }) {
 
 export function CheckinPage() {
   const [eventView, setEventView] = useState("all");
+  const today = format(new Date(), "yyyy-MM-dd");
+  const yesterday = format(subDays(new Date(), 1), "yyyy-MM-dd");
+  const [dateView, setDateView] = useState("today");
+  const [customDate, setCustomDate] = useState(today);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const selectedDate =
+    dateView === "yesterday" ? yesterday : dateView === "custom" ? customDate : today;
+  const changeDateView = (nextView) => {
+    setDateView(nextView);
+    setPage(1);
+  };
   const recent = useQuery({
-    queryKey: ["checkins"],
-    queryFn: () => api("/api/checkins?limit=40"),
+    queryKey: ["checkins", selectedDate, page, pageSize],
+    queryFn: () =>
+      api(`/api/checkins?${queryString({ day: selectedDate, page, pageSize })}`),
     refetchInterval: 30000,
   });
   const events = useQuery({
@@ -53,8 +69,9 @@ export function CheckinPage() {
     queryFn: () => api(`/api/dah/events?view=${eventView}&limit=60`),
     refetchInterval: 5000,
   });
-  const activeSessions = recent.data?.filter((row) => row.status === "open") || [];
-  const lastEvent = recent.data?.[0];
+  const checkins = recent.data?.items || [];
+  const activeSessions = checkins.filter((row) => row.status === "open");
+  const lastEventAt = recent.data?.lastEventAt;
   const eventViews = [
     ["all", "Tất cả"],
     ["allowed", "Được vào/ra"],
@@ -115,13 +132,13 @@ export function CheckinPage() {
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <span className="text-xs text-slate-500">Đang ở phòng</span>
-          <strong className="mt-1 block text-2xl text-slate-950">{activeSessions.length}</strong>
-          <span className="text-xs text-slate-400">phiên chưa ghi nhận giờ ra</span>
+          <strong className="mt-1 block text-2xl text-slate-950">{recent.data?.activeCount || 0}</strong>
+          <span className="text-xs text-slate-400">phiên chưa ghi nhận giờ ra trong ngày đang xem</span>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <span className="text-xs text-slate-500">Sự kiện mới nhất</span>
           <strong className="mt-2 block text-sm text-slate-950">
-            {lastEvent ? dateTime(lastEvent.checkedInAt) : "Chưa có dữ liệu"}
+            {lastEventAt ? dateTime(lastEventAt) : "Chưa có dữ liệu"}
           </strong>
           <span className="text-xs text-slate-400">tự làm mới mỗi 30 giây</span>
         </div>
@@ -176,6 +193,61 @@ export function CheckinPage() {
           </div>
         </section>
       )}
+
+      <section className="mb-7">
+        <div className="section-header">
+          <div>
+            <h2>Lịch sử điểm danh</h2>
+            <p>Xem lượt vào/ra theo ngày và phân trang danh sách.</p>
+          </div>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="tabs">
+            {[
+              ["today", "Hôm nay"],
+              ["yesterday", "Hôm qua"],
+              ["custom", "Chọn ngày"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                className={`tab ${dateView === key ? "active" : ""}`}
+                onClick={() => changeDateView(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {dateView === "custom" && (
+            <div className="w-44">
+              <DateInput
+                value={customDate}
+                onChange={(value) => {
+                  setCustomDate(value || today);
+                  setPage(1);
+                }}
+              />
+            </div>
+          )}
+        </div>
+        <DataTable
+          rows={checkins}
+          columns={columns}
+          loading={recent.isLoading}
+          error={recent.error}
+          onRetry={recent.refetch}
+          emptyTitle="Chưa có lượt điểm danh"
+          emptyDescription="Dữ liệu sẽ xuất hiện khi DAH gửi lượt vào/ra trong ngày này."
+        />
+        <Pagination
+          data={recent.data?.pagination}
+          pageSize={pageSize}
+          onPage={setPage}
+          onPageSize={(value) => {
+            setPageSize(value);
+            setPage(1);
+          }}
+        />
+      </section>
 
       <section>
         <div className="section-header">

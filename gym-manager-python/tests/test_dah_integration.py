@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import os
 from pathlib import Path
 import tempfile
@@ -98,7 +98,7 @@ def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_p
         assert checkin["memberId"] == customer_id
         assert db.query(DahCustomerIdentity).filter_by(person_uuid="732").count() == 1
         assert db.get(Customer, customer_id).avatar_image_data.startswith("data:image/jpeg;base64,")
-        assert db.get(DahWebhookEvent, checkin["eventId"]).image_data is None
+        assert db.get(DahWebhookEvent, checkin["eventId"]).image_data.startswith("data:image/jpeg;base64,")
 
         duplicate = dah_service.verify(db, verify_payload("2026-08-11T09:00:00", "100"))
         assert duplicate["action"] == "ignored"
@@ -116,7 +116,7 @@ def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_p
         session = db.query(AttendanceSession).filter_by(customer_id=customer_id).one()
         assert session.status == "closed"
         assert session.checked_out_at.isoformat() == "2026-08-11T09:10:00"
-        assert db.get(DahWebhookEvent, checkout["eventId"]).image_data is None
+        assert db.get(DahWebhookEvent, checkout["eventId"]).image_data.startswith("data:image/jpeg;base64,")
     finally:
         db.close()
 
@@ -151,6 +151,37 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         assert event.status == "linked"
         assert event.image_data is None
         assert dah_service.identity_candidates(db)["items"] == []
+    finally:
+        db.close()
+
+
+def test_dah_webhook_image_cleanup_keeps_recent_and_clears_old(tmp_path):
+    from server.models import DahWebhookEvent
+    from server.services import dah_service
+    from server.timeutils import utc_now
+
+    db = make_session(tmp_path)
+    try:
+        old = DahWebhookEvent(
+            event_key="old",
+            operator="VerifyPush",
+            status="unknown",
+            image_data="data:image/jpeg;base64,b2xk",
+            received_at=utc_now() - timedelta(days=5),
+        )
+        recent = DahWebhookEvent(
+            event_key="recent",
+            operator="VerifyPush",
+            status="unknown",
+            image_data="data:image/jpeg;base64,cmVjZW50",
+            received_at=utc_now() - timedelta(days=2),
+        )
+        db.add_all([old, recent])
+        db.commit()
+
+        assert dah_service.cleanup_webhook_images(db) == 1
+        assert db.query(DahWebhookEvent).filter_by(event_key="old").one().image_data is None
+        assert db.query(DahWebhookEvent).filter_by(event_key="recent").one().image_data.startswith("data:image/jpeg;base64,")
     finally:
         db.close()
 

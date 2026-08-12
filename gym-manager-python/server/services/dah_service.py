@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 
@@ -15,6 +15,7 @@ from ..timeutils import utc_now
 HEARTBEAT_TIMEOUT_SECONDS = 90
 DAH_MODEL = "DAH1017"
 DUPLICATE_SCAN_SECONDS = 60
+WEBHOOK_IMAGE_RETENTION_DAYS = 4
 
 
 def _clean(value) -> str | None:
@@ -298,7 +299,7 @@ def _store_non_attendance_event(db: Session, payload: dict, default_operator: st
         event_time=_parse_time(info.get("CreateTime") or info.get("Time")),
         status=status,
         action=action,
-        image_data=None,
+        image_data=image,
         raw_payload=_payload_json(payload),
     )
     db.add(event)
@@ -369,7 +370,6 @@ def verify(db: Session, payload: dict):
                 action = denied.get("action") or "denied"
                 note = denied.get("note")
 
-    event_image = image if status == "unknown" and action == "unknown_identity" else None
     event = DahWebhookEvent(
         event_key=key,
         operator=operator,
@@ -385,7 +385,7 @@ def verify(db: Session, payload: dict):
         status=status,
         action=action,
         note=note,
-        image_data=event_image,
+        image_data=image,
         raw_payload=_payload_json(payload),
     )
     db.add(event)
@@ -484,6 +484,20 @@ def dah_events(db: Session, view="all", limit=50):
         query = query.filter(DahWebhookEvent.operator == "SnapPush")
     rows = query.limit(max(min(int(limit or 50), 100), 1)).all()
     return {"items": [_event_data(row) for row in rows]}
+
+
+def cleanup_webhook_images(db: Session, retention_days: int = WEBHOOK_IMAGE_RETENTION_DAYS):
+    cutoff = utc_now() - timedelta(days=max(int(retention_days or WEBHOOK_IMAGE_RETENTION_DAYS), 1))
+    count = (
+        db.query(DahWebhookEvent)
+        .filter(
+            DahWebhookEvent.image_data.is_not(None),
+            DahWebhookEvent.received_at < cutoff,
+        )
+        .update({DahWebhookEvent.image_data: None}, synchronize_session=False)
+    )
+    db.commit()
+    return count
 
 
 def identity_candidates(db: Session, limit=12, target_type="member"):
