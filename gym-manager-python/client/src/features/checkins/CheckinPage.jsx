@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { format, subDays } from "date-fns";
 import { Activity, AlertTriangle, Link2, Radio, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
+import { notify } from "../../services/notify";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
@@ -45,6 +46,7 @@ function PersonCell({ row }) {
 }
 
 export function CheckinPage() {
+  const client = useQueryClient();
   const [eventView, setEventView] = useState("all");
   const today = format(new Date(), "yyyy-MM-dd");
   const yesterday = format(subDays(new Date(), 1), "yyyy-MM-dd");
@@ -73,6 +75,17 @@ export function CheckinPage() {
         `/api/dah/events?${queryString({ view: eventView, page: eventPage, pageSize: eventPageSize })}`,
       ),
     refetchInterval: 5000,
+  });
+  const checkout = useMutation({
+    mutationFn: (sessionId) =>
+      api(`/api/checkins/${sessionId}/checkout`, { method: "PATCH" }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["checkins"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      notify.success("Đã checkout phiên đang mở.");
+    },
+    onError: (error) =>
+      notify.errorFrom(error, "Không thể checkout phiên này. Vui lòng thử lại."),
   });
   const checkins = recent.data?.items || [];
   const activeSessions = checkins.filter((row) => row.status === "open");
@@ -133,7 +146,7 @@ export function CheckinPage() {
             <Radio size={17} /> Chế độ tự động
           </div>
           <p className="mt-1 text-xs leading-5 text-emerald-700">
-            Màn hình dành cho dữ liệu vào/ra tự động từ DAH, không thao tác thủ công tại đây.
+            Dữ liệu vào/ra tự động từ DAH; có thể checkout thủ công khi phiên bị quên hoặc lỗi.
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -176,25 +189,40 @@ export function CheckinPage() {
               const name = row.employeeName || row.memberName;
               const content = (
                 <>
-                <div className="flex items-center gap-3">
-                  <CheckinAvatar image={row.memberAvatarImageData} name={name} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Activity size={16} className="shrink-0 text-emerald-600" />
-                      <strong className="truncate text-sm text-slate-950">{name}</strong>
-                    </div>
-                    <p className="mt-1 truncate text-xs text-slate-400">
-                      {row.employeeId
-                        ? `${row.employeeCode} · Nhân viên`
-                        : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
-                    </p>
-                    {row.memberAccessWarning && (
-                      <p className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-                        <AlertTriangle size={13} />
-                        <span className="truncate">{row.memberAccessWarning}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <CheckinAvatar image={row.memberAvatarImageData} name={name} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Activity size={16} className="shrink-0 text-emerald-600" />
+                        <strong className="truncate text-sm text-slate-950">{name}</strong>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-slate-400">
+                        {row.employeeId
+                          ? `${row.employeeCode} · Nhân viên`
+                          : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
                       </p>
-                    )}
+                      {row.memberAccessWarning && (
+                        <p className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+                          <AlertTriangle size={13} />
+                          <span className="truncate">{row.memberAccessWarning}</span>
+                        </p>
+                      )}
+                    </div>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={checkout.isPending && checkout.variables === row.id}
+                    loadingText="Đang checkout…"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      checkout.mutate(row.id);
+                    }}
+                  >
+                    Checkout
+                  </Button>
                 </div>
                 </>
               );
