@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 import secrets
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
@@ -385,12 +385,19 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
             joinedload(AttendanceSession.customer).joinedload(Customer.person),
             joinedload(AttendanceSession.employee).joinedload(Employee.person),
         )
-        .filter(AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end)
+        .filter(or_(
+            and_(AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
+            and_(AttendanceSession.status == "open", AttendanceSession.checked_in_at < end),
+        ))
     )
     total = query.count()
     active_count = query.filter(AttendanceSession.status == "open").count()
     rows = (
-        query.order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        query.order_by(
+            (AttendanceSession.status == "open").desc(),
+            AttendanceSession.checked_in_at.desc(),
+            AttendanceSession.id.desc(),
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()

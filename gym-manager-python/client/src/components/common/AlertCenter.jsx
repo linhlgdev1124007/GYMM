@@ -6,6 +6,7 @@ import { api } from "../../services/api";
 
 const icons = {
   overdue_debt: CreditCard,
+  membership_expired: CalendarClock,
   membership_expiring: CalendarClock,
   pt_low_sessions: Dumbbell,
 };
@@ -46,6 +47,7 @@ export function AlertCenter() {
           </header>
           <div className="alert-counts">
             <span><strong>{query.data?.counts.overdueDebt || 0}</strong>Nợ quá hạn</span>
+            <span><strong>{query.data?.counts.expired || 0}</strong>Hết hạn</span>
             <span><strong>{query.data?.counts.expiring || 0}</strong>Sắp hết hạn</span>
             <span><strong>{query.data?.counts.ptLowSessions || 0}</strong>PT ít buổi</span>
           </div>

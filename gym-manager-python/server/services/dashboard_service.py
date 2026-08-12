@@ -4,7 +4,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
-from ..timeutils import utc_iso
+from ..timeutils import utc_iso, vietnam_today
 
 
 def _attendance_iso(value, source: str | None):
@@ -14,14 +14,16 @@ def _attendance_iso(value, source: str | None):
 
 
 def active_membership_member_count(db: Session):
+    today = vietnam_today()
     return db.query(func.count(func.distinct(Membership.customer_id))).join(Membership.package).filter(
         ServicePackage.is_pt == False,
         Membership.status == "active",
+        or_(Membership.expires_at == None, Membership.expires_at >= today),
     ).scalar() or 0
 
 
 def dashboard(db: Session):
-    today=date.today();month_start=today.replace(day=1);soon=today+timedelta(days=14)
+    today=vietnam_today();month_start=today.replace(day=1);soon=today+timedelta(days=14)
     active_members=active_membership_member_count(db)
     total_members=db.query(Customer).count()
     checkins_today=db.query(AttendanceSession).filter(func.date(AttendanceSession.checked_in_at)==today.isoformat()).count()
@@ -41,11 +43,26 @@ def dashboard(db: Session):
         elif row.status=="active": key="active"
         else:key="pending"
         status_counts[key]+=1
-    attention_rows=db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person),joinedload(Membership.package)).join(Membership.package).filter(ServicePackage.is_pt==False,or_(Membership.debt_amount>0,Membership.expires_at<=soon)).order_by(Membership.debt_due_date,Membership.expires_at).limit(8).all()
+    attention_candidates=db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person),joinedload(Membership.package)).join(Membership.package).filter(ServicePackage.is_pt==False,Membership.status.in_(("active","pending","expired")),or_(Membership.debt_amount>0,Membership.expires_at<=soon)).all()
+    def attention_priority(row):
+        if row.expires_at and row.expires_at < today:
+            return (0, -row.expires_at.toordinal(), -row.id)
+        if row.debt_amount and row.debt_amount > 0:
+            return (1, (row.debt_due_date or date.max).toordinal(), -row.id)
+        return (2, (row.expires_at or date.max).toordinal(), -row.id)
+    attention_rows=[]
+    seen_customer_ids=set()
+    for row in sorted(attention_candidates, key=attention_priority):
+        if row.customer_id in seen_customer_ids:
+            continue
+        seen_customer_ids.add(row.customer_id)
+        attention_rows.append(row)
+        if len(attention_rows) >= 8:
+            break
     attention=[]
     for row in attention_rows:
-        if row.debt_amount and row.debt_amount>0: issue=f"Còn nợ {row.debt_amount:,.0f} đ"
-        elif row.expires_at and row.expires_at<today:issue="Gói đã hết hạn"
+        if row.expires_at and row.expires_at<today:issue="Gói đã hết hạn"
+        elif row.debt_amount and row.debt_amount>0: issue=f"Còn nợ {row.debt_amount:,.0f} đ"
         else:issue=f"Hết hạn {row.expires_at.strftime('%d/%m/%Y')}"
         attention.append({"memberId":row.customer_id,"member":row.customer.person.display_name,"code":row.customer.customer_code,"issue":issue})
     recent=db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(8).all()
