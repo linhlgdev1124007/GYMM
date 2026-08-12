@@ -61,10 +61,10 @@ async function setToday(today) {
   expect(response.ok()).toBeTruthy();
 }
 
-async function createPlan(name) {
+async function createPlan(name, category = "Fitness") {
   const response = await post("/api/plans", {
     name,
-    category: "Fitness",
+    category,
     durationDays: 30,
     price: 100000,
   });
@@ -88,6 +88,7 @@ async function registerMembership(memberId, planId, overrides = {}) {
     finalPrice: "100000",
     paidAmount: "0",
     paymentMethod: "cash",
+    ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
   });
   expect(response.ok()).toBeTruthy();
   return response.json();
@@ -430,5 +431,82 @@ test("suspend validates dates and reactivation recalculates from the reactivatio
     startsAt: "2026-08-15",
     activatedAt: "2026-08-15",
     expiresAt: "2026-09-05",
+  });
+});
+
+test("manual day adjustment updates package expiry through the API", async () => {
+  await setToday("2026-08-01");
+  const plan = await createPlan("E2E Adjust Days");
+  const member = await createMember("E2E Adjust Days", "0901000013");
+  const membership = await registerMembership(member.id, plan.id, { activateNow: "true" });
+
+  let response = await post(`/api/memberships/${membership.id}/actions`, {
+    action: "adjust_days",
+    days: 5,
+    reason: "Cộng ngày khuyến mãi",
+  });
+  expect(response.ok()).toBeTruthy();
+  let state = await memberState(member.code);
+  expect(state.memberships[0].expiresAt).toBe("2026-09-05");
+
+  response = await post(`/api/memberships/${membership.id}/actions`, {
+    action: "adjust_days",
+    days: -3,
+    reason: "Trừ ngày nhập sai",
+  });
+  expect(response.ok()).toBeTruthy();
+  state = await memberState(member.code);
+  expect(state.memberships[0].expiresAt).toBe("2026-09-02");
+
+  response = await post(`/api/memberships/${membership.id}/actions`, {
+    action: "adjust_days",
+    days: -99,
+    reason: "Trừ quá hạn",
+  });
+  await expectError(response, "trước ngày bắt đầu");
+});
+
+test("memberships in the same category queue, while different categories overlap", async () => {
+  await setToday("2026-08-01");
+  const fitness = await createPlan("E2E Queue Fitness", "Fitness");
+  const dance = await createPlan("E2E Queue Dance", "Dance");
+  const member = await createMember("E2E Multi Category", "0901000014");
+  const first = await registerMembership(member.id, fitness.id, { startsAt: "2026-08-01", activateNow: "true" });
+  expect(first).toMatchObject({
+    status: "active",
+    startsAt: "2026-08-01",
+    expiresAt: "2026-08-31",
+  });
+
+  await setToday("2026-08-12");
+  const queued = await registerMembership(member.id, fitness.id, { startsAt: "2026-08-12", expiresAt: "2026-09-11", activateNow: "true" });
+  expect(queued).toMatchObject({
+    status: "pending",
+    startsAt: "2026-09-01",
+    activatedAt: "2026-09-01",
+    expiresAt: "2026-10-01",
+  });
+  let state = await memberState(member.code);
+  expect(state.status).toBe("active");
+  expect(state.memberships.find((row) => row.id === first.id).status).toBe("active");
+
+  const overlapping = await registerMembership(member.id, dance.id, { startsAt: "2026-08-12", activateNow: "true" });
+  expect(overlapping).toMatchObject({
+    status: "active",
+    startsAt: "2026-08-12",
+    expiresAt: "2026-09-11",
+  });
+
+  await setToday("2026-09-01");
+  state = await waitForMember(
+    member.code,
+    (row) => row.memberships.some((membership) => membership.id === queued.id && membership.status === "active"),
+    "queued same-category activation",
+  );
+  expect(state.status).toBe("active");
+  expect(state.memberships.find((row) => row.id === queued.id)).toMatchObject({
+    status: "active",
+    startsAt: "2026-09-01",
+    expiresAt: "2026-10-01",
   });
 });

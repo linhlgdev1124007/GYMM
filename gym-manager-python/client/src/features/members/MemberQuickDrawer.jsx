@@ -173,6 +173,7 @@ export function MemberQuickDrawer({
   if (current?.status === "active") {
     lifecycleActions.push(["suspend", "Tạm dừng"]);
     lifecycleActions.push(["freeze", "Bảo lưu"]);
+    lifecycleActions.push(["adjust_days", "Cộng / trừ ngày"]);
   }
   useEffect(() => {
     if (member && initialAction) {

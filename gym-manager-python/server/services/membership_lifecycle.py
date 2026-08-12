@@ -19,7 +19,7 @@ def business_date(value: date | datetime | None = None) -> date:
 
 def current_regular_membership(db: Session, customer_id: int, include_pending: bool = True):
     statuses = ("active", "pending", "frozen", "suspended") if include_pending else ("active",)
-    return (
+    rows = (
         db.query(Membership)
         .options(joinedload(Membership.package), joinedload(Membership.events))
         .join(ServicePackage)
@@ -29,9 +29,23 @@ def current_regular_membership(db: Session, customer_id: int, include_pending: b
             ServicePackage.is_pt == False,
             or_(Membership.expires_at == None, Membership.expires_at >= business_date()),
         )
-        .order_by(Membership.registered_at.desc(), Membership.id.desc())
-        .first()
+        .order_by(Membership.starts_at.desc(), Membership.id.desc())
+        .all()
     )
+    today = business_date()
+
+    def sort_key(row: Membership):
+        if row.status == "active" and (not row.starts_at or row.starts_at <= today):
+            priority = 0
+        elif row.status in ("frozen", "suspended"):
+            priority = 1
+        elif row.status == "pending":
+            priority = 2
+        else:
+            priority = 3
+        return (priority, -(row.starts_at or date.min).toordinal(), -row.id)
+
+    return sorted(rows, key=sort_key)[0] if rows else None
 
 
 def _latest_suspend_event(membership: Membership):

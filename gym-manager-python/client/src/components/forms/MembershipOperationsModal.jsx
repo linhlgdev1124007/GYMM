@@ -30,6 +30,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
       planId: "",
       finalPrice: membership?.finalPrice || 0,
       expiresAt: membership?.expiresAt || "",
+      days: "",
       effectiveAt: today(),
       reason: "",
     });
@@ -65,6 +66,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
         ...(action === "activate" ? { activatedAt: form.effectiveAt } : {}),
         ...(action === "suspend" ? { suspendedAt: form.effectiveAt } : {}),
         ...(action === "transfer" ? { targetMemberId: form.targetMemberId } : {}),
+        ...(action === "adjust_days" ? { days: form.days } : {}),
         ...(action === "change" || action === "upgrade"
           ? { planId: form.planId, finalPrice: form.finalPrice, expiresAt: form.expiresAt }
           : {}),
@@ -75,6 +77,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
     (action === "freeze" && freezeDays > 0) ||
     action === "activate" ||
     action === "suspend" ||
+    (action === "adjust_days" && Number(form.days || 0) !== 0) ||
     (action === "transfer" && form.targetMemberId) ||
     ((action === "change" || action === "upgrade") && form.planId) ||
     action === "cancel"
@@ -92,6 +95,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
               <option value="activate">Kích hoạt lần đầu tập</option>
               <option value="suspend">Tạm dừng gói</option>
               <option value="freeze">Bảo lưu và cộng bù thời hạn</option>
+              <option value="adjust_days">Cộng / trừ ngày</option>
               <option value="transfer">Chuyển nhượng sang hội viên khác</option>
               <option value="upgrade">Nâng cấp gói</option>
               <option value="change">Đổi gói</option>
@@ -116,6 +120,21 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
                 <Field label="Kết thúc" required><DateInput min={nextDay(form.startsAt)} value={form.endsAt} onChange={(endsAt) => setForm({ ...form, endsAt })} /></Field>
               </div>
               <div className="compensation-preview"><span>Cộng bù <strong>{freezeDays} ngày</strong></span><ArrowRightLeft size={14} /><span>Hạn mới <strong>{shortDate(compensatedExpiry)}</strong></span></div>
+            </section>
+          )}
+          {action === "adjust_days" && (
+            <section className="operation-panel">
+              <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>Điều chỉnh trực tiếp ngày hết hạn gói và lưu lịch sử đối soát.</span></div></div>
+              <Field label="Số ngày" required hint="Nhập số dương để cộng, số âm để trừ.">
+                <input className="input tabular-nums" type="number" step="1" value={form.days} onChange={(event) => setForm({ ...form, days: event.target.value })} />
+              </Field>
+              {membership.expiresAt && Number(form.days || 0) !== 0 && (
+                <div className="compensation-preview">
+                  <span>Hạn hiện tại <strong>{shortDate(membership.expiresAt)}</strong></span>
+                  <ArrowRightLeft size={14} />
+                  <span>Hạn mới <strong>{shortDate(format(addDays(new Date(`${membership.expiresAt}T00:00:00`), Number(form.days || 0)), "yyyy-MM-dd"))}</strong></span>
+                </div>
+              )}
             </section>
           )}
           {action === "transfer" && (
@@ -145,7 +164,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
           {action === "cancel" && (
             <div className="destructive-notice"><ShieldAlert size={18} /><div><strong>Hủy quyền sử dụng gói</strong><p>Thao tác không tự tạo hoàn tiền và hội viên sẽ không thể dùng gói này để check-in.</p></div></div>
           )}
-          {action !== "freeze" && (
+          {action !== "freeze" && action !== "adjust_days" && (
             <Field label={action === "activate" ? "Ngày kích hoạt" : action === "suspend" ? "Ngày tạm dừng" : "Ngày hiệu lực"}>
               <DateInput min={action === "suspend" ? today() : undefined} value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
             </Field>
@@ -158,7 +177,7 @@ export function MembershipOperationsModal({ membership, memberId, options, open,
         <div className="form-actions">
           <Button data-modal-close variant="secondary" onClick={onClose}>Đóng</Button>
           <Button type="submit" variant={action === "cancel" ? "danger" : "primary"} loading={pending} loadingText="Đang xử lý…" disabled={!valid}>
-            {action === "activate" ? "Kích hoạt gói" : action === "suspend" ? "Tạm dừng gói" : action === "freeze" ? "Xác nhận bảo lưu" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy gói" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
+            {action === "activate" ? "Kích hoạt gói" : action === "suspend" ? "Tạm dừng gói" : action === "freeze" ? "Xác nhận bảo lưu" : action === "adjust_days" ? "Điều chỉnh ngày" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy gói" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
           </Button>
         </div>
       </form>

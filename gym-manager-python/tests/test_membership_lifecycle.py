@@ -430,3 +430,112 @@ def test_expiring_membership_still_serializes_as_active(tmp_path):
         assert rows["items"][0]["membership"]["status"] == "active"
     finally:
         db.close()
+
+
+def test_adjust_membership_days_updates_expiry_and_history(tmp_path):
+    from server.models import MembershipEvent
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+
+        membership_action(db, membership.id, {
+            "action": "adjust_days",
+            "days": 5,
+            "reason": "Cộng ngày khuyến mãi",
+        }, None)
+        db.refresh(membership)
+        assert membership.expires_at == date(2026, 9, 5)
+
+        membership_action(db, membership.id, {
+            "action": "adjust_days",
+            "days": -3,
+            "reason": "Trừ ngày nhập sai",
+        }, None)
+        db.refresh(membership)
+        assert membership.expires_at == date(2026, 9, 2)
+        assert db.query(MembershipEvent).filter_by(membership_id=membership.id, action="adjust_days").count() == 2
+
+        with pytest.raises(Exception) as exc:
+            membership_action(db, membership.id, {
+                "action": "adjust_days",
+                "days": -99,
+                "reason": "Trừ quá hạn",
+            }, None)
+        assert "trước ngày bắt đầu" in str(exc.value)
+    finally:
+        db.close()
+
+
+def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_path):
+    import asyncio
+    from server.models import Membership, ServicePackage
+    from server.services.members_service import create_membership, get_member
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
+        customer, current = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        current.expires_at = date(2026, 8, 31)
+        customer.status = "active"
+        dance = ServicePackage(
+            code="DANCE-LIFE",
+            name="Dance Lifecycle",
+            category="Dance",
+            duration_days=30,
+            price=100000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add(dance)
+        db.commit()
+
+        queued = asyncio.run(create_membership(db, {
+            "memberId": str(customer.id),
+            "planId": str(current.package_id),
+            "startsAt": "2026-08-12",
+            "expiresAt": "2026-09-11",
+            "activateNow": "true",
+            "finalPrice": "100000",
+            "paidAmount": "0",
+            "paymentMethod": "cash",
+        }, [], None))
+        assert queued["status"] == "pending"
+        assert queued["startsAt"] == "2026-09-01"
+        assert queued["activatedAt"] == "2026-09-01"
+        assert queued["expiresAt"] == "2026-10-01"
+
+        overlapping = asyncio.run(create_membership(db, {
+            "memberId": str(customer.id),
+            "planId": str(dance.id),
+            "startsAt": "2026-08-12",
+            "activateNow": "true",
+            "finalPrice": "100000",
+            "paidAmount": "0",
+            "paymentMethod": "cash",
+        }, [], None))
+        assert overlapping["status"] == "active"
+        assert overlapping["startsAt"] == "2026-08-12"
+        assert overlapping["expiresAt"] == "2026-09-11"
+
+        refresh_membership_lifecycle(db, today=date(2026, 9, 1))
+        queued_row = db.query(Membership).filter_by(id=queued["id"]).one()
+        db.refresh(customer)
+        assert queued_row.status == "active"
+        assert customer.status == "active"
+
+        member = get_member(db, customer.id)
+        assert member["memberships"][0]["status"] == "active"
+    finally:
+        db.close()
