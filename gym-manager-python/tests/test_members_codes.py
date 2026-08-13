@@ -109,6 +109,28 @@ def test_created_member_without_regular_membership_stays_lead(tmp_path):
         db.close()
 
 
+def test_members_can_reuse_mbs_card_code(tmp_path):
+    from server.services.members_service import create_member
+
+    db = make_session(tmp_path)
+    try:
+        first = create_member(db, {
+            "name": "First White Card",
+            "phone": "0900000021",
+            "mbsCode": "THẺ TRẮNG",
+        })
+        second = create_member(db, {
+            "name": "Second White Card",
+            "phone": "0900000022",
+            "mbsCode": "THẺ TRẮNG",
+        })
+
+        assert first["mbsCode"] == "THẺ TRẮNG"
+        assert second["mbsCode"] == "THẺ TRẮNG"
+    finally:
+        db.close()
+
+
 def test_plan_without_registrations_can_be_deleted(tmp_path):
     from server.models import ServicePackage
     from server.services.members_service import create_plan, delete_plan, list_plans

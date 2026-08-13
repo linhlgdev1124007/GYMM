@@ -76,7 +76,7 @@ class Customer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id"), unique=True)
     customer_code: Mapped[str] = mapped_column(String(40), unique=True)
-    mbs_card_code: Mapped[str | None] = mapped_column(String(60), unique=True)
+    mbs_card_code: Mapped[str | None] = mapped_column(String(60))
     person_uuid: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
     avatar_image_data: Mapped[str | None] = mapped_column(LONG_TEXT)
     sales_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))

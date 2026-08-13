@@ -133,6 +133,39 @@ def get_db():
         db.close()
 
 
+def migrate_mbs_card_code_not_unique():
+    """Allow reused MBS/card labels such as shared placeholder card names."""
+    inspector = inspect(engine)
+    if "customers" not in inspector.get_table_names():
+        return
+
+    indexes = inspector.get_indexes("customers")
+    unique_indexes = [
+        index for index in indexes
+        if index.get("unique") and index.get("column_names") == ["mbs_card_code"]
+    ]
+    if not unique_indexes:
+        return
+
+    if IS_SQLITE:
+        droppable_indexes = [
+            index for index in unique_indexes
+            if not str(index.get("name", "")).startswith("sqlite_autoindex_")
+        ]
+        with engine.begin() as connection:
+            quote = engine.dialect.identifier_preparer.quote
+            for index in droppable_indexes:
+                connection.exec_driver_sql(f"DROP INDEX {quote(index['name'])}")
+        return
+
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as connection:
+        for index in unique_indexes:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('customers')} DROP INDEX {quote(index['name'])}"
+            )
+
+
 def migrate_pt_coaches():
     """Make the legacy coach optional before the assignment table is created."""
     if not IS_SQLITE:
