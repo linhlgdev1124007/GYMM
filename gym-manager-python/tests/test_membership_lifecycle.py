@@ -627,7 +627,7 @@ def test_member_status_syncs_after_cancel_and_transfer(tmp_path):
             "reason": "Khách yêu cầu hủy",
         }, None)
         db.refresh(customer)
-        assert customer.status == "inactive"
+        assert customer.status == "cancelled"
 
         customer.status = "active"
         membership.status = "active"
@@ -699,10 +699,10 @@ def test_cancel_service_inactivates_member_even_with_other_active_membership(tmp
         db.refresh(gym_membership)
         db.refresh(lady_membership)
 
-        assert result["summary"] == "Hủy dịch vụ Fitness Lifecycle và inactive Lifecycle Member"
+        assert result["summary"] == "Hủy dịch vụ Fitness Lifecycle và chuyển Lifecycle Member vào danh sách đã hủy"
         assert gym_membership.status == "cancelled"
         assert lady_membership.status == "active"
-        assert customer.status == "inactive"
+        assert customer.status == "cancelled"
     finally:
         db.close()
 
@@ -729,5 +729,134 @@ def test_cancelled_membership_cannot_be_reactivated(tmp_path):
                 "effectiveAt": "2026-08-12",
                 "reason": "Thử mở lại gói đã hủy",
             }, None)
+    finally:
+        db.close()
+
+
+def test_cancelled_member_is_separated_and_can_reactivate_account_only(tmp_path):
+    import asyncio
+    from fastapi import HTTPException
+    import pytest
+    from server.models import Membership, ServicePackage
+    from server.services.members_service import (
+        create_membership,
+        list_members,
+        membership_action,
+        reactivate_cancelled_member,
+    )
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        customer.status = "active"
+        membership.expires_at = date(2026, 9, 1)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "cancel",
+            "effectiveAt": "2026-08-12",
+            "reason": "Hủy tài khoản",
+        }, None)
+
+        main_rows = list_members(db, q="", member_status="all", view="all", page=1, page_size=20)
+        cancelled_rows = list_members(db, q="", member_status="all", view="cancelled", page=1, page_size=20)
+
+        assert [row["id"] for row in main_rows["items"]] == []
+        assert [row["id"] for row in cancelled_rows["items"]] == [customer.id]
+
+        with pytest.raises(HTTPException, match="kích hoạt lại trước"):
+            asyncio.run(create_membership(db, {
+                "memberId": customer.id,
+                "planId": membership.package_id,
+                "startsAt": "2026-08-13",
+                "finalPrice": "100000",
+                "paidAmount": "0",
+            }, [], None))
+
+        reactivated = reactivate_cancelled_member(db, customer.id, None)
+        db.refresh(membership)
+
+        assert reactivated["status"] == "lead"
+        assert membership.status == "cancelled"
+
+        new_plan = ServicePackage(
+            code="FIT-NEW",
+            name="Fitness New",
+            category="Fitness",
+            duration_days=30,
+            price=120000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add(new_plan)
+        db.commit()
+
+        asyncio.run(create_membership(db, {
+            "memberId": customer.id,
+            "planId": new_plan.id,
+            "startsAt": "2026-08-13",
+            "finalPrice": "120000",
+            "paidAmount": "120000",
+            "paymentMethod": "cash",
+        }, [], None))
+        db.refresh(customer)
+
+        assert customer.status == "active"
+        assert db.query(Membership).filter_by(customer_id=customer.id, status="cancelled").count() == 1
+        assert db.query(Membership).filter_by(customer_id=customer.id, status="active").count() == 1
+    finally:
+        db.close()
+
+
+def test_normalize_cancelled_members_moves_inactive_latest_cancelled_to_cancelled_tab(tmp_path):
+    from server.services.members_service import normalize_cancelled_members
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="cancelled",
+            starts_at=date(2026, 7, 31),
+            activated_at=None,
+        )
+        customer.status = "inactive"
+        membership.registered_at = date(2026, 7, 31)
+        membership.expires_at = date(2026, 11, 27)
+        db.commit()
+
+        assert normalize_cancelled_members(db) == 1
+        db.commit()
+        db.refresh(customer)
+
+        assert customer.status == "cancelled"
+    finally:
+        db.close()
+
+
+def test_lifecycle_refresh_keeps_cancelled_member_separate_from_inactive(tmp_path):
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="cancelled",
+            starts_at=date(2026, 7, 31),
+            activated_at=None,
+        )
+        customer.status = "cancelled"
+        membership.registered_at = date(2026, 7, 31)
+        membership.expires_at = date(2026, 11, 27)
+        db.commit()
+
+        refresh_membership_lifecycle(db, today=date(2026, 8, 13))
+        db.refresh(customer)
+
+        assert customer.status == "cancelled"
     finally:
         db.close()

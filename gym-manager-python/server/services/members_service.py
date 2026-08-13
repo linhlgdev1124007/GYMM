@@ -148,6 +148,8 @@ def _scheduled_membership_window(
 
 
 def _sync_member_status_from_memberships(db: Session, member: Customer) -> None:
+    if member.status == "cancelled":
+        return
     today = vietnam_today()
     active_exists = db.query(Membership.id).join(ServicePackage).filter(
         Membership.customer_id == member.id,
@@ -171,6 +173,25 @@ def _sync_customer_statuses(db: Session, *customer_ids: int | None) -> None:
         customer = db.get(Customer, customer_id)
         if customer:
             _sync_member_status_from_memberships(db, customer)
+
+
+def normalize_cancelled_members(db: Session) -> int:
+    changed = 0
+    rows = (
+        db.query(Customer)
+        .options(joinedload(Customer.memberships).joinedload(Membership.package))
+        .filter(
+            Customer.status == "inactive",
+        )
+        .all()
+    )
+    for customer in rows:
+        regular = [membership for membership in customer.memberships if membership.package and not membership.package.is_pt]
+        latest = sorted(regular, key=_membership_sort_key)[0] if regular else None
+        if latest and latest.status == "cancelled":
+            customer.status = "cancelled"
+            changed += 1
+    return changed
 
 
 def _membership_sort_key(row: Membership):
@@ -239,6 +260,11 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     status_membership = aliased(Membership)
     def latest_status_exists(*conditions):
         return db.query(status_membership.id).filter(status_membership.id == latest_regular_id, *conditions).exists()
+    cancelled_member = Customer.status == "cancelled"
+    if view == "cancelled" or member_status == "cancelled":
+        query = query.filter(cancelled_member)
+    else:
+        query = query.filter(Customer.status != "cancelled")
     if member_status == "active":
         query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif member_status == "expired":
@@ -250,7 +276,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     elif member_status == "frozen":
         query = query.filter(latest_status_exists(status_membership.status == "frozen"))
     elif member_status == "inactive":
-        query = query.filter(or_(Customer.status == "inactive", latest_status_exists(status_membership.status == "cancelled")))
+        query = query.filter(Customer.status == "inactive")
     if payment_status == "overdue":
         query = query.filter(latest_status_exists(
             status_membership.debt_amount > 0,
@@ -548,6 +574,29 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
     return get_member(db, member_id)
 
 
+def reactivate_cancelled_member(db: Session, member_id: int, actor: User | None = None):
+    member = db.query(Customer).options(joinedload(Customer.person)).filter(Customer.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội viên.")
+    if member.status != "cancelled":
+        raise HTTPException(status_code=409, detail="Chỉ hội viên đã hủy mới cần kích hoạt lại.")
+    member.status = "lead"
+    if member.person:
+        member.person.status = "active"
+    record_audit(
+        db,
+        actor,
+        "reactivate",
+        "member",
+        member.id,
+        f"Kích hoạt lại hồ sơ {member.person.display_name}",
+        customer_id=member.id,
+        details={"previousStatus": "cancelled", "newStatus": "lead", "membershipsRestored": False},
+    )
+    db.commit()
+    return get_member(db, member_id)
+
+
 def list_plans(db: Session, include_inactive=False):
     query = db.query(ServicePackage).filter(ServicePackage.is_pt == False)
     if not include_inactive: query = query.filter(ServicePackage.is_active == True)
@@ -620,6 +669,8 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     member = db.get(Customer, _int(form.get("memberId")))
     plan = db.query(ServicePackage).filter(ServicePackage.id == _int(form.get("planId")), ServicePackage.is_pt == False, ServicePackage.is_active == True).first()
     if not member or not plan: raise HTTPException(status_code=422, detail="Hội viên hoặc gói tập không hợp lệ.")
+    if member.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Hội viên đã hủy cần được kích hoạt lại trước khi đăng ký gói mới.")
     starts_at = _parse_date(form.get("startsAt")) or vietnam_today()
     activate_now = _bool(form.get("activateNow"), True)
     activation_date = _parse_date(form.get("activationDate"))
@@ -912,9 +963,9 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         if row.status == "cancelled":
             raise HTTPException(409, "Gói này đã được hủy trước đó.")
         row.status = "cancelled"
-        row.customer.status = "inactive"
-        summary = f"Hủy dịch vụ {old_package_name} và inactive {old_customer_name}"
-        details = {"paidAmount": row.paid_amount, "debtAmount": row.debt_amount, "refundCreated": False, "memberStatus": "inactive"}
+        row.customer.status = "cancelled"
+        summary = f"Hủy dịch vụ {old_package_name} và chuyển {old_customer_name} vào danh sách đã hủy"
+        details = {"paidAmount": row.paid_amount, "debtAmount": row.debt_amount, "refundCreated": False, "memberStatus": "cancelled"}
         new_customer_id, new_package_id = old_customer_id, old_package_id
     event = MembershipEvent(
         membership_id=row.id,

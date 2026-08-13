@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   NavLink,
   Outlet,
@@ -97,6 +97,76 @@ const groups = [
   },
 ];
 
+const clockFormatter = new Intl.DateTimeFormat("vi-VN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
+const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
+function SystemClock() {
+  const [tick, setTick] = useState(() => Date.now());
+  const [sync, setSync] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    let refreshTimer;
+
+    const loadHealth = async () => {
+      try {
+        const response = await fetch("/api/health", { credentials: "include" });
+        const data = await response.json();
+        if (!active || !data?.serverTime) return;
+        setSync({
+          baseClientMs: Date.now(),
+          baseServerMs: Date.parse(data.serverTime),
+          autoCheckoutTime: data.autoCheckout?.time || "23:58",
+          nextRunAt: data.autoCheckout?.nextRunAt || null,
+          status: data.status,
+        });
+      } catch {
+        if (active) {
+          setSync((current) => current && { ...current, status: "offline" });
+        }
+      } finally {
+        if (active) refreshTimer = window.setTimeout(loadHealth, 30000);
+      }
+    };
+
+    loadHealth();
+    return () => {
+      active = false;
+      window.clearTimeout(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const serverNow = useMemo(() => {
+    if (!sync?.baseServerMs) return new Date(tick);
+    return new Date(sync.baseServerMs + (tick - sync.baseClientMs));
+  }, [sync, tick]);
+
+  return (
+    <div className="system-clock">
+      <strong>{clockFormatter.format(serverNow)}</strong>
+      <span>{dateFormatter.format(serverNow)}</span>
+      <small>Auto checkout {sync?.autoCheckoutTime || "23:58"}</small>
+    </div>
+  );
+}
+
 function Sidebar({ open, close, role }) {
   return (
     <>
@@ -152,6 +222,7 @@ function Sidebar({ open, close, role }) {
             <strong>Hệ thống hoạt động</strong>
             <small>MySQL · Local server</small>
           </div>
+          <SystemClock />
         </div>
       </aside>
     </>

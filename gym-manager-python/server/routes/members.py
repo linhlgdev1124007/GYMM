@@ -34,6 +34,11 @@ def update_member(member_id: int, payload: dict, db: Session = Depends(get_db), 
     return members_controller.update_member(db, member_id, payload, user)
 
 
+@router.post("/members/{member_id}/reactivate", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def reactivate_member(member_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    return members_controller.reactivate_member(db, member_id, user)
+
+
 @router.get("/plans")
 def list_plans(include_inactive: bool = Query(False, alias="includeInactive"), db: Session = Depends(get_db)):
     return members_controller.list_plans(db, include_inactive)

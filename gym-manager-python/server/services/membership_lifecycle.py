@@ -292,6 +292,8 @@ def refresh_membership_lifecycle(db: Session, today: date | None = None):
         current = current_regular_membership(db, customer_id)
         if not customer:
             continue
+        if customer.status == "cancelled":
+            continue
         if current:
             customer.status = "active" if current.status == "active" else "lead"
         elif customer.status not in ("blocked", "inactive"):

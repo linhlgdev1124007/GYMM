@@ -22,9 +22,10 @@ from .models import (
 from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, dah, insights, members, operations, users
 from .security import ensure_admin_user
-from .services.attendance_auto_checkout import auto_checkout_open_sessions, AUTO_CHECKOUT_TIME
+from .services.attendance_auto_checkout import auto_checkout_open_sessions, AUTO_CHECKOUT_TIME, next_auto_checkout_run
 from .services.operations_service import ensure_employee_job_titles
 from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS, cleanup_webhook_images
+from .services.members_service import normalize_cancelled_members
 from .services.membership_lifecycle import refresh_membership_lifecycle
 from .timeutils import VIETNAM_TZ, utc_iso, utc_now
 from .middleware.observability import ObservabilityMiddleware
@@ -78,6 +79,7 @@ def initialize_database():
         db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
         ensure_employee_job_titles(db)
         refresh_membership_lifecycle(db)
+        normalize_cancelled_members(db)
         auto_checkout_open_sessions(db)
         db.commit()
         ensure_admin_user(db)
@@ -178,10 +180,17 @@ async def http_error(request: Request, exc: HTTPException):
 
 @app.get("/api/health", tags=["system"])
 def health():
+    server_time = datetime.now(VIETNAM_TZ)
     result = {
         "status": "ready",
         "database": "ok",
         "dah1017": "unknown",
+        "serverTime": server_time.isoformat(),
+        "timezone": "Asia/Ho_Chi_Minh",
+        "autoCheckout": {
+            "time": AUTO_CHECKOUT_TIME.strftime("%H:%M"),
+            "nextRunAt": next_auto_checkout_run(server_time).isoformat(),
+        },
     }
     try:
         with engine.connect() as connection:

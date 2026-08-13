@@ -6,6 +6,7 @@ import {
   CalendarPlus,
   CreditCard,
   Plus,
+  RotateCcw,
   ScanFace,
   SlidersHorizontal,
   X,
@@ -78,6 +79,7 @@ const views = [
   ["expiring", "Sắp hết hạn"],
   ["debt", "Có công nợ"],
   ["no_pt", "Chưa có PT"],
+  ["cancelled", "Hội viên đã hủy"],
 ];
 const statusFilters = {
   all: "Tất cả",
@@ -87,6 +89,7 @@ const statusFilters = {
   expiring: "Sắp hết hạn",
   frozen: "Bảo lưu",
   inactive: "Tạm ngừng",
+  cancelled: "Đã hủy",
 };
 const planCollator = new Intl.Collator("vi", {
   numeric: true,
@@ -232,6 +235,25 @@ export function MembersPage() {
       });
     },
     onError: (reason) => setError(reason.message),
+  });
+  const reactivate = useMutation({
+    mutationFn: (memberId) =>
+      api(`/api/members/${memberId}/reactivate`, { method: "POST" }),
+    onSuccess: (member) => {
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["member", String(member.id)] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      notify.success({
+        title: `Đã kích hoạt lại hồ sơ ${member.name}.`,
+        message: "Gói cũ đã hủy không được phục hồi; hãy đăng ký gói mới cho hội viên.",
+        action: {
+          label: "Đăng ký gói",
+          onClick: () => updateParams({ view: "all", member: member.id, action: "renew" }),
+        },
+      });
+    },
+    onError: (reason) =>
+      notify.errorFrom(reason, "Không thể kích hoạt lại hội viên này."),
   });
   useEffect(() => {
     if (!createRequested || !canOperate) return;
@@ -492,6 +514,23 @@ export function MembersPage() {
         className: "member-quick-cell",
         sortable: false,
         render: (row) => canOperate ? (
+          row.status === "cancelled" ? (
+            <div className="member-row-actions">
+              <button
+                className="row-action-primary"
+                title="Kích hoạt lại hồ sơ"
+                aria-label={`Kích hoạt lại hồ sơ ${row.name}`}
+                disabled={reactivate.isPending && reactivate.variables === row.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  reactivate.mutate(row.id);
+                }}
+              >
+                <RotateCcw size={15} />
+                <span>Kích hoạt lại</span>
+              </button>
+            </div>
+          ) : (
           <div className="member-row-actions">
             <button
               className="row-action-primary"
@@ -518,12 +557,13 @@ export function MembersPage() {
               <span>Thu tiền</span>
             </button>
           </div>
+          )
         ) : (
           <span className="text-xs text-slate-400">Chỉ xem</span>
         ),
       },
     ],
-    [canOperate, openMember],
+    [canOperate, openMember, reactivate],
   );
   const activeFilters = [
     status !== "all" && [
@@ -762,6 +802,7 @@ export function MembersPage() {
               <option value="expiring">Sắp hết hạn trong X ngày</option>
               <option value="frozen">Bảo lưu</option>
               <option value="inactive">Tạm ngừng</option>
+              <option value="cancelled">Đã hủy</option>
             </Select>
             {status === "expiring" && (
               <label className="expiry-days-field">

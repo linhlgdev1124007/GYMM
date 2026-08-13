@@ -100,7 +100,7 @@
     box-shadow: inset 2px 0 #60a5fa;
   }
   .sidebar-status {
-    @apply m-3 flex items-center gap-3 border-t border-white/10 px-2 pt-4;
+    @apply m-3 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 border-t border-white/10 px-2 pt-4;
   }
   .sidebar-status > span {
     @apply h-2 w-2 rounded-full bg-emerald-400;
@@ -113,6 +113,19 @@
   }
   .sidebar-status small {
     @apply text-[11px] text-slate-500;
+  }
+  .system-clock {
+    @apply col-span-2 mt-1 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2;
+  }
+  .system-clock strong {
+    @apply text-lg font-semibold leading-none text-white;
+    font-variant-numeric: tabular-nums;
+  }
+  .system-clock span {
+    @apply mt-1 text-[11px] font-medium text-slate-400;
+  }
+  .system-clock small {
+    @apply mt-1 text-[10px] uppercase tracking-[0.08em] text-slate-500;
   }
   .sidebar-overlay {
     @apply pointer-events-none fixed inset-0 z-30 bg-slate-950/40 opacity-0 transition-opacity;

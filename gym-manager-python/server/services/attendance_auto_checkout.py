@@ -42,6 +42,16 @@ def current_auto_checkout_deadline(now_vietnam: datetime | None = None) -> datet
     return today_deadline - timedelta(days=1)
 
 
+def next_auto_checkout_run(now_vietnam: datetime | None = None) -> datetime:
+    now_vietnam = now_vietnam or datetime.now(VIETNAM_TZ)
+    if not now_vietnam.tzinfo:
+        now_vietnam = now_vietnam.replace(tzinfo=VIETNAM_TZ)
+    target = datetime.combine(now_vietnam.date(), AUTO_CHECKOUT_TIME, tzinfo=VIETNAM_TZ)
+    if now_vietnam >= target:
+        target += timedelta(days=1)
+    return target
+
+
 def auto_checkout_open_sessions(db: Session, now_vietnam: datetime | None = None) -> dict:
     deadline = current_auto_checkout_deadline(now_vietnam)
     rows = (
