@@ -155,6 +155,56 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         db.close()
 
 
+def test_dah_identity_can_be_reassigned_to_member_with_confirmation(tmp_path):
+    from fastapi import HTTPException
+    from server.models import Customer, DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid="old-uuid")
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="old-uuid"))
+        db.commit()
+
+        unknown = dah_service.verify(db, verify_payload_for_uuid("new-uuid", "2026-08-11T10:30:00", "250"))
+        assert unknown["status"] == "unknown"
+
+        try:
+            dah_service.assign_identity_to_customer(db, customer_id, unknown["eventId"])
+            assert False, "Expected relink without replace flag to fail"
+        except HTTPException as exc:
+            assert exc.status_code == 409
+
+        try:
+            dah_service.assign_identity_to_customer(
+                db,
+                customer_id,
+                unknown["eventId"],
+                replace=True,
+                confirmation_text="xac nhan",
+            )
+            assert False, "Expected relink with wrong confirmation to fail"
+        except HTTPException as exc:
+            assert exc.status_code == 422
+
+        linked = dah_service.assign_identity_to_customer(
+            db,
+            customer_id,
+            unknown["eventId"],
+            replace=True,
+            confirmation_text="tôi xác nhận thay đổi",
+        )
+        customer = db.get(Customer, customer_id)
+
+        assert linked["personUuid"] == "new-uuid"
+        assert customer.person_uuid == "new-uuid"
+        assert customer.avatar_image_data.startswith("data:image/jpeg;base64,")
+        assert db.query(DahCustomerIdentity).filter_by(customer_id=customer_id, person_uuid="new-uuid").count() == 1
+        assert db.query(DahCustomerIdentity).filter_by(customer_id=customer_id, person_uuid="old-uuid").count() == 0
+    finally:
+        db.close()
+
+
 def test_dah_webhook_image_cleanup_keeps_recent_and_clears_old(tmp_path):
     from server.models import DahWebhookEvent
     from server.services import dah_service

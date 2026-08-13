@@ -470,10 +470,15 @@ export function MemberQuickDrawer({
                     <div className="inline-field"><dt>Sale phụ trách</dt><dd>{member.salesEmployee || "Chưa gán"}</dd></div>
                     <div className="inline-field">
                       <dt>Định danh DAH</dt>
-                      <dd>
-                        {member.personUuid ? (
-                          <span className="font-mono text-[12px]">{member.personUuid}</span>
-                        ) : (
+                        <dd>
+                          {member.personUuid ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="font-mono text-[12px]">{member.personUuid}</span>
+                              <button className="inline-flex items-center gap-1 text-xs font-medium text-blue-700" onClick={() => setIdentityLinkOpen(true)}>
+                                <ScanFace size={13} /> Gán lại
+                              </button>
+                            </span>
+                          ) : (
                           <button className="inline-flex items-center gap-1 text-xs font-medium text-blue-700" onClick={() => setIdentityLinkOpen(true)}>
                             <ScanFace size={13} /> Liên kết định danh
                           </button>
@@ -584,14 +589,16 @@ export function MemberQuickDrawer({
           />
           <DahIdentityLinkModal
             open={identityLinkOpen}
-            onClose={() => setIdentityLinkOpen(false)}
-            memberId={member.id}
-            memberName={member.name}
-            onLinked={() => {
-              refresh();
-              notify.success(`Đã liên kết định danh DAH cho ${member.name}.`);
-            }}
-          />
+              onClose={() => setIdentityLinkOpen(false)}
+              memberId={member.id}
+              memberName={member.name}
+              currentPersonUuid={member.personUuid}
+              currentAvatarImageData={member.avatarImageData}
+              onLinked={() => {
+                refresh();
+                notify.success(`Đã cập nhật định danh DAH cho ${member.name}.`);
+              }}
+            />
         </>
       )}
     </>

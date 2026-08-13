@@ -510,7 +510,7 @@ def cleanup_webhook_images(db: Session, retention_days: int = WEBHOOK_IMAGE_RETE
     return count
 
 
-def identity_candidates(db: Session, limit=12, target_type="member"):
+def identity_candidates(db: Session, limit=12, target_type="member", include_assigned=False):
     limit = max(min(int(limit or 12), 30), 1)
     target_type = target_type if target_type in {"member", "employee"} else "member"
     rows = (
@@ -547,7 +547,7 @@ def identity_candidates(db: Session, limit=12, target_type="member"):
     seen = set()
     candidates = []
     for row in rows:
-        if row.person_uuid in seen or row.person_uuid in assigned:
+        if row.person_uuid in seen or (row.person_uuid in assigned and not include_assigned):
             continue
         seen.add(row.person_uuid)
         candidates.append({
@@ -565,7 +565,13 @@ def identity_candidates(db: Session, limit=12, target_type="member"):
     return {"items": candidates}
 
 
-def assign_identity_to_customer(db: Session, customer_id: int, event_id: int):
+def assign_identity_to_customer(
+    db: Session,
+    customer_id: int,
+    event_id: int,
+    replace: bool = False,
+    confirmation_text: str | None = None,
+):
     customer = db.get(Customer, customer_id)
     if not customer:
         raise HTTPException(404, "Không tìm thấy hội viên.")
@@ -576,8 +582,21 @@ def assign_identity_to_customer(db: Session, customer_id: int, event_id: int):
     duplicate_customer = db.query(Customer).filter(Customer.person_uuid == event.person_uuid, Customer.id != customer.id).first()
     if (existing_identity and existing_identity.customer_id and existing_identity.customer_id != customer.id) or duplicate_customer:
         raise HTTPException(409, "PersonUUID này đã được gán cho hội viên khác.")
-    if customer.person_uuid and customer.person_uuid != event.person_uuid:
+    changing_identity = bool(customer.person_uuid and customer.person_uuid != event.person_uuid)
+    if changing_identity and not replace:
         raise HTTPException(409, "Hội viên đã có định danh DAH khác.")
+    if changing_identity and str(confirmation_text or "").strip().lower() != "tôi xác nhận thay đổi":
+        raise HTTPException(422, "Nhập đúng câu 'tôi xác nhận thay đổi' để gán lại định danh DAH.")
+
+    if changing_identity:
+        old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.customer_id == customer.id).all()
+        for old_link in old_links:
+            if old_link.person_uuid == event.person_uuid:
+                continue
+            if old_link.employee_id:
+                old_link.customer_id = None
+            else:
+                db.delete(old_link)
 
     identity = existing_identity or DahCustomerIdentity(person_uuid=event.person_uuid)
     identity.customer_id = customer.id

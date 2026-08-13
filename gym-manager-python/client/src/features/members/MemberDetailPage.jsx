@@ -694,12 +694,22 @@ export function MemberDetailPage() {
               </div>
               <div>
                 <dt>Định danh DAH</dt>
-                <dd>
-                  {member.personUuid ? (
-                    <span className="font-mono text-[12px]">
-                      {member.personUuid}
-                    </span>
-                  ) : canFinancial ? (
+                  <dd>
+                    {member.personUuid ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="font-mono text-[12px]">
+                          {member.personUuid}
+                        </span>
+                        {canFinancial && (
+                          <button
+                            className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
+                            onClick={() => setIdentityLinkOpen(true)}
+                          >
+                            <ScanFace size={14} /> Gán lại
+                          </button>
+                        )}
+                      </span>
+                    ) : canFinancial ? (
                     <button
                       className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
                       onClick={() => setIdentityLinkOpen(true)}
@@ -1013,9 +1023,11 @@ export function MemberDetailPage() {
         onClose={() => setIdentityLinkOpen(false)}
         memberId={member.id}
         memberName={member.name}
+        currentPersonUuid={member.personUuid}
+        currentAvatarImageData={member.avatarImageData}
         onLinked={() => {
           refresh();
-          notify.success(`Đã liên kết định danh DAH cho ${member.name}.`);
+          notify.success(`Đã cập nhật định danh DAH cho ${member.name}.`);
         }}
       />
     </>
