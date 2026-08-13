@@ -155,6 +155,49 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         db.close()
 
 
+def test_dah_candidates_include_assignment_tags_and_sort_unlinked_first(tmp_path):
+    from server.models import Customer, DahCustomerIdentity, Employee, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        assigned_customer_id = seed_member(db, person_uuid="assigned-member")
+        assigned_customer = db.get(Customer, assigned_customer_id)
+        db.add(DahCustomerIdentity(customer_id=assigned_customer_id, person_uuid="assigned-member"))
+
+        person = Person(display_name="Coach Linked", phone="0900000010", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00010", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(DahCustomerIdentity(employee_id=employee.id, person_uuid="assigned-employee"))
+        db.commit()
+
+        dah_service.verify(db, verify_payload_for_uuid("assigned-member", "2026-08-11T12:00:00", "710"))
+        dah_service.verify(db, verify_payload_for_uuid("assigned-employee", "2026-08-11T11:30:00", "711"))
+        dah_service.verify(db, verify_payload_for_uuid("unlinked-member", "2026-08-11T11:00:00", "712"))
+
+        candidates = dah_service.identity_candidates(db, limit=5, target_type="member", include_assigned=True)["items"]
+
+        assert [row["personUuid"] for row in candidates[:3]] == [
+            "unlinked-member",
+            "assigned-member",
+            "assigned-employee",
+        ]
+        member_candidate = next(row for row in candidates if row["personUuid"] == "assigned-member")
+        employee_candidate = next(row for row in candidates if row["personUuid"] == "assigned-employee")
+
+        assert member_candidate["isLinked"] is True
+        assert member_candidate["linkedMembers"][0]["id"] == assigned_customer.id
+        assert member_candidate["linkedMembers"][0]["name"] == assigned_customer.person.display_name
+        assert employee_candidate["isLinked"] is True
+        assert employee_candidate["linkedEmployees"][0]["id"] == employee.id
+        assert employee_candidate["linkedEmployees"][0]["name"] == "Coach Linked"
+    finally:
+        db.close()
+
+
 def test_dah_identity_can_be_reassigned_to_member_with_confirmation(tmp_path):
     from fastapi import HTTPException
     from server.models import Customer, DahCustomerIdentity

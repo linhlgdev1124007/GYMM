@@ -526,7 +526,45 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
     )
     uuids = {row.person_uuid for row in rows if row.person_uuid}
     assigned = set()
+    assignment_map = {uuid: {"members": [], "employees": []} for uuid in uuids}
     if uuids:
+        identities = (
+            db.query(DahCustomerIdentity)
+            .options(
+                joinedload(DahCustomerIdentity.customer).joinedload(Customer.person),
+                joinedload(DahCustomerIdentity.employee).joinedload(Employee.person),
+            )
+            .filter(DahCustomerIdentity.person_uuid.in_(uuids))
+            .all()
+        )
+        for identity in identities:
+            bucket = assignment_map.setdefault(identity.person_uuid, {"members": [], "employees": []})
+            if identity.customer:
+                bucket["members"].append({
+                    "id": identity.customer.id,
+                    "code": identity.customer.customer_code,
+                    "name": identity.customer.person.display_name if identity.customer.person else None,
+                })
+            if identity.employee:
+                bucket["employees"].append({
+                    "id": identity.employee.id,
+                    "code": identity.employee.employee_code,
+                    "name": identity.employee.person.display_name if identity.employee.person else None,
+                })
+        direct_customers = (
+            db.query(Customer)
+            .options(joinedload(Customer.person))
+            .filter(Customer.person_uuid.in_(uuids))
+            .all()
+        )
+        for customer in direct_customers:
+            bucket = assignment_map.setdefault(customer.person_uuid, {"members": [], "employees": []})
+            if not any(item["id"] == customer.id for item in bucket["members"]):
+                bucket["members"].append({
+                    "id": customer.id,
+                    "code": customer.customer_code,
+                    "name": customer.person.display_name if customer.person else None,
+                })
         if target_type == "employee":
             assigned.update(
                 uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
@@ -550,6 +588,7 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
         if row.person_uuid in seen or (row.person_uuid in assigned and not include_assigned):
             continue
         seen.add(row.person_uuid)
+        links = assignment_map.get(row.person_uuid) or {"members": [], "employees": []}
         candidates.append({
             "eventId": row.id,
             "personUuid": row.person_uuid,
@@ -559,10 +598,21 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
             "similarity": row.similarity,
             "eventTime": row.event_time.isoformat() if row.event_time else None,
             "imageData": row.image_data,
+            "linkedMembers": links["members"],
+            "linkedEmployees": links["employees"],
+            "isLinked": bool(links["members"] or links["employees"]),
         })
-        if len(candidates) >= limit:
-            break
-    return {"items": candidates}
+    unlinked = sorted(
+        [item for item in candidates if not item["isLinked"]],
+        key=lambda item: item["eventTime"] or "",
+        reverse=True,
+    )
+    linked = sorted(
+        [item for item in candidates if item["isLinked"]],
+        key=lambda item: item["eventTime"] or "",
+        reverse=True,
+    )
+    return {"items": [*unlinked, *linked][:limit]}
 
 
 def assign_identity_to_customer(

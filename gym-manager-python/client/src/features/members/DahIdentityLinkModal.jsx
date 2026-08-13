@@ -67,6 +67,22 @@ export function DahIdentityLinkModal({
     if (!selectedCandidate) return;
     assign.mutate({ eventId: selectedCandidate.eventId, replace: true });
   };
+  const linkedTags = (row) => [
+    ...(row.linkedEmployees || []).map((employee) => ({
+      key: `employee-${employee.id}`,
+      label: `nhân viên: ${employee.name || employee.code || employee.id}`,
+    })),
+    ...(row.linkedMembers || []).map((member) => ({
+      key: `member-${member.id}`,
+      label: `hội viên: ${member.name || member.code || member.id}`,
+    })),
+  ];
+  const assignedToOtherMember = (row) =>
+    targetType === "member" &&
+    Boolean(
+      memberId &&
+        row.linkedMembers?.some((member) => Number(member.id) !== Number(memberId)),
+    );
   return (
     <Modal
       open={open}
@@ -126,8 +142,8 @@ export function DahIdentityLinkModal({
                 type="button"
                 className={`identity-candidate ${
                   selectedCandidate?.eventId === row.eventId ? "selected" : ""
-                }`}
-                disabled={assign.isPending}
+                } ${row.isLinked ? "linked" : ""}`}
+                disabled={assign.isPending || assignedToOtherMember(row)}
                 onClick={() => selectCandidate(row)}
               >
                 <div className="identity-face">
@@ -140,9 +156,21 @@ export function DahIdentityLinkModal({
                 <div>
                   <strong>{row.name || "Khách vừa quét"}</strong>
                   <span>{row.personUuid}</span>
+                  {linkedTags(row).length ? (
+                    <div className="identity-tags">
+                      {linkedTags(row).map((tag) => (
+                        <span key={tag.key}>[{tag.label}]</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="identity-tags">
+                      <span>[chưa liên kết]</span>
+                    </div>
+                  )}
                   <small>
                     {row.device || "DAH"} · {dateTime(row.eventTime)}
                     {row.similarity ? ` · ${Number(row.similarity).toFixed(1)}%` : ""}
+                    {assignedToOtherMember(row) ? " · Đã thuộc hội viên khác" : ""}
                   </small>
                 </div>
               </button>
