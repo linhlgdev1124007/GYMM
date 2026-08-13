@@ -117,7 +117,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
               <option value="transfer">Chuyển nhượng sang hội viên khác</option>
               <option value="upgrade">Nâng cấp gói</option>
               <option value="change">Đổi gói</option>
-              <option value="cancel">Hủy gói</option>
+              <option value="cancel">Hủy dịch vụ và inactive hội viên</option>
             </Select>
           </Field>
           {action === "activate" && (
@@ -189,7 +189,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
             </section>
           )}
           {action === "cancel" && (
-            <div className="destructive-notice"><ShieldAlert size={18} /><div><strong>Hủy quyền sử dụng gói</strong><p>Thao tác không tự tạo hoàn tiền và hội viên sẽ không thể dùng gói này để check-in.</p></div></div>
+            <div className="destructive-notice"><ShieldAlert size={18} /><div><strong>Hủy dịch vụ và inactive hội viên</strong><p>Thao tác không tự tạo hoàn tiền. Gói này sẽ bị hủy và hội viên được chuyển sang trạng thái inactive ngay cả khi còn gói khác.</p></div></div>
           )}
           {action !== "freeze" && action !== "adjust_days" && (
             <Field label={action === "activate" ? "Ngày kích hoạt" : action === "suspend" ? "Ngày tạm dừng" : "Ngày hiệu lực"}>
@@ -204,7 +204,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
         <div className="form-actions">
           <Button data-modal-close variant="secondary" onClick={onClose}>Đóng</Button>
           <Button type="submit" variant={action === "cancel" ? "danger" : "primary"} loading={pending} loadingText="Đang xử lý…" disabled={!valid}>
-            {action === "activate" ? "Kích hoạt gói" : action === "suspend" ? "Tạm dừng gói" : action === "freeze" ? "Xác nhận bảo lưu" : action === "adjust_days" ? "Điều chỉnh ngày" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy gói" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
+            {action === "activate" ? "Kích hoạt gói" : action === "suspend" ? "Tạm dừng gói" : action === "freeze" ? "Xác nhận bảo lưu" : action === "adjust_days" ? "Điều chỉnh ngày" : action === "transfer" ? "Xác nhận chuyển nhượng" : action === "cancel" ? "Hủy dịch vụ" : action === "upgrade" ? "Nâng cấp gói" : "Đổi gói"}
           </Button>
         </div>
       </form>

@@ -400,7 +400,7 @@ export function MembershipForm({
                     <option value="pending">Chờ kích hoạt</option>
                     <option value="suspended">Tạm dừng</option>
                     <option value="frozen">Bảo lưu</option>
-                    <option value="cancelled">Tạm ngừng</option>
+                    <option value="cancelled">Đã hủy</option>
                   </Select>
                 </Field>
               )}

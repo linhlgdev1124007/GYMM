@@ -31,7 +31,7 @@ export const statusLabel = {
   expiring: "Sắp hết hạn",
   expired: "Hết hạn",
   completed: "Hoàn thành",
-  cancelled: "Tạm ngừng",
+  cancelled: "Đã hủy",
   open: "Đang ở phòng",
   closed: "Đã rời phòng",
   paid: "Đã thanh toán",

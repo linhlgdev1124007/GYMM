@@ -606,7 +606,7 @@ def test_membership_payment_validation_is_enforced_by_backend(tmp_path):
 
 
 def test_member_status_syncs_after_cancel_and_transfer(tmp_path):
-    from server.models import Customer, Person
+    from server.models import Customer, Membership, Person, ServicePackage
     from server.services.members_service import membership_action
 
     db = make_session(tmp_path)
@@ -648,5 +648,86 @@ def test_member_status_syncs_after_cancel_and_transfer(tmp_path):
         db.refresh(target)
         assert customer.status == "inactive"
         assert target.status == "active"
+    finally:
+        db.close()
+
+
+def test_cancel_service_inactivates_member_even_with_other_active_membership(tmp_path):
+    from server.models import Membership, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        customer, gym_membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        gym_membership.expires_at = date(2026, 9, 1)
+        lady = ServicePackage(
+            code="LADY-LIFE",
+            name="Lady Lifecycle",
+            category="Lady",
+            duration_days=30,
+            price=100000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add(lady)
+        db.flush()
+        lady_membership = Membership(
+            customer_id=customer.id,
+            package_id=lady.id,
+            code="MS-LADY-1",
+            registered_at=date(2026, 8, 1),
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 9, 1),
+            activated_at=date(2026, 8, 1),
+            status="active",
+        )
+        customer.status = "active"
+        db.add(lady_membership)
+        db.commit()
+
+        result = membership_action(db, gym_membership.id, {
+            "action": "cancel",
+            "effectiveAt": "2026-08-12",
+            "reason": "Khách hủy dịch vụ",
+        }, None)
+        db.refresh(customer)
+        db.refresh(gym_membership)
+        db.refresh(lady_membership)
+
+        assert result["summary"] == "Hủy dịch vụ Fitness Lifecycle và inactive Lifecycle Member"
+        assert gym_membership.status == "cancelled"
+        assert lady_membership.status == "active"
+        assert customer.status == "inactive"
+    finally:
+        db.close()
+
+
+def test_cancelled_membership_cannot_be_reactivated(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="cancelled",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="không thể kích hoạt lại"):
+            membership_action(db, membership.id, {
+                "action": "activate",
+                "effectiveAt": "2026-08-12",
+                "reason": "Thử mở lại gói đã hủy",
+            }, None)
     finally:
         db.close()

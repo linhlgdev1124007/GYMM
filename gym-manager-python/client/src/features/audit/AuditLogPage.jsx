@@ -26,7 +26,7 @@ const actionLabels = {
   transfer: "Chuyển nhượng",
   upgrade: "Nâng cấp gói",
   change: "Đổi gói",
-  cancel: "Hủy gói",
+  cancel: "Hủy dịch vụ",
 };
 const entityLabels = {
   member: "Hội viên",

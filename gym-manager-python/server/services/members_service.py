@@ -804,6 +804,8 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
     details = {}
     summary = ""
     if action == "activate":
+        if row.status == "cancelled":
+            raise HTTPException(422, "Gói đã hủy không thể kích hoạt lại. Hãy đăng ký dịch vụ mới.")
         activate_membership(db, row, _parse_date(payload.get("activatedAt")) or vietnam_today(), actor, reason)
         summary = f"Kích hoạt gói {old_package_name} của {old_customer_name}"
         db.commit()
@@ -909,8 +911,9 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         if row.status == "cancelled":
             raise HTTPException(409, "Gói này đã được hủy trước đó.")
         row.status = "cancelled"
-        summary = f"Hủy gói {old_package_name} của {old_customer_name}"
-        details = {"paidAmount": row.paid_amount, "debtAmount": row.debt_amount, "refundCreated": False}
+        row.customer.status = "inactive"
+        summary = f"Hủy dịch vụ {old_package_name} và inactive {old_customer_name}"
+        details = {"paidAmount": row.paid_amount, "debtAmount": row.debt_amount, "refundCreated": False, "memberStatus": "inactive"}
         new_customer_id, new_package_id = old_customer_id, old_package_id
     event = MembershipEvent(
         membership_id=row.id,
@@ -928,6 +931,7 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
     record_audit(db, actor, action, "membership", row.id, summary, customer_id=new_customer_id, details={**details, "reason": reason})
     if action == "transfer":
         record_audit(db, actor, action, "membership", row.id, summary, customer_id=old_customer_id, details={**details, "reason": reason})
-    _sync_customer_statuses(db, old_customer_id, new_customer_id)
+    if action != "cancel":
+        _sync_customer_statuses(db, old_customer_id, new_customer_id)
     db.commit()
     return {"membershipId": row.id, "customerId": new_customer_id, "action": action, "summary": summary}

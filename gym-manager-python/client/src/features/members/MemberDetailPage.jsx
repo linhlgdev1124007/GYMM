@@ -230,6 +230,9 @@ export function MemberDetailPage() {
     lifecycleActions.push(["freeze", "Bảo lưu"]);
     lifecycleActions.push(["adjust_days", "Cộng / trừ ngày"]);
   }
+  if (["active", "pending", "frozen", "suspended"].includes(current?.status)) {
+    lifecycleActions.push(["cancel", "Hủy dịch vụ"]);
+  }
   const open = (name, record = null, operationAction = "") => {
     setFormError("");
     setMembershipOperationAction(name === "operations" ? operationAction : "");
@@ -752,7 +755,7 @@ export function MemberDetailPage() {
                 {member.membershipEvents.map((event) => (
                   <div key={event.id}>
                     <time>{shortDate(event.effectiveAt)}</time>
-                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", unfreeze: "Kết thúc bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy gói" })[event.action] || event.action}</span>
+                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", unfreeze: "Kết thúc bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy dịch vụ" })[event.action] || event.action}</span>
                     <div>
                       <strong>{event.action === "freeze" ? `${event.details?.compensatedDays || ""} ngày bảo lưu` : event.fromPackage && event.toPackage && event.fromPackage !== event.toPackage ? `${event.fromPackage} → ${event.toPackage}` : event.fromMember && event.toMember && event.fromMember !== event.toMember ? `${event.fromMember} → ${event.toMember}` : event.reason}</strong>
                       <p>{event.reason} · {event.createdBy}</p>
