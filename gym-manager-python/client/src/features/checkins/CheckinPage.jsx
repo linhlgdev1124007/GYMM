@@ -99,6 +99,7 @@ function ActiveSessionCard({ row, checkout }) {
 export function CheckinPage() {
   const client = useQueryClient();
   const [eventView, setEventView] = useState("all");
+  const [attendanceView, setAttendanceView] = useState("member");
   const today = format(new Date(), "yyyy-MM-dd");
   const yesterday = format(subDays(new Date(), 1), "yyyy-MM-dd");
   const [dateView, setDateView] = useState("today");
@@ -158,6 +159,34 @@ export function CheckinPage() {
     .sort()
     .at(-1);
   const activeCount = (memberRecent.data?.activeCount || 0) + (employeeRecent.data?.activeCount || 0);
+  const currentAttendance =
+    attendanceView === "employee"
+      ? {
+          title: "Điểm danh nhân viên",
+          description: "Lượt vào/ra của nhân viên được nhận diện từ DAH.",
+          rows: employeeCheckins,
+          activeRows: activeEmployeeSessions,
+          query: employeeRecent,
+          pageSize: employeePageSize,
+          setPage: setEmployeePage,
+          setPageSize: setEmployeePageSize,
+          emptyTitle: "Chưa có lượt điểm danh nhân viên",
+          emptyDescription: "Dữ liệu sẽ xuất hiện khi nhân viên quét DAH trong ngày này.",
+          activeEmpty: "Không có nhân viên đang ở phòng.",
+        }
+      : {
+          title: "Điểm danh khách",
+          description: "Lượt vào/ra của hội viên và khách tiềm năng theo ngày.",
+          rows: memberCheckins,
+          activeRows: activeMemberSessions,
+          query: memberRecent,
+          pageSize: memberPageSize,
+          setPage: setMemberPage,
+          setPageSize: setMemberPageSize,
+          emptyTitle: "Chưa có lượt điểm danh khách",
+          emptyDescription: "Dữ liệu sẽ xuất hiện khi hội viên hoặc khách quét DAH trong ngày này.",
+          activeEmpty: "Không có khách đang ở phòng.",
+        };
   const eventViews = [
     ["all", "Tất cả"],
     ["allowed", "Được vào/ra"],
@@ -233,71 +262,11 @@ export function CheckinPage() {
         </div>
       </div>
 
-      {activeSessions.length > 0 && (
-        <section className="mb-7">
-          <div className="section-header">
-            <div>
-              <h2>Đang ở phòng</h2>
-              <p>Các phiên DAH chưa gửi thời điểm ra.</p>
-            </div>
-          </div>
-          {warningSessions.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <div className="flex items-start gap-2">
-                <AlertTriangle size={17} className="mt-0.5 shrink-0" />
-                <div>
-                  <strong>Có {warningSessions.length} người đang ở phòng cần kiểm tra gói.</strong>
-                  <p className="mt-1 text-xs leading-5">
-                    Bao gồm khách chưa kích hoạt, gói bảo lưu/tạm dừng hoặc gói đã hết hạn.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-900">Khách đang ở phòng</h3>
-                <span className="text-xs text-slate-500">{activeMemberSessions.length} phiên</span>
-              </div>
-              <div className="grid gap-3">
-                {activeMemberSessions.length ? (
-                  activeMemberSessions.map((row) => (
-                    <ActiveSessionCard key={row.id} row={row} checkout={checkout} />
-                  ))
-                ) : (
-                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    Không có khách đang ở phòng.
-                  </div>
-                )}
-              </div>
-            </div>
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-900">Nhân viên đang ở phòng</h3>
-                <span className="text-xs text-slate-500">{activeEmployeeSessions.length} phiên</span>
-              </div>
-              <div className="grid gap-3">
-                {activeEmployeeSessions.length ? (
-                  activeEmployeeSessions.map((row) => (
-                    <ActiveSessionCard key={row.id} row={row} checkout={checkout} />
-                  ))
-                ) : (
-                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    Không có nhân viên đang ở phòng.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
       <section className="mb-7">
         <div className="section-header">
           <div>
             <h2>Lịch sử điểm danh</h2>
-            <p>Xem lượt vào/ra theo ngày và phân trang danh sách.</p>
+            <p>Chọn nhóm cần theo dõi, xem phiên đang mở và lịch sử theo ngày.</p>
           </div>
         </div>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -329,60 +298,90 @@ export function CheckinPage() {
             </div>
           )}
         </div>
-      </section>
 
-      <section className="mb-7">
-        <div className="section-header">
-          <div>
-            <h2>Điểm danh khách</h2>
-            <p>Lượt vào/ra của hội viên và khách tiềm năng theo ngày.</p>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="tabs">
+            {[
+              ["member", "Hội viên / khách", memberRecent.data?.pagination?.total || 0, activeMemberSessions.length],
+              ["employee", "Nhân viên", employeeRecent.data?.pagination?.total || 0, activeEmployeeSessions.length],
+            ].map(([key, label, total, active]) => (
+              <button
+                key={key}
+                className={`tab ${attendanceView === key ? "active" : ""}`}
+                onClick={() => setAttendanceView(key)}
+              >
+                {label}
+                <span className="ml-1.5 text-[11px] text-slate-400">
+                  {active} mở · {total} lượt
+                </span>
+              </button>
+            ))}
           </div>
-          <span className="pill">{memberRecent.data?.pagination?.total || 0} lượt</span>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => currentAttendance.query.refetch()}
+            loading={currentAttendance.query.isFetching}
+            loadingText="Đang tải..."
+          >
+            <RefreshCw size={14} /> Làm mới tab
+          </Button>
         </div>
+
+        <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-950">
+                {currentAttendance.title}
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {currentAttendance.description}
+              </p>
+            </div>
+            <span className="pill">{currentAttendance.activeRows.length} đang ở phòng</span>
+          </div>
+          {attendanceView === "member" && warningSessions.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                <div>
+                  <strong>Có {warningSessions.length} khách đang ở phòng cần kiểm tra gói.</strong>
+                  <p className="mt-1 text-xs leading-5">
+                    Bao gồm khách chưa kích hoạt, gói bảo lưu/tạm dừng hoặc gói đã hết hạn.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+            {currentAttendance.activeRows.length ? (
+              currentAttendance.activeRows.map((row) => (
+                <ActiveSessionCard key={row.id} row={row} checkout={checkout} />
+              ))
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                {currentAttendance.activeEmpty}
+              </div>
+            )}
+          </div>
+        </div>
+
         <DataTable
-          rows={memberCheckins}
+          rows={currentAttendance.rows}
           columns={columns}
-          loading={memberRecent.isLoading}
-          error={memberRecent.error}
-          onRetry={memberRecent.refetch}
-          emptyTitle="Chưa có lượt điểm danh khách"
-          emptyDescription="Dữ liệu sẽ xuất hiện khi hội viên hoặc khách quét DAH trong ngày này."
+          loading={currentAttendance.query.isLoading}
+          error={currentAttendance.query.error}
+          onRetry={currentAttendance.query.refetch}
+          emptyTitle={currentAttendance.emptyTitle}
+          emptyDescription={currentAttendance.emptyDescription}
         />
         <Pagination
-          data={memberRecent.data?.pagination}
-          pageSize={memberPageSize}
-          onPage={setMemberPage}
+          data={currentAttendance.query.data?.pagination}
+          pageSize={currentAttendance.pageSize}
+          onPage={currentAttendance.setPage}
           onPageSize={(value) => {
-            setMemberPageSize(value);
-            setMemberPage(1);
-          }}
-        />
-      </section>
-
-      <section className="mb-7">
-        <div className="section-header">
-          <div>
-            <h2>Điểm danh nhân viên</h2>
-            <p>Lượt vào/ra của nhân viên được nhận diện từ DAH.</p>
-          </div>
-          <span className="pill">{employeeRecent.data?.pagination?.total || 0} lượt</span>
-        </div>
-        <DataTable
-          rows={employeeCheckins}
-          columns={columns}
-          loading={employeeRecent.isLoading}
-          error={employeeRecent.error}
-          onRetry={employeeRecent.refetch}
-          emptyTitle="Chưa có lượt điểm danh nhân viên"
-          emptyDescription="Dữ liệu sẽ xuất hiện khi nhân viên quét DAH trong ngày này."
-        />
-        <Pagination
-          data={employeeRecent.data?.pagination}
-          pageSize={employeePageSize}
-          onPage={setEmployeePage}
-          onPageSize={(value) => {
-            setEmployeePageSize(value);
-            setEmployeePage(1);
+            currentAttendance.setPageSize(value);
+            currentAttendance.setPage(1);
           }}
         />
       </section>
