@@ -552,7 +552,16 @@ def list_plans(db: Session, include_inactive=False):
     if not include_inactive: query = query.filter(ServicePackage.is_active == True)
     rows = query.order_by(ServicePackage.category, ServicePackage.price).all()
     counts = dict(db.query(Membership.package_id, func.count(Membership.id)).filter(Membership.package_id.in_([row.id for row in rows]), Membership.status == "active").group_by(Membership.package_id).all()) if rows else {}
-    return [{**package_data(row), "memberCount": counts.get(row.id, 0)} for row in rows]
+    registration_counts = dict(db.query(Membership.package_id, func.count(Membership.id)).filter(Membership.package_id.in_([row.id for row in rows])).group_by(Membership.package_id).all()) if rows else {}
+    return [
+        {
+            **package_data(row),
+            "memberCount": counts.get(row.id, 0),
+            "registrationCount": registration_counts.get(row.id, 0),
+            "canDelete": registration_counts.get(row.id, 0) == 0,
+        }
+        for row in rows
+    ]
 
 
 def create_plan(db: Session, payload: dict, actor: User | None = None):
@@ -575,6 +584,19 @@ def update_plan(db: Session, plan_id: int, payload: dict, actor: User | None = N
     if "active" in payload: plan.is_active = bool(payload["active"])
     record_audit(db, actor, "update", "plan", plan.id, f"Cập nhật gói tập {plan.name}", details={"fields": list(payload.keys())})
     db.commit(); return package_data(plan)
+
+
+def delete_plan(db: Session, plan_id: int, actor: User | None = None):
+    plan = db.query(ServicePackage).filter(ServicePackage.id == plan_id, ServicePackage.is_pt == False).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Không tìm thấy gói tập.")
+    registrations = db.query(Membership).filter(Membership.package_id == plan.id).count()
+    if registrations:
+        raise HTTPException(status_code=409, detail="Gói này đã có hội viên đăng ký nên không thể xóa. Hãy chuyển sang tạm ngừng sử dụng.")
+    record_audit(db, actor, "delete", "plan", plan.id, f"Xóa gói tập {plan.name}", details={"code": plan.code, "price": plan.price, "durationDays": plan.duration_days})
+    db.delete(plan)
+    db.commit()
+    return {"deleted": True, "id": plan_id}
 
 
 def list_memberships(db: Session, q: str, membership_status: str, page: int, page_size: int):

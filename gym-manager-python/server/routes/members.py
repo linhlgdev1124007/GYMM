@@ -49,6 +49,11 @@ def update_plan(plan_id: int, payload: dict, db: Session = Depends(get_db), user
     return members_controller.update_plan(db, plan_id, payload, user)
 
 
+@router.delete("/plans/{plan_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def delete_plan(plan_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return members_controller.delete_plan(db, plan_id, user)
+
+
 @router.get("/memberships")
 def list_memberships(q: str = "", status: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
     return members_controller.list_memberships(db, q=q, membership_status=status, page=page, page_size=page_size)

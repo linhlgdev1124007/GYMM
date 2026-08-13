@@ -107,3 +107,76 @@ def test_created_member_without_regular_membership_stays_lead(tmp_path):
         assert db.get(Customer, pt_member["id"]).status == "lead"
     finally:
         db.close()
+
+
+def test_plan_without_registrations_can_be_deleted(tmp_path):
+    from server.models import ServicePackage
+    from server.services.members_service import create_plan, delete_plan, list_plans
+
+    db = make_session(tmp_path)
+    try:
+        plan = create_plan(db, {
+            "name": "Delete Me",
+            "category": "Fitness",
+            "durationDays": 30,
+            "price": 100000,
+        })
+
+        listed = list_plans(db, include_inactive=True)
+        created = next(row for row in listed if row["id"] == plan["id"])
+        assert created["canDelete"] is True
+        assert created["registrationCount"] == 0
+
+        result = delete_plan(db, plan["id"])
+
+        assert result == {"deleted": True, "id": plan["id"]}
+        assert db.get(ServicePackage, plan["id"]) is None
+    finally:
+        db.close()
+
+
+def test_plan_with_any_registration_cannot_be_deleted(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from datetime import date
+    from server.models import Customer, Membership, Person, ServicePackage
+    from server.services.members_service import delete_plan, list_plans
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Registered Member", phone="0900000100", status="active")
+        db.add(person)
+        db.flush()
+        customer = Customer(person_id=person.id, customer_code="CUS0000100", status="active")
+        plan = ServicePackage(
+            code="REGISTERED-PLAN",
+            name="Registered Plan",
+            category="Fitness",
+            duration_days=30,
+            price=100000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add_all([customer, plan])
+        db.flush()
+        membership = Membership(
+            customer_id=customer.id,
+            package_id=plan.id,
+            code="MS-REGISTERED",
+            registered_at=date(2026, 8, 1),
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 8, 31),
+            status="cancelled",
+        )
+        db.add(membership)
+        db.commit()
+
+        listed = list_plans(db, include_inactive=True)
+        registered = next(row for row in listed if row["id"] == membership.package_id)
+        assert registered["canDelete"] is False
+        assert registered["registrationCount"] == 1
+
+        with pytest.raises(HTTPException, match="không thể xóa"):
+            delete_plan(db, membership.package_id)
+    finally:
+        db.close()

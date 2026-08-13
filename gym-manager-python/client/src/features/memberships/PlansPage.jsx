@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../../services/api";
 import { notify } from "../../services/notify";
@@ -15,10 +15,16 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { money } from "../../utils/format";
 
 const blank = { name: "", category: "Fitness", durationDays: 30, price: 0 };
+const categoryCollator = new Intl.Collator("vi", {
+  numeric: true,
+  sensitivity: "base",
+});
+
 export function PlansPage() {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [tab, setTab] = useState("active");
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
   const query = useQuery({
@@ -44,6 +50,34 @@ export function PlansPage() {
     setError("");
     setOpen(true);
   };
+  const rows = useMemo(
+    () => (query.data || []).filter((row) => (tab === "active" ? row.active : !row.active)),
+    [query.data, tab],
+  );
+  const groupedRows = useMemo(() => {
+    const groups = new Map();
+    rows.forEach((row) => {
+      const category = String(row.category || "Chưa phân loại").trim() || "Chưa phân loại";
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(row);
+    });
+    return [...groups.entries()]
+      .sort(([left], [right]) => categoryCollator.compare(left, right))
+      .map(([category, items]) => ({
+        category,
+        items: [...items].sort((left, right) => {
+          const priceDiff = Number(left.price || 0) - Number(right.price || 0);
+          return priceDiff || categoryCollator.compare(left.name || "", right.name || "");
+        }),
+      }));
+  }, [rows]);
+  const counts = useMemo(
+    () => ({
+      active: (query.data || []).filter((row) => row.active).length,
+      inactive: (query.data || []).filter((row) => !row.active).length,
+    }),
+    [query.data],
+  );
   const save = useMutation({
     mutationFn: (payload) =>
       api(selected ? `/api/plans/${selected.id}` : "/api/plans", {
@@ -78,6 +112,22 @@ export function PlansPage() {
     onError: (e) =>
       notify.errorFrom(e, "Không thể đổi trạng thái gói. Vui lòng thử lại."),
   });
+  const remove = useMutation({
+    mutationFn: (row) => api(`/api/plans/${row.id}`, { method: "DELETE" }),
+    onSuccess: (_, row) => {
+      client.invalidateQueries({ queryKey: ["plans"] });
+      client.invalidateQueries({ queryKey: ["member-options"] });
+      notify.success(`Đã xóa gói ${row.name}.`);
+    },
+    onError: (e) =>
+      notify.errorFrom(e, "Không thể xóa gói. Vui lòng thử lại."),
+  });
+  const handleDelete = (row) => {
+    const confirmed = window.confirm(
+      `Xóa gói "${row.name}"?\n\nChỉ xóa được gói chưa từng có hội viên đăng ký.`,
+    );
+    if (confirmed) remove.mutate(row);
+  };
   const columns = [
     {
       key: "name",
@@ -95,7 +145,6 @@ export function PlansPage() {
         </button>
       ),
     },
-    { key: "category", label: "Danh mục" },
     {
       key: "duration",
       label: "Thời hạn",
@@ -122,7 +171,7 @@ export function PlansPage() {
       render: (r) => <StatusBadge status={r.active ? "active" : "inactive"} />,
     },
     {
-      key: "edit",
+      key: "actions",
       label: "",
       render: (r) => (
         <div className="flex justify-end gap-1">
@@ -141,6 +190,12 @@ export function PlansPage() {
             <button onClick={() => toggle.mutate(r)}>
               {r.active ? "Ngừng sử dụng" : "Kích hoạt lại"}
             </button>
+            {r.canDelete && (
+              <button className="danger" onClick={() => handleDelete(r)}>
+                <Trash2 size={13} />
+                Xóa gói
+              </button>
+            )}
           </RowMenu>
         </div>
       ),
@@ -159,14 +214,52 @@ export function PlansPage() {
           </Button>
         }
       />
-      <DataTable
-        rows={query.data}
-        columns={columns}
-        loading={query.isLoading}
-        error={query.error}
-        onRetry={query.refetch}
-        onRowClick={edit}
-      />
+      <div className="tabs mb-4">
+        <button
+          className={`tab ${tab === "active" ? "active" : ""}`}
+          onClick={() => setTab("active")}
+        >
+          Gói đang hoạt động ({counts.active})
+        </button>
+        <button
+          className={`tab ${tab === "inactive" ? "active" : ""}`}
+          onClick={() => setTab("inactive")}
+        >
+          Gói inactive ({counts.inactive})
+        </button>
+      </div>
+      {query.isLoading || query.error || !groupedRows.length ? (
+        <DataTable
+          rows={[]}
+          columns={columns}
+          loading={query.isLoading}
+          error={query.error}
+          onRetry={query.refetch}
+          onRowClick={edit}
+          emptyTitle={tab === "active" ? "Không có gói đang hoạt động" : "Không có gói inactive"}
+          emptyDescription={tab === "active" ? "Tạo gói mới để bắt đầu bán cho hội viên." : "Gói tạm ngừng sử dụng sẽ xuất hiện tại đây."}
+        />
+      ) : (
+        <div className="space-y-7">
+          {groupedRows.map((group) => (
+            <section key={group.category}>
+              <div className="section-header">
+                <div>
+                  <h2>{group.category}</h2>
+                  <p>{group.items.length} gói</p>
+                </div>
+              </div>
+              <DataTable
+                rows={group.items}
+                columns={columns}
+                onRowClick={edit}
+                emptyTitle={`Không có gói ${group.category}`}
+                emptyDescription="Gói thuộc danh mục này sẽ xuất hiện tại đây."
+              />
+            </section>
+          ))}
+        </div>
+      )}
       <Modal
         open={open}
         onClose={() => setOpen(false)}
