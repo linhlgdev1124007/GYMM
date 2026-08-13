@@ -513,7 +513,7 @@ def cleanup_webhook_images(db: Session, retention_days: int = WEBHOOK_IMAGE_RETE
 def identity_candidates(db: Session, limit=12, target_type="member", include_assigned=False):
     limit = max(min(int(limit or 12), 30), 1)
     target_type = target_type if target_type in {"member", "employee"} else "member"
-    rows = (
+    recent_rows = (
         db.query(DahWebhookEvent)
         .options(joinedload(DahWebhookEvent.device))
         .filter(
@@ -524,6 +524,15 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
         .limit(limit * 5)
         .all()
     )
+    seen_recent = set()
+    rows = []
+    for row in recent_rows:
+        if row.person_uuid in seen_recent:
+            continue
+        seen_recent.add(row.person_uuid)
+        rows.append(row)
+        if len(rows) >= limit:
+            break
     uuids = {row.person_uuid for row in rows if row.person_uuid}
     assigned = set()
     assignment_map = {uuid: {"members": [], "employees": []} for uuid in uuids}
@@ -582,12 +591,10 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
                 .filter(Customer.person_uuid.in_(uuids))
                 .all()
             )
-    seen = set()
     candidates = []
     for row in rows:
-        if row.person_uuid in seen or (row.person_uuid in assigned and not include_assigned):
+        if row.person_uuid in assigned and not include_assigned:
             continue
-        seen.add(row.person_uuid)
         links = assignment_map.get(row.person_uuid) or {"members": [], "employees": []}
         candidates.append({
             "eventId": row.id,

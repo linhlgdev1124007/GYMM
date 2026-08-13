@@ -198,6 +198,44 @@ def test_dah_candidates_include_assignment_tags_and_sort_unlinked_first(tmp_path
         db.close()
 
 
+def test_dah_candidates_are_limited_to_recent_distinct_faces_before_sorting(tmp_path):
+    from server.models import Customer, DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        old_customer_id = seed_member(db, person_uuid="old-linked")
+        db.add(DahCustomerIdentity(customer_id=old_customer_id, person_uuid="old-linked"))
+        db.commit()
+
+        dah_service.verify(db, verify_payload_for_uuid("old-linked", "2026-08-11T08:00:00", "800"))
+        for index in range(11):
+            dah_service.verify(
+                db,
+                verify_payload_for_uuid(
+                    f"recent-{index}",
+                    f"2026-08-11T09:{index:02d}:00",
+                    str(810 + index),
+                ),
+            )
+
+        candidates = dah_service.identity_candidates(
+            db,
+            limit=10,
+            target_type="member",
+            include_assigned=True,
+        )["items"]
+        uuids = [row["personUuid"] for row in candidates]
+
+        assert len(uuids) == 10
+        assert "old-linked" not in uuids
+        assert "recent-10" in uuids
+        assert "recent-1" in uuids
+        assert "recent-0" not in uuids
+    finally:
+        db.close()
+
+
 def test_dah_identity_can_be_reassigned_to_member_with_confirmation(tmp_path):
     from fastapi import HTTPException
     from server.models import Customer, DahCustomerIdentity

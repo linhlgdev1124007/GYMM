@@ -26,7 +26,7 @@ export function DahIdentityLinkModal({
     queryKey: ["dah-identity-candidates", targetType, isMemberRelink],
     queryFn: () =>
       api(
-        `/api/dah/identity-candidates?limit=12&targetType=${targetType}${
+        `/api/dah/identity-candidates?limit=10&targetType=${targetType}${
           isMemberRelink ? "&includeAssigned=true" : ""
         }`,
       ),
