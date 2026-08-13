@@ -262,6 +262,49 @@ def test_recent_checkins_filters_by_day_and_paginates(tmp_path):
         db.close()
 
 
+def test_recent_checkins_can_filter_members_and_employees_separately(tmp_path):
+    from server.models import AttendanceSession, Customer, Employee, Person
+    from server.services.operations_service import recent_checkins
+
+    db = make_session(tmp_path)
+    try:
+        member_person = Person(display_name="Member Checkin", phone="0900000030", status="active")
+        employee_person = Person(display_name="Employee Checkin", phone="0900000031", status="active")
+        db.add_all([member_person, employee_person])
+        db.flush()
+        member = Customer(person_id=member_person.id, customer_code="CUS0000030", status="active")
+        employee = Employee(person_id=employee_person.id, employee_code="EMP-00030", job_title="Sale", status="active")
+        db.add_all([member, employee])
+        db.flush()
+        db.add_all([
+            AttendanceSession(
+                customer_id=member.id,
+                checked_in_at=datetime(2026, 8, 12, 9, 0),
+                source="dah",
+                status="open",
+            ),
+            AttendanceSession(
+                employee_id=employee.id,
+                checked_in_at=datetime(2026, 8, 12, 9, 5),
+                source="dah",
+                status="open",
+            ),
+        ])
+        db.commit()
+
+        members = recent_checkins(db, day="2026-08-12", person_type="member", page=1, page_size=20)
+        employees = recent_checkins(db, day="2026-08-12", person_type="employee", page=1, page_size=20)
+
+        assert members["activeCount"] == 1
+        assert employees["activeCount"] == 1
+        assert [row["personType"] for row in members["items"]] == ["member"]
+        assert [row["personType"] for row in employees["items"]] == ["employee"]
+        assert members["pagination"]["total"] == 1
+        assert employees["pagination"]["total"] == 1
+    finally:
+        db.close()
+
+
 def test_recent_checkins_flags_members_with_membership_warnings(tmp_path):
     from server.models import AttendanceSession, Customer, Membership, Person, ServicePackage
     from server.services.operations_service import recent_checkins

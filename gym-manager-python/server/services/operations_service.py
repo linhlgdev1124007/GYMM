@@ -375,7 +375,7 @@ def checkin_candidates(db: Session, q: str):
     return result
 
 
-def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 20):
+def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: int = 1, page_size: int = 20):
     target = _as_date(day) or date.today()
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
@@ -395,6 +395,10 @@ def recent_checkins(db: Session, day: str = "", page: int = 1, page_size: int = 
             ),
         ))
     )
+    if person_type == "member":
+        query = query.filter(AttendanceSession.customer_id.is_not(None))
+    elif person_type == "employee":
+        query = query.filter(AttendanceSession.employee_id.is_not(None))
     total = query.count()
     active_count = query.filter(AttendanceSession.status == "open").count()
     rows = (

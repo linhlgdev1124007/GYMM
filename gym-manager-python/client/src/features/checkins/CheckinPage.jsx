@@ -45,6 +45,57 @@ function PersonCell({ row }) {
   ) : content;
 }
 
+function ActiveSessionCard({ row, checkout }) {
+  const name = row.employeeName || row.memberName;
+  const content = (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <CheckinAvatar image={row.memberAvatarImageData} name={name} />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Activity size={16} className="shrink-0 text-emerald-600" />
+            <strong className="truncate text-sm text-slate-950">{name}</strong>
+          </div>
+          <p className="mt-1 truncate text-xs text-slate-400">
+            {row.employeeId
+              ? `${row.employeeCode} · Nhân viên`
+              : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
+          </p>
+          {row.memberAccessWarning && (
+            <p className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+              <AlertTriangle size={13} />
+              <span className="truncate">{row.memberAccessWarning}</span>
+            </p>
+          )}
+        </div>
+      </div>
+      <Button
+        size="sm"
+        variant="secondary"
+        loading={checkout.isPending && checkout.variables === row.id}
+        loadingText="Đang checkout…"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          checkout.mutate(row.id);
+        }}
+      >
+        Checkout
+      </Button>
+    </div>
+  );
+  return row.employeeId ? (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">{content}</div>
+  ) : (
+    <Link
+      to={`/members/${row.memberId}`}
+      className="rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-sm"
+    >
+      {content}
+    </Link>
+  );
+}
+
 export function CheckinPage() {
   const client = useQueryClient();
   const [eventView, setEventView] = useState("all");
@@ -52,20 +103,29 @@ export function CheckinPage() {
   const yesterday = format(subDays(new Date(), 1), "yyyy-MM-dd");
   const [dateView, setDateView] = useState("today");
   const [customDate, setCustomDate] = useState(today);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = useState(20);
+  const [employeePage, setEmployeePage] = useState(1);
+  const [employeePageSize, setEmployeePageSize] = useState(20);
   const [eventPage, setEventPage] = useState(1);
   const [eventPageSize, setEventPageSize] = useState(20);
   const selectedDate =
     dateView === "yesterday" ? yesterday : dateView === "custom" ? customDate : today;
   const changeDateView = (nextView) => {
     setDateView(nextView);
-    setPage(1);
+    setMemberPage(1);
+    setEmployeePage(1);
   };
-  const recent = useQuery({
-    queryKey: ["checkins", selectedDate, page, pageSize],
+  const memberRecent = useQuery({
+    queryKey: ["checkins", "member", selectedDate, memberPage, memberPageSize],
     queryFn: () =>
-      api(`/api/checkins?${queryString({ day: selectedDate, page, pageSize })}`),
+      api(`/api/checkins?${queryString({ day: selectedDate, type: "member", page: memberPage, pageSize: memberPageSize })}`),
+    refetchInterval: 30000,
+  });
+  const employeeRecent = useQuery({
+    queryKey: ["checkins", "employee", selectedDate, employeePage, employeePageSize],
+    queryFn: () =>
+      api(`/api/checkins?${queryString({ day: selectedDate, type: "employee", page: employeePage, pageSize: employeePageSize })}`),
     refetchInterval: 30000,
   });
   const events = useQuery({
@@ -87,10 +147,17 @@ export function CheckinPage() {
     onError: (error) =>
       notify.errorFrom(error, "Không thể checkout phiên này. Vui lòng thử lại."),
   });
-  const checkins = recent.data?.items || [];
-  const activeSessions = checkins.filter((row) => row.status === "open");
+  const memberCheckins = memberRecent.data?.items || [];
+  const employeeCheckins = employeeRecent.data?.items || [];
+  const activeSessions = [...memberCheckins, ...employeeCheckins].filter((row) => row.status === "open");
+  const activeMemberSessions = memberCheckins.filter((row) => row.status === "open");
+  const activeEmployeeSessions = employeeCheckins.filter((row) => row.status === "open");
   const warningSessions = activeSessions.filter((row) => row.memberAccessWarning);
-  const lastEventAt = recent.data?.lastEventAt;
+  const lastEventAt = [memberRecent.data?.lastEventAt, employeeRecent.data?.lastEventAt]
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const activeCount = (memberRecent.data?.activeCount || 0) + (employeeRecent.data?.activeCount || 0);
   const eventViews = [
     ["all", "Tất cả"],
     ["allowed", "Được vào/ra"],
@@ -131,8 +198,11 @@ export function CheckinPage() {
         action={(
           <Button
             variant="secondary"
-            onClick={() => recent.refetch()}
-            loading={recent.isFetching}
+            onClick={() => {
+              memberRecent.refetch();
+              employeeRecent.refetch();
+            }}
+            loading={memberRecent.isFetching || employeeRecent.isFetching}
             loadingText="Đang đồng bộ…"
           >
             <RefreshCw size={15} /> Làm mới dữ liệu
@@ -151,7 +221,7 @@ export function CheckinPage() {
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <span className="text-xs text-slate-500">Đang ở phòng</span>
-          <strong className="mt-1 block text-2xl text-slate-950">{recent.data?.activeCount || 0}</strong>
+          <strong className="mt-1 block text-2xl text-slate-950">{activeCount}</strong>
           <span className="text-xs text-slate-400">phiên chưa ghi nhận giờ ra trong ngày đang xem</span>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -184,65 +254,41 @@ export function CheckinPage() {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
-            {activeSessions.map((row) => {
-              const name = row.employeeName || row.memberName;
-              const content = (
-                <>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <CheckinAvatar image={row.memberAvatarImageData} name={name} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Activity size={16} className="shrink-0 text-emerald-600" />
-                        <strong className="truncate text-sm text-slate-950">{name}</strong>
-                      </div>
-                      <p className="mt-1 truncate text-xs text-slate-400">
-                        {row.employeeId
-                          ? `${row.employeeCode} · Nhân viên`
-                          : `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`} · Vào lúc {dateTime(row.checkedInAt)}
-                      </p>
-                      {row.memberAccessWarning && (
-                        <p className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-                          <AlertTriangle size={13} />
-                          <span className="truncate">{row.memberAccessWarning}</span>
-                        </p>
-                      )}
-                    </div>
+          <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900">Khách đang ở phòng</h3>
+                <span className="text-xs text-slate-500">{activeMemberSessions.length} phiên</span>
+              </div>
+              <div className="grid gap-3">
+                {activeMemberSessions.length ? (
+                  activeMemberSessions.map((row) => (
+                    <ActiveSessionCard key={row.id} row={row} checkout={checkout} />
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    Không có khách đang ở phòng.
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    loading={checkout.isPending && checkout.variables === row.id}
-                    loadingText="Đang checkout…"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      checkout.mutate(row.id);
-                    }}
-                  >
-                    Checkout
-                  </Button>
-                </div>
-                </>
-              );
-              return row.employeeId ? (
-                <div
-                  key={row.id}
-                  className="rounded-lg border border-slate-200 bg-white p-4"
-                >
-                  {content}
-                </div>
-              ) : (
-                <Link
-                  key={row.id}
-                  to={`/members/${row.memberId}`}
-                  className="rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-sm"
-                >
-                  {content}
-                </Link>
-              );
-            })}
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900">Nhân viên đang ở phòng</h3>
+                <span className="text-xs text-slate-500">{activeEmployeeSessions.length} phiên</span>
+              </div>
+              <div className="grid gap-3">
+                {activeEmployeeSessions.length ? (
+                  activeEmployeeSessions.map((row) => (
+                    <ActiveSessionCard key={row.id} row={row} checkout={checkout} />
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    Không có nhân viên đang ở phòng.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </section>
       )}
@@ -276,28 +322,67 @@ export function CheckinPage() {
                 value={customDate}
                 onChange={(value) => {
                   setCustomDate(value || today);
-                  setPage(1);
+                  setMemberPage(1);
+                  setEmployeePage(1);
                 }}
               />
             </div>
           )}
         </div>
+      </section>
+
+      <section className="mb-7">
+        <div className="section-header">
+          <div>
+            <h2>Điểm danh khách</h2>
+            <p>Lượt vào/ra của hội viên và khách tiềm năng theo ngày.</p>
+          </div>
+          <span className="pill">{memberRecent.data?.pagination?.total || 0} lượt</span>
+        </div>
         <DataTable
-          rows={checkins}
+          rows={memberCheckins}
           columns={columns}
-          loading={recent.isLoading}
-          error={recent.error}
-          onRetry={recent.refetch}
-          emptyTitle="Chưa có lượt điểm danh"
-          emptyDescription="Dữ liệu sẽ xuất hiện khi DAH gửi lượt vào/ra trong ngày này."
+          loading={memberRecent.isLoading}
+          error={memberRecent.error}
+          onRetry={memberRecent.refetch}
+          emptyTitle="Chưa có lượt điểm danh khách"
+          emptyDescription="Dữ liệu sẽ xuất hiện khi hội viên hoặc khách quét DAH trong ngày này."
         />
         <Pagination
-          data={recent.data?.pagination}
-          pageSize={pageSize}
-          onPage={setPage}
+          data={memberRecent.data?.pagination}
+          pageSize={memberPageSize}
+          onPage={setMemberPage}
           onPageSize={(value) => {
-            setPageSize(value);
-            setPage(1);
+            setMemberPageSize(value);
+            setMemberPage(1);
+          }}
+        />
+      </section>
+
+      <section className="mb-7">
+        <div className="section-header">
+          <div>
+            <h2>Điểm danh nhân viên</h2>
+            <p>Lượt vào/ra của nhân viên được nhận diện từ DAH.</p>
+          </div>
+          <span className="pill">{employeeRecent.data?.pagination?.total || 0} lượt</span>
+        </div>
+        <DataTable
+          rows={employeeCheckins}
+          columns={columns}
+          loading={employeeRecent.isLoading}
+          error={employeeRecent.error}
+          onRetry={employeeRecent.refetch}
+          emptyTitle="Chưa có lượt điểm danh nhân viên"
+          emptyDescription="Dữ liệu sẽ xuất hiện khi nhân viên quét DAH trong ngày này."
+        />
+        <Pagination
+          data={employeeRecent.data?.pagination}
+          pageSize={employeePageSize}
+          onPage={setEmployeePage}
+          onPageSize={(value) => {
+            setEmployeePageSize(value);
+            setEmployeePage(1);
           }}
         />
       </section>

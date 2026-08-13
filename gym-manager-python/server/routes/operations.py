@@ -55,8 +55,8 @@ def candidates(q: str = "", db: Session = Depends(get_db)):
 
 
 @router.get("/checkins")
-def checkins(day: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
-    return operations_controller.recent_checkins(db, day=day, page=page, page_size=page_size)
+def checkins(day: str = "", type: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
+    return operations_controller.recent_checkins(db, day=day, person_type=type, page=page, page_size=page_size)
 
 
 @router.post("/checkins", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
