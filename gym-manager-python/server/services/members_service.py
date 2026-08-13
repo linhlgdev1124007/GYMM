@@ -385,13 +385,14 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
     dah_event_id = _int(payload.get("dahEventId"))
     dah_event = db.get(DahWebhookEvent, dah_event_id) if dah_event_id else None
     if dah_event_id:
-        if not dah_event or dah_event.operator != "VerifyPush" or not dah_event.person_uuid:
+        event_identity_key = dah_service._event_identity_key(dah_event) if dah_event else None
+        if not dah_event or dah_event.operator != "VerifyPush" or not event_identity_key:
             raise HTTPException(status_code=422, detail="Định danh DAH không hợp lệ.")
-        if db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == dah_event.person_uuid).first():
-            raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
-    person_uuid = _text(payload.get("personUuid"), 80) or (dah_event.person_uuid if dah_event else None)
+        if dah_service._identity_query(db, dah_event.person_uuid, dah_event.person_id):
+            raise HTTPException(status_code=409, detail="Định danh DAH này đã được gán cho hội viên khác.")
+    person_uuid = _text(payload.get("personUuid"), 80) or (dah_service._event_identity_key(dah_event) if dah_event else None)
     if person_uuid and db.query(Customer).filter(Customer.person_uuid == person_uuid).first():
-        raise HTTPException(status_code=409, detail="PersonUUID này đã được gán cho hội viên khác.")
+        raise HTTPException(status_code=409, detail="Định danh DAH này đã được gán cho hội viên khác.")
     person = Person(display_name=name, phone=phone, email=payload.get("email") or None, gender=payload.get("gender") or None, date_of_birth=_parse_date(payload.get("dateOfBirth")), status="active", biometric_consent_status="not_requested")
     db.add(person); db.flush()
     member = Customer(person_id=person.id, customer_code=f"TMP-{secrets.token_hex(6)}", mbs_card_code=payload.get("mbsCode") or None, person_uuid=person_uuid, avatar_image_data=dah_event.image_data if dah_event else None, sales_employee_id=_sales_employee_id(db, payload.get("salesEmployeeId")), source=_text(payload.get("source"), 80), status="lead", notes=payload.get("notes") or None)

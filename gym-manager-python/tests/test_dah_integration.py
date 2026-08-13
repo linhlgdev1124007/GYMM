@@ -85,6 +85,22 @@ def verify_payload_for_uuid(person_uuid, create_time, file_pos="1"):
     return payload
 
 
+def verify_payload_for_person_id(person_id, create_time, file_pos="1"):
+    payload = verify_payload(create_time, file_pos)
+    payload["info"]["PersonUUID"] = " "
+    payload["info"]["PersonID"] = person_id
+    payload["info"]["Name"] = f"FACE {person_id}"
+    return payload
+
+
+def verify_payload_for_uuid_and_person_id(person_uuid, person_id, create_time, file_pos="1"):
+    payload = verify_payload(create_time, file_pos)
+    payload["info"]["PersonUUID"] = person_uuid
+    payload["info"]["PersonID"] = person_id
+    payload["info"]["Name"] = f"FACE {person_uuid}"
+    return payload
+
+
 def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_path):
     from server.models import AttendanceSession, DahCustomerIdentity, DahWebhookEvent, Customer
     from server.services import dah_service
@@ -151,6 +167,98 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         assert event.status == "linked"
         assert event.image_data is None
         assert dah_service.identity_candidates(db)["items"] == []
+    finally:
+        db.close()
+
+
+def test_dah_person_id_only_event_can_be_assigned_and_processed(tmp_path):
+    from server.models import AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid=None)
+        unknown = dah_service.verify(db, verify_payload_for_person_id("1128", "2026-08-11T10:20:00"))
+
+        assert unknown["status"] == "unknown"
+        assert unknown["action"] == "unknown_identity"
+
+        candidates = dah_service.identity_candidates(db, limit=10)["items"]
+        candidate = next(row for row in candidates if row["personId"] == "1128")
+
+        assert candidate["personUuid"] == "person_id:1128"
+        assert candidate["rawPersonUuid"] is None
+        assert candidate["name"] == "FACE 1128"
+
+        linked = dah_service.assign_identity_to_customer(db, customer_id, unknown["eventId"])
+        customer = db.get(Customer, customer_id)
+        event = db.get(DahWebhookEvent, unknown["eventId"])
+
+        assert linked["personUuid"] == "person_id:1128"
+        assert customer.person_uuid == "person_id:1128"
+        assert event.status == "linked"
+        assert db.query(DahCustomerIdentity).filter_by(
+            customer_id=customer_id,
+            person_uuid="person_id:1128",
+            person_id="1128",
+        ).count() == 1
+
+        checkin = dah_service.verify(db, verify_payload_for_person_id("1128", "2026-08-11T10:30:00", "2"))
+
+        assert checkin["status"] == "processed"
+        assert checkin["action"] == "checkin"
+        assert checkin["memberId"] == customer_id
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+    finally:
+        db.close()
+
+
+def test_dah_person_id_fallback_upgrades_to_real_uuid_without_stale_customer_key(tmp_path):
+    from server.models import AttendanceSession, Customer, DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid=None)
+        unknown = dah_service.verify(db, verify_payload_for_person_id("1128", "2026-08-11T10:20:00"))
+        dah_service.assign_identity_to_customer(db, customer_id, unknown["eventId"])
+
+        checkin = dah_service.verify(
+            db,
+            verify_payload_for_uuid_and_person_id("real-uuid-1128", "1128", "2026-08-11T10:30:00", "2"),
+        )
+        customer = db.get(Customer, customer_id)
+        identity = db.query(DahCustomerIdentity).filter_by(customer_id=customer_id).one()
+
+        assert checkin["status"] == "processed"
+        assert checkin["action"] == "checkin"
+        assert checkin["memberId"] == customer_id
+        assert customer.person_uuid == "real-uuid-1128"
+        assert identity.person_uuid == "real-uuid-1128"
+        assert identity.person_id == "1128"
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+    finally:
+        db.close()
+
+
+def test_dah_real_uuid_does_not_auto_match_different_existing_uuid_by_person_id(tmp_path):
+    from server.models import DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid="old-real-uuid")
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="old-real-uuid", person_id="1128"))
+        db.commit()
+
+        result = dah_service.verify(
+            db,
+            verify_payload_for_uuid_and_person_id("new-real-uuid", "1128", "2026-08-11T10:40:00", "3"),
+        )
+
+        assert result["status"] == "unknown"
+        assert result["action"] == "unknown_identity"
+        assert result["memberId"] is None
     finally:
         db.close()
 
@@ -232,6 +340,54 @@ def test_dah_candidates_are_limited_to_recent_distinct_faces_before_sorting(tmp_
         assert "recent-10" in uuids
         assert "recent-1" in uuids
         assert "recent-0" not in uuids
+    finally:
+        db.close()
+
+
+def test_member_dah_candidates_return_recent_unlinked_members_after_filtering_assigned(tmp_path):
+    from server.models import Customer, DahCustomerIdentity, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        for index in range(10):
+            dah_service.verify(
+                db,
+                verify_payload_for_uuid(
+                    f"unlinked-{index}",
+                    f"2026-08-11T09:{index:02d}:00",
+                    str(900 + index),
+                ),
+            )
+        for index in range(12):
+            person = Person(display_name=f"Assigned {index}", phone=f"09110000{index:02d}", status="active")
+            db.add(person)
+            db.flush()
+            customer = Customer(
+                person_id=person.id,
+                customer_code=f"MB-A{index:04d}",
+                person_uuid=f"assigned-{index}",
+                status="active",
+            )
+            db.add(customer)
+            db.flush()
+            db.add(DahCustomerIdentity(customer_id=customer.id, person_uuid=f"assigned-{index}"))
+            db.commit()
+            dah_service.verify(
+                db,
+                verify_payload_for_uuid(
+                    f"assigned-{index}",
+                    f"2026-08-11T10:{index:02d}:00",
+                    str(920 + index),
+                ),
+            )
+
+        candidates = dah_service.identity_candidates(db, limit=10, target_type="member")["items"]
+        uuids = [row["personUuid"] for row in candidates]
+
+        assert len(uuids) == 10
+        assert all(uuid.startswith("unlinked-") for uuid in uuids)
+        assert db.query(Customer).count() == 12
     finally:
         db.close()
 

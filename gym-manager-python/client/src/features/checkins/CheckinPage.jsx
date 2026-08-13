@@ -25,10 +25,10 @@ function PersonCell({ row }) {
   const name = row.employeeName || row.memberName || row.faceName || "Face chưa gán";
   const image = row.memberAvatarImageData || row.imageData;
   const details = row.employeeId
-    ? `${row.employeeCode} · Nhân viên`
-    : row.memberId
-      ? `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`
-      : row.personUuid || row.personId || "Không có UUID";
+      ? `${row.employeeCode} · Nhân viên`
+      : row.memberId
+        ? `${row.memberCode}${row.memberStatus === "lead" ? " · Tiềm năng" : ""}`
+      : row.personUuid ? `UUID ${row.personUuid}` : row.personId ? `PersonID ${row.personId}` : "Không có định danh";
   const content = (
     <div className="member-cell">
       <CheckinAvatar image={image} name={name} />

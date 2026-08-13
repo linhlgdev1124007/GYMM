@@ -1,6 +1,6 @@
 from pathlib import Path
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 import asyncio
 import contextlib
 import hmac
@@ -22,10 +22,11 @@ from .models import (
 from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, dah, insights, members, operations, users
 from .security import ensure_admin_user
+from .services.attendance_auto_checkout import auto_checkout_open_sessions, AUTO_CHECKOUT_TIME
 from .services.operations_service import ensure_employee_job_titles
 from .services.dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS, cleanup_webhook_images
 from .services.membership_lifecycle import refresh_membership_lifecycle
-from .timeutils import utc_iso, utc_now
+from .timeutils import VIETNAM_TZ, utc_iso, utc_now
 from .middleware.observability import ObservabilityMiddleware
 from .middleware.request_security import RequestSecurityMiddleware, RequestSizeLimitMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware
@@ -77,6 +78,7 @@ def initialize_database():
         db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
         ensure_employee_job_titles(db)
         refresh_membership_lifecycle(db)
+        auto_checkout_open_sessions(db)
         db.commit()
         ensure_admin_user(db)
     finally:
@@ -100,16 +102,44 @@ async def webhook_image_cleanup_job():
         await asyncio.sleep(interval)
 
 
+def _seconds_until_auto_checkout() -> float:
+    now = datetime.now(VIETNAM_TZ)
+    target = datetime.combine(now.date(), AUTO_CHECKOUT_TIME, tzinfo=VIETNAM_TZ)
+    if now >= target:
+        target += timedelta(days=1)
+    return max((target - now).total_seconds(), 1)
+
+
+async def attendance_auto_checkout_job():
+    while True:
+        interval = _seconds_until_auto_checkout()
+        if settings.environment == "test":
+            try:
+                interval = max(float(os.getenv("GYM_TEST_JOB_INTERVAL_SECONDS", "1")), 0.1)
+            except (TypeError, ValueError):
+                interval = 1
+        await asyncio.sleep(interval)
+        db = SessionLocal()
+        try:
+            auto_checkout_open_sessions(db)
+        finally:
+            db.close()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_database()
     cleanup_task = asyncio.create_task(webhook_image_cleanup_job())
+    auto_checkout_task = asyncio.create_task(attendance_auto_checkout_job())
     try:
         yield
     finally:
         cleanup_task.cancel()
+        auto_checkout_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await auto_checkout_task
 
 
 app = FastAPI(

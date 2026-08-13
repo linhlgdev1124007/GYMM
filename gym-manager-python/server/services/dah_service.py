@@ -29,6 +29,44 @@ def _clean(value) -> str | None:
     return text[:255]
 
 
+def _synthetic_person_uuid(person_id: str | None) -> str | None:
+    return f"person_id:{person_id}" if person_id else None
+
+
+def _dah_identity_key(person_uuid: str | None, person_id: str | None) -> str | None:
+    return person_uuid or _synthetic_person_uuid(person_id)
+
+
+def _event_identity_key(event: DahWebhookEvent) -> str | None:
+    return _dah_identity_key(event.person_uuid, event.person_id)
+
+
+def _identity_query(db: Session, person_uuid: str | None, person_id: str | None):
+    if person_uuid:
+        exact = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == person_uuid).first()
+        if exact:
+            return exact
+        if person_id:
+            return (
+                db.query(DahCustomerIdentity)
+                .filter(
+                    DahCustomerIdentity.person_id == person_id,
+                    DahCustomerIdentity.person_uuid == _synthetic_person_uuid(person_id),
+                )
+                .order_by(DahCustomerIdentity.id.desc())
+                .first()
+            )
+        return None
+    if person_id:
+        return (
+            db.query(DahCustomerIdentity)
+            .filter(DahCustomerIdentity.person_id == person_id)
+            .order_by(DahCustomerIdentity.id.desc())
+            .first()
+        )
+    return None
+
+
 def _int(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
@@ -131,33 +169,42 @@ def _active_regular_membership(db: Session, customer_id: int):
     )
 
 
-def _identity_for_uuid(db: Session, device: Device | None, info: dict, event_time: datetime | None):
+def _identity_for_dah_key(db: Session, device: Device | None, info: dict, event_time: datetime | None):
     person_uuid = _clean(info.get("PersonUUID"))
-    if not person_uuid:
-        return None, None, None, False
     person_id = _clean(info.get("PersonID"))
+    identity_key = _dah_identity_key(person_uuid, person_id)
+    if not identity_key:
+        return None, None, None, False
     face_name = _clean(info.get("Name"))
     rfid = _clean(info.get("RFIDCard")) or _clean(info.get("MjCardNo"))
-    identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == person_uuid).first()
+    identity = _identity_query(db, person_uuid, person_id)
     if identity:
+        previous_identity_key = identity.person_uuid
         identity.device_id = device.id if device else identity.device_id
+        if person_uuid and identity.person_uuid.startswith("person_id:"):
+            existing_uuid = db.query(DahCustomerIdentity).filter(
+                DahCustomerIdentity.person_uuid == person_uuid,
+                DahCustomerIdentity.id != identity.id,
+            ).first()
+            if not existing_uuid:
+                identity.person_uuid = person_uuid
         identity.person_id = person_id or identity.person_id
         identity.face_name = face_name or identity.face_name
         identity.rfid_card = rfid or identity.rfid_card
         identity.last_seen_at = event_time or utc_now()
         customer = db.get(Customer, identity.customer_id) if identity.customer_id else None
         employee = db.get(Employee, identity.employee_id) if identity.employee_id else None
-        if customer and not customer.person_uuid:
-            customer.person_uuid = person_uuid
+        if customer and (not customer.person_uuid or customer.person_uuid == previous_identity_key):
+            customer.person_uuid = identity.person_uuid
         return identity, customer, employee, False
 
-    customer = db.query(Customer).filter(Customer.person_uuid == person_uuid).first()
+    customer = db.query(Customer).filter(Customer.person_uuid == identity_key).first()
     if not customer:
         return None, None, None, False
     identity = DahCustomerIdentity(
         customer_id=customer.id,
         device_id=device.id if device else None,
-        person_uuid=person_uuid,
+        person_uuid=identity_key,
         person_id=person_id,
         face_name=face_name,
         rfid_card=rfid,
@@ -168,13 +215,18 @@ def _identity_for_uuid(db: Session, device: Device | None, info: dict, event_tim
     return identity, customer, None, True
 
 
-def _recent_duplicate_scan(db: Session, person_uuid: str | None, event_time: datetime) -> bool:
-    if not person_uuid:
+def _recent_duplicate_scan(db: Session, identity_key: str | None, person_id: str | None, event_time: datetime) -> bool:
+    if not identity_key and not person_id:
         return False
+    filters = []
+    if identity_key:
+        filters.append(DahWebhookEvent.person_uuid == identity_key)
+    if person_id:
+        filters.append(DahWebhookEvent.person_id == person_id)
     recent_processed = (
         db.query(DahWebhookEvent)
         .filter(
-            DahWebhookEvent.person_uuid == person_uuid,
+            or_(*filters),
             DahWebhookEvent.status == "processed",
             DahWebhookEvent.action.in_(("checkin", "checkout", "mixed")),
         )
@@ -327,7 +379,10 @@ def verify(db: Session, payload: dict):
     event_time = _parse_time(info.get("CreateTime")) or utc_now()
     verify_status = _int(info.get("VerifyStatus"))
     similarity = _float(info.get("Similarity1"))
-    identity, customer, employee, identity_created = _identity_for_uuid(db, device, info, event_time)
+    person_uuid = _clean(info.get("PersonUUID"))
+    person_id = _clean(info.get("PersonID"))
+    identity_key = _dah_identity_key(person_uuid, person_id)
+    identity, customer, employee, identity_created = _identity_for_dah_key(db, device, info, event_time)
     status = "received"
     action = None
     note = None
@@ -339,16 +394,16 @@ def verify(db: Session, payload: dict):
         status = "rejected"
         action = "verify_failed"
         note = "DAH xác thực không thành công."
-    elif not _clean(info.get("PersonUUID")):
+    elif not identity_key:
         status = "unknown"
-        action = "missing_person_uuid"
-        note = "Webhook không có PersonUUID."
+        action = "missing_dah_identity"
+        note = "Webhook không có PersonUUID hoặc PersonID."
     elif not customer and not employee:
         status = "unknown"
         action = "unknown_identity"
-        note = "PersonUUID chưa khớp hội viên hoặc nhân viên."
+        note = "Định danh DAH chưa khớp hội viên hoặc nhân viên."
     else:
-        if _recent_duplicate_scan(db, _clean(info.get("PersonUUID")), event_time):
+        if _recent_duplicate_scan(db, identity_key, person_id, event_time):
             status = "duplicate"
             action = "duplicate_scan"
             note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
@@ -384,8 +439,8 @@ def verify(db: Session, payload: dict):
         customer_id=customer.id if customer else None,
         employee_id=employee.id if employee else None,
         attendance_session_id=session_id,
-        person_uuid=_clean(info.get("PersonUUID")),
-        person_id=_clean(info.get("PersonID")),
+        person_uuid=person_uuid,
+        person_id=person_id,
         verify_status=verify_status,
         similarity=similarity,
         event_time=event_time,
@@ -513,41 +568,45 @@ def cleanup_webhook_images(db: Session, retention_days: int = WEBHOOK_IMAGE_RETE
 def identity_candidates(db: Session, limit=12, target_type="member", include_assigned=False):
     limit = max(min(int(limit or 12), 30), 1)
     target_type = target_type if target_type in {"member", "employee"} else "member"
+    scan_limit = max(limit * 30, 120)
     recent_rows = (
         db.query(DahWebhookEvent)
         .options(joinedload(DahWebhookEvent.device))
         .filter(
             DahWebhookEvent.operator == "VerifyPush",
-            DahWebhookEvent.person_uuid.is_not(None),
+            or_(DahWebhookEvent.person_uuid.is_not(None), DahWebhookEvent.person_id.is_not(None)),
         )
         .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
-        .limit(limit * 5)
+        .limit(scan_limit)
         .all()
     )
     seen_recent = set()
     rows = []
     for row in recent_rows:
-        if row.person_uuid in seen_recent:
+        identity_key = _event_identity_key(row)
+        if not identity_key or identity_key in seen_recent:
             continue
-        seen_recent.add(row.person_uuid)
+        seen_recent.add(identity_key)
         rows.append(row)
-        if len(rows) >= limit:
+        if len(rows) >= scan_limit:
             break
-    uuids = {row.person_uuid for row in rows if row.person_uuid}
+    identity_keys = {_event_identity_key(row) for row in rows if _event_identity_key(row)}
+    person_ids = {row.person_id for row in rows if row.person_id}
     assigned = set()
-    assignment_map = {uuid: {"members": [], "employees": []} for uuid in uuids}
-    if uuids:
+    assignment_map = {key: {"members": [], "employees": []} for key in identity_keys}
+    if identity_keys or person_ids:
         identities = (
             db.query(DahCustomerIdentity)
             .options(
                 joinedload(DahCustomerIdentity.customer).joinedload(Customer.person),
                 joinedload(DahCustomerIdentity.employee).joinedload(Employee.person),
             )
-            .filter(DahCustomerIdentity.person_uuid.in_(uuids))
+            .filter(or_(DahCustomerIdentity.person_uuid.in_(identity_keys), DahCustomerIdentity.person_id.in_(person_ids)))
             .all()
         )
         for identity in identities:
-            bucket = assignment_map.setdefault(identity.person_uuid, {"members": [], "employees": []})
+            key = identity.person_uuid or _synthetic_person_uuid(identity.person_id)
+            bucket = assignment_map.setdefault(key, {"members": [], "employees": []})
             if identity.customer:
                 bucket["members"].append({
                     "id": identity.customer.id,
@@ -563,7 +622,7 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
         direct_customers = (
             db.query(Customer)
             .options(joinedload(Customer.person))
-            .filter(Customer.person_uuid.in_(uuids))
+            .filter(Customer.person_uuid.in_(identity_keys))
             .all()
         )
         for customer in direct_customers:
@@ -577,28 +636,40 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
         if target_type == "employee":
             assigned.update(
                 uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
-                .filter(DahCustomerIdentity.employee_id.is_not(None), DahCustomerIdentity.person_uuid.in_(uuids))
+                .filter(DahCustomerIdentity.employee_id.is_not(None), DahCustomerIdentity.person_uuid.in_(identity_keys))
+                .all()
+            )
+            assigned.update(
+                _synthetic_person_uuid(person_id) for (person_id,) in db.query(DahCustomerIdentity.person_id)
+                .filter(DahCustomerIdentity.employee_id.is_not(None), DahCustomerIdentity.person_id.in_(person_ids))
                 .all()
             )
         else:
             assigned.update(
                 uuid for (uuid,) in db.query(DahCustomerIdentity.person_uuid)
-                .filter(DahCustomerIdentity.customer_id.is_not(None), DahCustomerIdentity.person_uuid.in_(uuids))
+                .filter(DahCustomerIdentity.customer_id.is_not(None), DahCustomerIdentity.person_uuid.in_(identity_keys))
+                .all()
+            )
+            assigned.update(
+                _synthetic_person_uuid(person_id) for (person_id,) in db.query(DahCustomerIdentity.person_id)
+                .filter(DahCustomerIdentity.customer_id.is_not(None), DahCustomerIdentity.person_id.in_(person_ids))
                 .all()
             )
             assigned.update(
                 uuid for (uuid,) in db.query(Customer.person_uuid)
-                .filter(Customer.person_uuid.in_(uuids))
+                .filter(Customer.person_uuid.in_(identity_keys))
                 .all()
             )
     candidates = []
     for row in rows:
-        if row.person_uuid in assigned and not include_assigned:
+        identity_key = _event_identity_key(row)
+        if identity_key in assigned and not include_assigned:
             continue
-        links = assignment_map.get(row.person_uuid) or {"members": [], "employees": []}
+        links = assignment_map.get(identity_key) or {"members": [], "employees": []}
         candidates.append({
             "eventId": row.id,
-            "personUuid": row.person_uuid,
+            "personUuid": identity_key,
+            "rawPersonUuid": row.person_uuid,
             "personId": row.person_id,
             "name": _event_face_name(row),
             "device": row.device.code if row.device else None,
@@ -633,13 +704,14 @@ def assign_identity_to_customer(
     if not customer:
         raise HTTPException(404, "Không tìm thấy hội viên.")
     event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
-    if not event or event.operator != "VerifyPush" or not event.person_uuid:
+    if not event or event.operator != "VerifyPush" or not _event_identity_key(event):
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
-    existing_identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == event.person_uuid).first()
-    duplicate_customer = db.query(Customer).filter(Customer.person_uuid == event.person_uuid, Customer.id != customer.id).first()
+    identity_key = _event_identity_key(event)
+    existing_identity = _identity_query(db, event.person_uuid, event.person_id)
+    duplicate_customer = db.query(Customer).filter(Customer.person_uuid == identity_key, Customer.id != customer.id).first()
     if (existing_identity and existing_identity.customer_id and existing_identity.customer_id != customer.id) or duplicate_customer:
-        raise HTTPException(409, "PersonUUID này đã được gán cho hội viên khác.")
-    changing_identity = bool(customer.person_uuid and customer.person_uuid != event.person_uuid)
+        raise HTTPException(409, "Định danh DAH này đã được gán cho hội viên khác.")
+    changing_identity = bool(customer.person_uuid and customer.person_uuid != identity_key)
     if changing_identity and not replace:
         raise HTTPException(409, "Hội viên đã có định danh DAH khác.")
     if changing_identity and str(confirmation_text or "").strip().lower() != "tôi xác nhận thay đổi":
@@ -648,20 +720,22 @@ def assign_identity_to_customer(
     if changing_identity:
         old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.customer_id == customer.id).all()
         for old_link in old_links:
-            if old_link.person_uuid == event.person_uuid:
+            if old_link.person_uuid == identity_key:
                 continue
             if old_link.employee_id:
                 old_link.customer_id = None
             else:
                 db.delete(old_link)
 
-    identity = existing_identity or DahCustomerIdentity(person_uuid=event.person_uuid)
+    identity = existing_identity or DahCustomerIdentity(person_uuid=identity_key)
+    if identity.person_uuid != identity_key:
+        identity.person_uuid = identity_key
     identity.customer_id = customer.id
     identity.device_id = event.device_id or identity.device_id
     identity.person_id = event.person_id or identity.person_id
     identity.face_name = _event_face_name(event) or identity.face_name
     identity.last_seen_at = event.event_time or event.received_at
-    customer.person_uuid = event.person_uuid
+    customer.person_uuid = identity.person_uuid
     if event.image_data:
         customer.avatar_image_data = event.image_data
     event.customer_id = customer.id
@@ -683,22 +757,25 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int):
     if not employee:
         raise HTTPException(404, "Không tìm thấy nhân viên.")
     event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
-    if not event or event.operator != "VerifyPush" or not event.person_uuid:
+    if not event or event.operator != "VerifyPush" or not _event_identity_key(event):
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
-    existing_identity = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == event.person_uuid).first()
+    identity_key = _event_identity_key(event)
+    existing_identity = _identity_query(db, event.person_uuid, event.person_id)
     if existing_identity and existing_identity.employee_id and existing_identity.employee_id != employee.id:
-        raise HTTPException(409, "PersonUUID này đã được gán cho nhân viên khác.")
+        raise HTTPException(409, "Định danh DAH này đã được gán cho nhân viên khác.")
 
     old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.employee_id == employee.id).all()
     for old_link in old_links:
-        if old_link.person_uuid == event.person_uuid:
+        if old_link.person_uuid == identity_key:
             continue
         if old_link.customer_id:
             old_link.employee_id = None
         else:
             db.delete(old_link)
 
-    identity = existing_identity or DahCustomerIdentity(person_uuid=event.person_uuid)
+    identity = existing_identity or DahCustomerIdentity(person_uuid=identity_key)
+    if identity.person_uuid != identity_key:
+        identity.person_uuid = identity_key
     identity.employee_id = employee.id
     identity.device_id = event.device_id or identity.device_id
     identity.person_id = event.person_id or identity.person_id

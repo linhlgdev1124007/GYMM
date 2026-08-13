@@ -23,13 +23,9 @@ export function DahIdentityLinkModal({
   const isMemberRelink = targetType === "member" && Boolean(memberId && currentPersonUuid);
   const confirmationPhrase = "tôi xác nhận thay đổi";
   const candidates = useQuery({
-    queryKey: ["dah-identity-candidates", targetType, isMemberRelink],
+    queryKey: ["dah-identity-candidates", targetType],
     queryFn: () =>
-      api(
-        `/api/dah/identity-candidates?limit=10&targetType=${targetType}${
-          isMemberRelink ? "&includeAssigned=true" : ""
-        }`,
-      ),
+      api(`/api/dah/identity-candidates?limit=10&targetType=${targetType}`),
     enabled: open,
     refetchInterval: open ? 4000 : false,
   });
@@ -83,12 +79,14 @@ export function DahIdentityLinkModal({
       memberId &&
         row.linkedMembers?.some((member) => Number(member.id) !== Number(memberId)),
     );
+  const identityLabel = (row) =>
+    row.rawPersonUuid ? `UUID ${row.rawPersonUuid}` : row.personId ? `PersonID ${row.personId}` : row.personUuid;
   return (
     <Modal
       open={open}
       onClose={closeModal}
       title={isMemberRelink ? "Gán lại định danh DAH" : "Liên kết định danh DAH"}
-      description={memberName || `Chọn PersonUUID chưa gán cho ${targetType === "employee" ? "nhân viên" : "hội viên"} nào`}
+      description={memberName || `Chọn định danh DAH chưa gán cho ${targetType === "employee" ? "nhân viên" : "hội viên"} nào`}
       size="lg"
     >
       <div className="modal-body">
@@ -155,7 +153,7 @@ export function DahIdentityLinkModal({
                 </div>
                 <div>
                   <strong>{row.name || "Khách vừa quét"}</strong>
-                  <span>{row.personUuid}</span>
+                  <span>{identityLabel(row)}</span>
                   {linkedTags(row).length ? (
                     <div className="identity-tags">
                       {linkedTags(row).map((tag) => (
@@ -210,7 +208,7 @@ export function DahIdentityLinkModal({
                     <ScanFace size={26} />
                   )}
                 </div>
-                <small className="font-mono">{selectedCandidate.personUuid}</small>
+                <small className="font-mono">{identityLabel(selectedCandidate)}</small>
               </div>
             </div>
             <label className="form-field">

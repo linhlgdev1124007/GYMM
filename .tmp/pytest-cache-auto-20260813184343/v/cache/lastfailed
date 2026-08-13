@@ -1,0 +1,19 @@
+{
+  "tests/test_attendance_auto_checkout.py::test_auto_checkout_closes_open_member_and_employee_sessions_at_2358": true,
+  "tests/test_attendance_auto_checkout.py::test_auto_checkout_before_2358_only_catches_previous_deadline": true,
+  "tests/test_attendance_auto_checkout.py::test_auto_checkout_late_checkin_closes_on_next_day_deadline": true,
+  "tests/test_dah_integration.py::test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles": true,
+  "tests/test_dah_integration.py::test_dah_candidate_can_be_assigned_when_creating_member": true,
+  "tests/test_dah_integration.py::test_dah_person_id_only_event_can_be_assigned_and_processed": true,
+  "tests/test_dah_integration.py::test_dah_person_id_fallback_upgrades_to_real_uuid_without_stale_customer_key": true,
+  "tests/test_dah_integration.py::test_dah_real_uuid_does_not_auto_match_different_existing_uuid_by_person_id": true,
+  "tests/test_dah_integration.py::test_dah_candidates_include_assignment_tags_and_sort_unlinked_first": true,
+  "tests/test_dah_integration.py::test_dah_candidates_are_limited_to_recent_distinct_faces_before_sorting": true,
+  "tests/test_dah_integration.py::test_member_dah_candidates_return_recent_unlinked_members_after_filtering_assigned": true,
+  "tests/test_dah_integration.py::test_dah_identity_can_be_reassigned_to_member_with_confirmation": true,
+  "tests/test_dah_integration.py::test_dah_webhook_image_cleanup_keeps_recent_and_clears_old": true,
+  "tests/test_dah_integration.py::test_dah_identity_can_be_relinked_to_employee_and_toggles_attendance": true,
+  "tests/test_dah_integration.py::test_dah_identity_linked_to_member_and_employee_records_both_attendances": true,
+  "tests/test_dah_integration.py::test_dah_allows_lead_customer_checkin_without_membership": true,
+  "tests/test_dah_integration.py::test_dah_events_are_paginated": true
+}
