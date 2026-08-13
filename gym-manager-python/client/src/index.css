@@ -729,6 +729,9 @@
   .combobox-options {
     @apply max-h-64 overflow-y-auto py-1;
   }
+  .combobox-group {
+    @apply sticky top-0 z-[1] bg-white px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400;
+  }
   .combobox-options button {
     @apply flex min-h-10 w-full items-center justify-between gap-3 rounded px-2.5 py-1.5 text-left hover:bg-slate-50;
   }

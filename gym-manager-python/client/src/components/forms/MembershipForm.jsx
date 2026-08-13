@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addDays, format, parseISO } from "date-fns";
 import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/Form";
@@ -12,6 +12,26 @@ import {
 } from "../../utils/format";
 import { DateInput, MoneyInput } from "../ui/SmartInputs";
 import { ReceiptPicker } from "../ui/ReceiptPicker";
+
+const planCollator = new Intl.Collator("vi", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function groupedPlanOptions(plans = []) {
+  return [...plans]
+    .sort((left, right) => {
+      const categoryDiff = planCollator.compare(left.category || "", right.category || "");
+      const priceDiff = Number(left.price || 0) - Number(right.price || 0);
+      return categoryDiff || priceDiff || planCollator.compare(left.name || "", right.name || "");
+    })
+    .map((row) => ({
+      value: row.id,
+      label: row.name,
+      group: row.category || "Chưa phân loại",
+      meta: `${money(row.price)} · ${row.durationDays} ngày`,
+    }));
+}
 
 export function MembershipForm({
   memberId,
@@ -150,6 +170,10 @@ export function MembershipForm({
   const selectedPlan = options?.plans?.find(
     (row) => String(row.id) === String(form.planId),
   );
+  const planOptions = useMemo(
+    () => groupedPlanOptions(options?.plans || []),
+    [options?.plans],
+  );
   const newDebt = Math.max(
     Number(form.finalPrice) - Number(form.paidAmount),
     0,
@@ -223,13 +247,7 @@ export function MembershipForm({
                     onChange={planChange}
                     placeholder="Chọn gói tập"
                     searchPlaceholder="Tìm theo tên hoặc danh mục…"
-                    options={
-                      options?.plans?.map((row) => ({
-                        value: row.id,
-                        label: row.name,
-                        meta: `${row.category} · ${money(row.price)} · ${row.durationDays} ngày`,
-                      })) || []
-                    }
+                    options={planOptions}
                   />
                 </Field>
                 <Field label="Ngày bắt đầu">

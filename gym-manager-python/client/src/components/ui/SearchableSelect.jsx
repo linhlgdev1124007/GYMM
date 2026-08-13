@@ -26,12 +26,25 @@ export function SearchableSelect({
     const term = query.toLocaleLowerCase("vi");
     return options
       .filter((item) =>
-        `${item.label} ${item.meta || ""}`
+        `${item.label} ${item.meta || ""} ${item.group || ""}`
           .toLocaleLowerCase("vi")
           .includes(term),
       )
       .slice(0, 50);
   }, [options, query]);
+  const rendered = useMemo(() => {
+    const rows = [];
+    let currentGroup = null;
+    filtered.forEach((item, index) => {
+      const group = item.group || "";
+      if (group && group !== currentGroup) {
+        rows.push({ type: "group", key: `group-${group}`, label: group });
+        currentGroup = group;
+      }
+      rows.push({ type: "option", item, index });
+    });
+    return rows;
+  }, [filtered]);
   useEffect(() => setActive(0), [query, open]);
   return (
     <div className="combobox" ref={root}>
@@ -96,27 +109,33 @@ export function SearchableSelect({
                 Không chọn
               </button>
             )}
-            {filtered.map((item, index) => (
-              <button
-                type="button"
-                key={item.value}
-                role="option"
-                aria-selected={String(item.value) === String(value)}
-                className={index === active ? "bg-slate-50" : ""}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => {
-                  onChange(String(item.value));
-                  setOpen(false);
-                  setQuery("");
-                }}
-              >
-                <span>
-                  <strong>{item.label}</strong>
-                  {item.meta && <small>{item.meta}</small>}
-                </span>
-                {String(item.value) === String(value) && <Check size={14} />}
-              </button>
-            ))}
+            {rendered.map((row) =>
+              row.type === "group" ? (
+                <div className="combobox-group" key={row.key}>
+                  {row.label}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  key={row.item.value}
+                  role="option"
+                  aria-selected={String(row.item.value) === String(value)}
+                  className={row.index === active ? "bg-slate-50" : ""}
+                  onMouseEnter={() => setActive(row.index)}
+                  onClick={() => {
+                    onChange(String(row.item.value));
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <span>
+                    <strong>{row.item.label}</strong>
+                    {row.item.meta && <small>{row.item.meta}</small>}
+                  </span>
+                  {String(row.item.value) === String(value) && <Check size={14} />}
+                </button>
+              ),
+            )}
             {!filtered.length && <p>Không tìm thấy kết quả.</p>}
           </div>
         </div>

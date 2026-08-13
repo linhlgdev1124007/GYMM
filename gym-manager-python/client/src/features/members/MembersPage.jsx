@@ -88,6 +88,25 @@ const statusFilters = {
   frozen: "Bảo lưu",
   inactive: "Tạm ngừng",
 };
+const planCollator = new Intl.Collator("vi", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function groupedPlanOptions(plans = []) {
+  return [...plans]
+    .sort((left, right) => {
+      const categoryDiff = planCollator.compare(left.category || "", right.category || "");
+      const priceDiff = Number(left.price || 0) - Number(right.price || 0);
+      return categoryDiff || priceDiff || planCollator.compare(left.name || "", right.name || "");
+    })
+    .map((row) => ({
+      value: row.id,
+      label: row.name,
+      group: row.category || "Chưa phân loại",
+      meta: `${money(row.price)} · ${row.durationDays} ngày`,
+    }));
+}
 const paramDefaults = {
   view: "all",
   status: "all",
@@ -190,6 +209,10 @@ export function MembersPage() {
     queryFn: () => api("/api/members/options"),
     staleTime: 5 * 60_000,
   });
+  const planOptions = useMemo(
+    () => groupedPlanOptions(options.data?.plans || []),
+    [options.data?.plans],
+  );
   const create = useMutation({
     mutationFn: (payload) =>
       api("/api/members", { method: "POST", body: payload }),
@@ -1258,13 +1281,7 @@ export function MembersPage() {
                         onChange={selectMembershipPlan}
                         placeholder="Chọn gói tập"
                         searchPlaceholder="Tìm theo tên hoặc danh mục..."
-                        options={
-                          options.data?.plans.map((row) => ({
-                            value: row.id,
-                            label: row.name,
-                            meta: `${row.category} · ${money(row.price)} · ${row.durationDays} ngày`,
-                          })) || []
-                        }
+                        options={planOptions}
                       />
                     </Field>
                     <Field label="Ngày bắt đầu">
