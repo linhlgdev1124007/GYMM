@@ -73,7 +73,10 @@ def test_expired_yesterday_membership_appears_in_alerts_and_dashboard_attention(
         assert expired_alert["memberId"] == customer.id
         assert alert_data["counts"]["expired"] == 1
         assert dashboard_data["attention"][0]["code"] == "CUS0001295"
-        assert dashboard_data["attention"][0]["issue"] == "Gói đã hết hạn"
+        assert dashboard_data["attention"][0]["issue"] == "Gói vừa hết hạn"
+        assert dashboard_data["attention"][0]["priority"] == "critical"
+        assert dashboard_data["membershipHealth"]["expiredRecent"] == 1
+        assert dashboard_data["membershipHealth"]["totalContracts"] == 1
     finally:
         db.close()
 
@@ -105,5 +108,38 @@ def test_alert_read_state_is_per_user_and_resets_for_a_new_expiry(tmp_path):
         assert refreshed["items"][0]["id"] != first_alert["id"]
         assert mark_all_read(db, first_user.id) == 1
         assert alerts(db, first_user.id)["counts"]["unread"] == 0
+    finally:
+        db.close()
+
+
+def test_dashboard_context_metrics_and_debt_aging(tmp_path):
+    from datetime import datetime
+
+    from server.models import AttendanceSession, Membership, Payment
+    from server.services.dashboard_service import dashboard
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        customer = seed_expired_member(db, code="CUS-CONTEXT")
+        membership = db.query(Membership).one()
+        membership.debt_amount = 350000
+        membership.debt_due_date = vietnam_today() - timedelta(days=10)
+        db.add_all([
+            AttendanceSession(customer_id=customer.id, checked_in_at=datetime.combine(vietnam_today(), datetime.min.time()), status="open"),
+            Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-CONTEXT", paid_at=datetime.combine(vietnam_today(), datetime.min.time()), amount=500000),
+        ])
+        db.commit()
+
+        data = dashboard(db)
+
+        assert data["metrics"]["checkinsToday"] == 1
+        assert data["metrics"]["openVisits"] == 1
+        assert data["metrics"]["revenueToday"] == 500000
+        assert data["metrics"]["overdueDebt"] == 350000
+        assert data["financialHealth"]["debtAging"]["days8To30"] == {"count": 1, "amount": 350000.0}
+        assert data["attention"][0]["issue"] == "Nợ quá hạn"
+        assert data["attention"][0]["actionLabel"] == "Thu tiền"
+        assert data["generatedAt"].endswith("Z")
     finally:
         db.close()

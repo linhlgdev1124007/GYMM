@@ -1326,6 +1326,76 @@
   .metric strong {
     @apply mt-1 block text-xl font-semibold tracking-tight text-slate-900;
   }
+  .operations-dashboard { @apply pb-6; }
+  .dashboard-command-header { @apply flex items-end justify-between gap-6 border-b border-slate-200 pb-4; }
+  .dashboard-command-header > div:first-child > span { @apply text-[10px] font-semibold uppercase text-slate-400; letter-spacing: 0.05em; }
+  .dashboard-command-header h1 { @apply mt-1 text-2xl font-semibold text-slate-950; letter-spacing: 0; }
+  .dashboard-command-header p { @apply mt-1 text-xs text-slate-500; }
+  .dashboard-header-actions { @apply flex shrink-0 items-center gap-2; }
+  .data-freshness { @apply mr-1 inline-flex items-center gap-1 text-[10px] text-slate-400; }
+  .command-metric-strip { @apply mt-4 grid grid-cols-6 overflow-hidden border border-slate-200 bg-white; border-radius: 6px; }
+  .command-metric { @apply relative flex min-h-[104px] min-w-0 flex-col justify-center border-r border-slate-200 px-4 py-3 last:border-r-0 hover:bg-slate-50 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .command-metric::before { @apply absolute inset-x-0 top-0 h-0.5 bg-slate-300; content: ""; }
+  .command-metric.tone-positive::before { @apply bg-emerald-500; }
+  .command-metric.tone-warning::before { @apply bg-amber-500; }
+  .command-metric.tone-danger::before { @apply bg-red-500; }
+  .command-metric-label { @apply truncate text-[10px] font-semibold uppercase text-slate-400; letter-spacing: 0.03em; }
+  .command-metric > strong { @apply mt-1.5 truncate text-xl font-semibold text-slate-950; letter-spacing: 0; }
+  .command-metric > small { @apply mt-1.5 flex min-h-4 items-center gap-0.5 truncate text-[9px] text-slate-500; }
+  .metric-delta.up { @apply text-emerald-700; }
+  .metric-delta.down { @apply text-red-700; }
+  .dashboard-primary-grid { @apply mt-5 grid grid-cols-[minmax(0,1.5fr)_minmax(300px,0.72fr)] gap-5; }
+  .dashboard-secondary-grid { @apply mt-5 grid grid-cols-1 gap-5; }
+  .dashboard-secondary-grid.has-finance { @apply grid-cols-2; }
+  .dashboard-workspace-section { @apply min-w-0 overflow-hidden border border-slate-200 bg-white; border-radius: 6px; }
+  .dashboard-section-header { @apply flex min-h-14 items-center justify-between gap-4 border-b border-slate-200 px-4 py-2.5; }
+  .dashboard-section-header h2 { @apply text-[13px] font-semibold text-slate-950; }
+  .dashboard-section-header p { @apply mt-0.5 text-[10px] leading-4 text-slate-500; }
+  .dashboard-section-header > a { @apply inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-blue-700 hover:underline; }
+  .dashboard-chart { @apply h-[270px] px-3 py-3; }
+  .health-distribution { @apply mx-4 mt-4 flex h-2 overflow-hidden rounded-sm bg-slate-100; }
+  .health-distribution > span { @apply block h-full; }
+  .health-active { @apply bg-emerald-500; }
+  .health-expiring { @apply bg-amber-500; }
+  .health-pending { @apply bg-yellow-300; }
+  .health-expired { @apply bg-red-500; }
+  .health-inactive { @apply bg-slate-400; }
+  .health-lead { @apply bg-sky-500; }
+  .health-frozen { @apply bg-cyan-500; }
+  .health-list { @apply mt-3 divide-y divide-slate-100 px-4 pb-2; }
+  .health-list > div { @apply flex min-h-8 items-center justify-between gap-3 text-[10px]; }
+  .health-list span { @apply flex min-w-0 items-center gap-2 text-slate-600; }
+  .health-list strong { @apply text-[11px] font-semibold tabular-nums text-slate-900; }
+  .health-dot { @apply block h-2 w-2 shrink-0 rounded-full; }
+  .action-queue { @apply mt-5; }
+  .action-queue .table-shell { @apply border-0; border-radius: 0; }
+  .priority-badge { @apply inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[9px] font-semibold; }
+  .priority-critical { @apply border-red-200 bg-red-50 text-red-700; }
+  .priority-high { @apply border-amber-200 bg-amber-50 text-amber-700; }
+  .priority-medium { @apply border-slate-200 bg-slate-50 text-slate-600; }
+  .queue-action { @apply inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-semibold text-blue-700 hover:underline; }
+  .finance-summary { @apply grid grid-cols-2 border-b border-slate-200; }
+  .finance-summary > span { @apply grid grid-cols-[20px_minmax(0,1fr)] gap-x-2 border-r border-slate-200 px-4 py-3 last:border-r-0; }
+  .finance-summary svg { @apply row-span-2 mt-0.5 text-slate-400; }
+  .finance-summary small { @apply text-[9px] uppercase text-slate-400; letter-spacing: 0.03em; }
+  .finance-summary strong { @apply mt-0.5 text-[13px] font-semibold text-slate-900; }
+  .debt-aging-list { @apply divide-y divide-slate-100 px-4; }
+  .debt-aging-list > div { @apply flex items-center justify-between gap-4 py-2.5; }
+  .debt-aging-list span { @apply text-[10px] font-medium text-slate-700; }
+  .debt-aging-list small { @apply ml-2 text-[9px] font-normal text-slate-400; }
+  .debt-aging-list strong { @apply text-[11px] font-semibold tabular-nums text-slate-900; }
+  .recent-checkin-list { @apply divide-y divide-slate-100 px-4; }
+  .recent-checkin-list > div { @apply grid min-h-12 grid-cols-[20px_minmax(0,1fr)_128px_72px] items-center gap-2 py-2; }
+  .recent-checkin-list > div > svg { @apply text-slate-400; }
+  .recent-checkin-list span { @apply min-w-0; }
+  .recent-checkin-list strong { @apply block truncate text-[10px] font-semibold text-slate-800; }
+  .recent-checkin-list small { @apply mt-0.5 block truncate text-[9px] text-slate-400; }
+  .recent-checkin-list time { @apply text-right text-[9px] text-slate-500; }
+  .recent-checkin-list .status { @apply justify-self-end; }
+  .dashboard-empty { @apply flex min-h-28 items-center justify-center gap-2 text-slate-400; }
+  .dashboard-loading { @apply space-y-5; }
+  .dashboard-error { @apply border border-red-200 bg-white px-5 py-5 text-sm text-red-700; border-radius: 6px; }
+  .dashboard-error p { @apply mt-1 mb-3 text-xs text-slate-500; }
   .section-grid {
     @apply mt-6 grid grid-cols-[minmax(0,1.55fr)_minmax(280px,0.75fr)] gap-6;
   }
@@ -1629,6 +1699,10 @@
 }
 
 @media (max-width: 1100px) {
+  .command-metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .command-metric:nth-child(3) { border-right: 0; }
+  .command-metric:nth-child(-n+3) { border-bottom: 1px solid #e2e8f0; }
+  .dashboard-primary-grid, .dashboard-secondary-grid.has-finance { grid-template-columns: 1fr; }
   .command-center-body { grid-template-columns: 1fr; }
   .command-operational-facts { border-top: 1px solid #e2e8f0; }
   .member-overview-grid { grid-template-columns: 1fr; }
@@ -1650,6 +1724,9 @@
   }
 }
 @media (max-width: 900px) {
+  .dashboard-command-header { align-items: flex-start; flex-direction: column; }
+  .dashboard-header-actions { width: 100%; flex-wrap: wrap; }
+  .data-freshness { margin-right: auto; }
   .member-identity-row { align-items: flex-start; flex-direction: column; }
   .member-header-actions { justify-content: flex-start; }
   .member-sticky-shell { display: none; }
@@ -1694,6 +1771,23 @@
   }
 }
 @media (max-width: 640px) {
+  .dashboard-command-header h1 { font-size: 20px; }
+  .dashboard-header-actions .data-freshness { flex: 1 0 calc(100% - 44px); }
+  .dashboard-header-actions .btn { flex: 1 1 auto; }
+  .command-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .command-metric { min-height: 96px; padding: 12px; }
+  .command-metric:nth-child(3) { border-right: 1px solid #e2e8f0; }
+  .command-metric:nth-child(2n) { border-right: 0; }
+  .command-metric:nth-child(-n+4) { border-bottom: 1px solid #e2e8f0; }
+  .dashboard-section-header { align-items: flex-start; }
+  .dashboard-section-header > a { margin-top: 2px; }
+  .dashboard-chart { height: 230px; padding-inline: 4px; }
+  .finance-summary { grid-template-columns: 1fr; }
+  .finance-summary > span { border-right: 0; border-bottom: 1px solid #e2e8f0; }
+  .finance-summary > span:last-child { border-bottom: 0; }
+  .recent-checkin-list > div { grid-template-columns: 20px minmax(0,1fr) auto; }
+  .recent-checkin-list time { grid-column: 2; text-align: left; }
+  .recent-checkin-list .status { grid-column: 3; grid-row: 1 / span 2; }
   .member-identity-row { padding: 14px; }
   .member-identity { align-items: flex-start; }
   .member-avatar { height: 48px; width: 48px; }
