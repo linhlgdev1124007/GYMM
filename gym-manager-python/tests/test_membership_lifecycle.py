@@ -256,7 +256,7 @@ def test_same_day_suspend_or_freeze_reactivation_does_not_add_day(tmp_path):
         db.close()
 
 
-def test_suspend_and_freeze_dates_cannot_be_invalid_or_past(tmp_path):
+def test_suspend_cannot_be_past_and_freeze_accepts_past_start(tmp_path):
     from fastapi import HTTPException
     from server.services.members_service import freeze_membership, membership_action
     from server.timeutils import vietnam_today
@@ -280,12 +280,13 @@ def test_suspend_and_freeze_dates_cannot_be_invalid_or_past(tmp_path):
                 "reason": "Ngày cũ",
             }, actor=None)
 
-        with pytest.raises(HTTPException, match="quá khứ"):
-            freeze_membership(db, membership.id, {
-                "startsAt": (today - timedelta(days=1)).isoformat(),
-                "endsAt": (today + timedelta(days=1)).isoformat(),
-                "reason": "Ngày cũ",
-            }, actor=None)
+        freeze_membership(db, membership.id, {
+            "startsAt": (today - timedelta(days=1)).isoformat(),
+            "endsAt": (today + timedelta(days=1)).isoformat(),
+            "reason": "Bảo lưu nhập bù",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership.status == "frozen"
 
         with pytest.raises(HTTPException, match="sau ngày bắt đầu"):
             freeze_membership(db, membership.id, {
@@ -293,6 +294,75 @@ def test_suspend_and_freeze_dates_cannot_be_invalid_or_past(tmp_path):
                 "endsAt": today.isoformat(),
                 "reason": "Không hợp lệ",
             }, actor=None)
+    finally:
+        db.close()
+
+
+def test_freeze_must_stay_within_membership_period(tmp_path):
+    from fastapi import HTTPException
+    from server.services.members_service import freeze_membership
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        membership.expires_at = today + timedelta(days=20)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="trước ngày bắt đầu gói"):
+            freeze_membership(db, membership.id, {
+                "startsAt": (membership.starts_at - timedelta(days=1)).isoformat(),
+                "endsAt": (membership.starts_at + timedelta(days=1)).isoformat(),
+                "reason": "Trước hạn gói",
+            }, actor=None)
+
+        with pytest.raises(HTTPException, match="trong thời hạn gói"):
+            freeze_membership(db, membership.id, {
+                "startsAt": (membership.expires_at - timedelta(days=1)).isoformat(),
+                "endsAt": (membership.expires_at + timedelta(days=1)).isoformat(),
+                "reason": "Vượt hạn gói",
+            }, actor=None)
+    finally:
+        db.close()
+
+
+def test_membership_timeline_splits_active_and_freeze_segments(tmp_path):
+    from server.services.members_service import freeze_membership
+    from server.services.serializers import membership_data
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=13),
+            activated_at=today - timedelta(days=13),
+        )
+        membership.expires_at = today + timedelta(days=18)
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": today.isoformat(),
+            "endsAt": (today + timedelta(days=6)).isoformat(),
+            "reason": "Hội viên đi công tác",
+        }, actor=None)
+        db.refresh(membership)
+
+        timeline = membership_data(membership)["timeline"]
+        assert timeline["totalDays"] == 31
+        assert timeline["totalPlannedFreezeDays"] == 6
+        assert [segment["type"] for segment in timeline["segments"]] == ["active", "freeze", "active"]
+        assert [segment["days"] for segment in timeline["segments"]] == [13, 6, 12]
+        assert timeline["activeFreeze"]["startsAt"] == today.isoformat()
+        assert timeline["activeFreeze"]["endsAt"] == (today + timedelta(days=6)).isoformat()
     finally:
         db.close()
 

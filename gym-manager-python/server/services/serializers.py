@@ -67,16 +67,101 @@ def membership_status(membership) -> str:
 def freeze_data(freeze):
     today = vietnam_today()
     status = "active" if freeze.starts_at <= today <= freeze.ends_at else ("scheduled" if today < freeze.starts_at else "completed")
+    planned_days = max((freeze.ends_at - freeze.starts_at).days, 0)
     return {
         "id": freeze.id,
         "startsAt": iso(freeze.starts_at),
         "endsAt": iso(freeze.ends_at),
         "completedAt": iso(freeze.completed_at),
         "compensatedDays": freeze.compensated_days,
+        "plannedDays": planned_days,
         "reason": freeze.reason,
         "status": "completed" if freeze.completed_at else status,
         "createdAt": iso(freeze.created_at),
         "createdBy": freeze.created_by.display_name if freeze.created_by else "Hệ thống",
+    }
+
+
+def membership_timeline(membership):
+    if not membership.starts_at or not membership.expires_at:
+        return None
+    today = vietnam_today()
+    starts_at = membership.starts_at
+    expires_at = membership.expires_at
+    total_days = max((expires_at - starts_at).days, 0)
+    freezes = sorted(
+        [
+            freeze for freeze in getattr(membership, "freezes", [])
+            if freeze.ends_at > starts_at and freeze.starts_at < expires_at
+        ],
+        key=lambda row: (row.starts_at, row.id),
+    )
+    segments = []
+    cursor = starts_at
+    total_compensated = 0
+    total_planned = 0
+    active_freeze = None
+    latest_freeze = None
+    has_overdue_uncompleted = False
+
+    for freeze in freezes:
+        freeze_start = max(freeze.starts_at, starts_at)
+        freeze_end = min(freeze.ends_at, expires_at)
+        if freeze_end <= freeze_start:
+            continue
+        if freeze_start > cursor:
+            days = (freeze_start - cursor).days
+            segments.append({
+                "type": "active",
+                "label": "Sử dụng",
+                "startsAt": iso(cursor),
+                "endsAt": iso(freeze_start),
+                "days": days,
+            })
+        status = "completed" if freeze.completed_at or freeze.ends_at < today else ("active" if freeze.starts_at <= today <= freeze.ends_at else "scheduled")
+        planned_days = max((freeze.ends_at - freeze.starts_at).days, 0)
+        total_planned += planned_days
+        total_compensated += freeze.compensated_days or 0
+        freeze_item = {
+            "id": freeze.id,
+            "type": "freeze",
+            "label": "Bảo lưu",
+            "startsAt": iso(freeze.starts_at),
+            "endsAt": iso(freeze.ends_at),
+            "completedAt": iso(freeze.completed_at),
+            "days": planned_days,
+            "compensatedDays": freeze.compensated_days or 0,
+            "reason": freeze.reason,
+            "status": status,
+        }
+        segments.append(freeze_item)
+        if status == "active":
+            active_freeze = freeze_item
+        if not freeze.completed_at and freeze.ends_at < today:
+            has_overdue_uncompleted = True
+        latest_freeze = freeze_item
+        cursor = max(cursor, freeze_end)
+
+    if cursor < expires_at:
+        days = (expires_at - cursor).days
+        segments.append({
+            "type": "active",
+            "label": "Sử dụng",
+            "startsAt": iso(cursor),
+            "endsAt": iso(expires_at),
+            "days": days,
+        })
+    return {
+        "startsAt": iso(starts_at),
+        "expiresAt": iso(expires_at),
+        "totalDays": total_days,
+        "remainingDays": (expires_at - today).days,
+        "totalPlannedFreezeDays": total_planned,
+        "totalCompensatedDays": total_compensated,
+        "activeFreeze": active_freeze,
+        "latestFreeze": latest_freeze,
+        "hasOverdueUncompletedFreeze": has_overdue_uncompleted,
+        "segments": segments,
     }
 
 
@@ -118,6 +203,7 @@ def membership_data(membership, include_payments=False, include_history=False):
         "debtAmount": membership.debt_amount or 0,
         "debtDueDate": iso(membership.debt_due_date),
         "status": membership_status(membership),
+        "timeline": membership_timeline(membership),
         "saleOnline": employee_data(membership.sale_online_employee),
         "directSale": employee_data(membership.direct_sales_employee),
     }

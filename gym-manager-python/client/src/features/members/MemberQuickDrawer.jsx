@@ -24,6 +24,7 @@ import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
+import { MembershipTimeline } from "../../components/ui/MembershipTimeline";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
@@ -334,74 +335,77 @@ export function MemberQuickDrawer({
               )}
               <h3 className="detail-section-title">Gói tập</h3>
               {current ? (
-                <dl>
-                  <div className="inline-field">
-                    <dt>Gói hiện tại</dt>
-                    <dd className="font-medium">{current.package.name}</dd>
-                  </div>
-                  <div className="inline-field">
-                    <dt>Thời hạn</dt>
-                    <dd>
-                      {shortDate(current.startsAt)} →{" "}
-                      {shortDate(current.expiresAt)}
-                    </dd>
-                  </div>
-                  <div className="inline-field">
-                    <dt>Còn lại</dt>
-                    <dd>
-                      {daysLeft == null
-                        ? "—"
-                        : daysLeft < 0
-                          ? `Quá hạn ${Math.abs(daysLeft)} ngày`
-                          : `${daysLeft} ngày`}
-                    </dd>
-                  </div>
-                  <div className="inline-field">
-                    <dt>Đã thanh toán</dt>
-                    <dd>{money(current.paidAmount)}</dd>
-                  </div>
-                  <div className="inline-field">
-                    <dt>Công nợ</dt>
-                    <dd
-                      className={
-                        current.debtAmount
-                          ? "font-medium text-red-700"
-                          : "text-emerald-700"
-                      }
-                    >
-                      {money(current.debtAmount)}
-                      {canFinancial && current.debtAmount > 0 && (
-                        <button
-                          className="ml-3 text-xs font-medium text-blue-700"
-                          onClick={() => openDialog("payment")}
-                        >
-                          Thu tiền
-                        </button>
-                      )}
-                    </dd>
-                  </div>
-                  {current.debtAmount > 0 && (
+                <>
+                  <dl>
                     <div className="inline-field">
-                      <dt>Hạn thanh toán</dt>
+                      <dt>Gói hiện tại</dt>
+                      <dd className="font-medium">{current.package.name}</dd>
+                    </div>
+                    <div className="inline-field">
+                      <dt>Thời hạn</dt>
                       <dd>
-                        {canFinancial ? <button
-                          className={
-                            current.debtDueDate &&
-                            new Date(`${current.debtDueDate}T23:59:59`) <
-                              new Date()
-                              ? "font-medium text-red-700 hover:underline"
-                              : "font-medium text-blue-700 hover:underline"
-                          }
-                          onClick={() => openDialog("deadline")}
-                        >
-                          {current.debtDueDate
-                            ? `${shortDate(current.debtDueDate)} · Đổi hạn`
-                            : "+ Đặt hạn"}
-                        </button> : (current.debtDueDate ? shortDate(current.debtDueDate) : "Chưa đặt hạn")}
+                        {shortDate(current.startsAt)} →{" "}
+                        {shortDate(current.expiresAt)}
                       </dd>
                     </div>
-                  )}
-                </dl>
+                    <div className="inline-field">
+                      <dt>Còn lại</dt>
+                      <dd>
+                        {daysLeft == null
+                          ? "—"
+                          : daysLeft < 0
+                            ? `Quá hạn ${Math.abs(daysLeft)} ngày`
+                            : `${daysLeft} ngày`}
+                      </dd>
+                    </div>
+                    <div className="inline-field">
+                      <dt>Đã thanh toán</dt>
+                      <dd>{money(current.paidAmount)}</dd>
+                    </div>
+                    <div className="inline-field">
+                      <dt>Công nợ</dt>
+                      <dd
+                        className={
+                          current.debtAmount
+                            ? "font-medium text-red-700"
+                            : "text-emerald-700"
+                        }
+                      >
+                        {money(current.debtAmount)}
+                        {canFinancial && current.debtAmount > 0 && (
+                          <button
+                            className="ml-3 text-xs font-medium text-blue-700"
+                            onClick={() => openDialog("payment")}
+                          >
+                            Thu tiền
+                          </button>
+                        )}
+                      </dd>
+                    </div>
+                    {current.debtAmount > 0 && (
+                      <div className="inline-field">
+                        <dt>Hạn thanh toán</dt>
+                        <dd>
+                          {canFinancial ? <button
+                            className={
+                              current.debtDueDate &&
+                              new Date(`${current.debtDueDate}T23:59:59`) <
+                                new Date()
+                                ? "font-medium text-red-700 hover:underline"
+                                : "font-medium text-blue-700 hover:underline"
+                            }
+                            onClick={() => openDialog("deadline")}
+                          >
+                            {current.debtDueDate
+                              ? `${shortDate(current.debtDueDate)} · Đổi hạn`
+                              : "+ Đặt hạn"}
+                          </button> : (current.debtDueDate ? shortDate(current.debtDueDate) : "Chưa đặt hạn")}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                  <MembershipTimeline membership={current} compact />
+                </>
               ) : (
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-400">Chưa có gói tập</span>

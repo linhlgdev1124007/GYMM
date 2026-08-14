@@ -13,6 +13,7 @@ export function InlineEditField({
   onSave,
   pending,
   className = "",
+  utilityActions,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -95,15 +96,11 @@ export function InlineEditField({
             </button>
           </div>
         ) : (
-          <div>
-            <button
-              type="button"
-              className="inline-field-value"
-              onClick={() => setEditing(true)}
-            >
-              <span>{displayValue || value || <em>{emptyAction}</em>}</span>
-              <Pencil size={12} />
+          <div className="inline-field-display">
+            <button type="button" className="inline-field-value" onClick={() => setEditing(true)}>
+              <span>{displayValue || value || <em>{emptyAction}</em>}</span><Pencil size={12} />
             </button>
+            {utilityActions && <span className="inline-field-utilities">{utilityActions}</span>}
             {status === "saved" && (
               <small className="inline-save-state success">
                 <Check size={12} /> Đã lưu

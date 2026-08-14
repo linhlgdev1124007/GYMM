@@ -1,8 +1,8 @@
-import { MoreHorizontal } from "lucide-react";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-export function RowMenu({ children }) {
+export function RowMenu({ children, label = "", className = "" }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef(null);
@@ -42,15 +42,15 @@ export function RowMenu({ children }) {
   }, [open]);
 
   return (
-    <span className="row-menu" onClick={(event) => event.stopPropagation()}>
+    <span className={`row-menu ${label ? "row-menu-labeled" : ""} ${className}`} onClick={(event) => event.stopPropagation()}>
       <button
         ref={buttonRef}
         type="button"
-        aria-label="Mở menu thao tác"
+        aria-label={label || "Mở menu thao tác"}
         aria-expanded={open}
         onClick={toggle}
       >
-        <MoreHorizontal size={18} />
+        {label ? <><span>{label}</span><ChevronDown size={14} /></> : <MoreHorizontal size={18} />}
       </button>
       {open &&
         createPortal(

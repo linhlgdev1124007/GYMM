@@ -134,7 +134,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
             <section className="operation-panel">
               <div className="operation-heading"><CalendarClock size={17} /><div><strong>Bảo lưu gói</strong><span>Thời hạn được cộng bù tự động theo số ngày bảo lưu.</span></div></div>
               <div className="form-grid">
-                <Field label="Bắt đầu" required><DateInput min={today()} value={form.startsAt} onChange={(startsAt) => setForm({ ...form, startsAt, endsAt: form.endsAt <= startsAt ? nextDay(startsAt) : form.endsAt })} /></Field>
+                <Field label="Bắt đầu" required><DateInput value={form.startsAt} onChange={(startsAt) => setForm({ ...form, startsAt, endsAt: form.endsAt <= startsAt ? nextDay(startsAt) : form.endsAt })} /></Field>
                 <Field label="Kết thúc" required><DateInput min={nextDay(form.startsAt)} value={form.endsAt} onChange={(endsAt) => setForm({ ...form, endsAt })} /></Field>
               </div>
               <div className="compensation-preview"><span>Cộng bù <strong>{freezeDays} ngày</strong></span><ArrowRightLeft size={14} /><span>Hạn mới <strong>{shortDate(compensatedExpiry)}</strong></span></div>

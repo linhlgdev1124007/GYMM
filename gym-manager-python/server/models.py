@@ -54,6 +54,18 @@ class AuthSession(Base):
     user: Mapped[User] = relationship()
 
 
+class AlertRead(Base):
+    __tablename__ = "alert_reads"
+    __table_args__ = (UniqueConstraint("user_id", "alert_key", name="uq_alert_reads_user_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    alert_key: Mapped[str] = mapped_column(String(180), index=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+    user: Mapped[User] = relationship()
+
+
 class Person(Base):
     __tablename__ = "people"
 

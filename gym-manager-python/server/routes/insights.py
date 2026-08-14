@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..controllers import insights_controller
 from ..database import get_db
 from ..dependencies import current_user, require_roles
+from ..models import User
 
 router = APIRouter(prefix="/api", tags=["insights"], dependencies=[Depends(current_user)])
 
@@ -24,5 +25,18 @@ def alerts(
     pt_sessions: int = Query(3, ge=0, le=20, alias="ptSessions"),
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    return insights_controller.alerts(db, expiring_days, pt_sessions, limit)
+    return insights_controller.alerts(db, user.id, expiring_days, pt_sessions, limit)
+
+
+@router.patch("/alerts/{alert_key}/read")
+def mark_alert_read(alert_key: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if not insights_controller.mark_alert_read(db, user.id, alert_key):
+        raise HTTPException(status_code=404, detail="Cảnh báo không còn tồn tại.")
+    return {"ok": True}
+
+
+@router.post("/alerts/read-all")
+def mark_all_alerts_read(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return {"ok": True, "marked": insights_controller.mark_all_alerts_read(db, user.id)}

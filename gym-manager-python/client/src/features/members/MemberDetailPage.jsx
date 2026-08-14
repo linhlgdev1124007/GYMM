@@ -1,15 +1,23 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  CalendarClock,
   CalendarPlus,
+  CircleCheck,
+  CircleX,
+  ChevronRight,
+  Clock3,
+  Copy,
   CreditCard,
   Dumbbell,
+  History,
+  Mail,
   Pencil,
+  Phone,
   Plus,
   ReceiptText,
   ScanFace,
-  TriangleAlert,
 } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../services/api";
@@ -19,6 +27,7 @@ import { DataTable } from "../../components/ui/DataTable";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
+import { MembershipTimeline } from "../../components/ui/MembershipTimeline";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
@@ -31,21 +40,234 @@ import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
 import {
   dateTime,
+  ageFromDate,
   formatPhone,
   initials,
   money,
   shortDate,
 } from "../../utils/format";
 
-const tabs = [
-  ["overview", "Tổng quan"],
-  ["memberships", "Lịch sử gói"],
-  ["payments", "Thanh toán"],
-  ["checkins", "Lịch sử check-in"],
-  ["training", "PT & lịch tập"],
-  ["notes", "Ghi chú"],
-  ["activity", "Nhật ký"],
+const tabGroups = [
+  { key: "overview", label: "Tổng quan", tabs: [["overview", "Tổng quan"]] },
+  { key: "membership", label: "Gói & tài chính", tabs: [["memberships", "Lịch sử gói"], ["payments", "Thanh toán"]] },
+  { key: "operations", label: "Check-in & PT", tabs: [["checkins", "Lịch sử check-in"], ["training", "PT & lịch tập"]] },
+  { key: "profile", label: "Hồ sơ & nhật ký", tabs: [["notes", "Ghi chú"], ["activity", "Nhật ký thao tác"]] },
 ];
+const tabs = tabGroups.flatMap((group) => group.tabs);
+
+const membershipEventLabels = {
+  activate: "Kích hoạt",
+  suspend: "Tạm dừng",
+  freeze: "Bảo lưu",
+  unfreeze: "Kết thúc bảo lưu",
+  transfer: "Chuyển nhượng",
+  upgrade: "Nâng cấp",
+  change: "Đổi gói",
+  adjust_days: "Cộng / trừ ngày",
+  cancel: "Hủy dịch vụ",
+};
+
+function eventPrimaryText(event) {
+  const details = event.details || {};
+  if (event.action === "freeze") {
+    const days = details.plannedDays ?? details.compensatedDays ?? "";
+    return `Bảo lưu ${days ? `${days} ngày` : "gói"}`;
+  }
+  if (event.action === "unfreeze") {
+    return `Cộng bù ${details.compensatedDays || 0} ngày`;
+  }
+  if (event.action === "adjust_days") {
+    const days = Number(details.days || 0);
+    return `${days >= 0 ? "Cộng" : "Trừ"} ${Math.abs(days)} ngày`;
+  }
+  if (event.fromPackage && event.toPackage && event.fromPackage !== event.toPackage) {
+    return `${event.fromPackage} → ${event.toPackage}`;
+  }
+  if (event.fromMember && event.toMember && event.fromMember !== event.toMember) {
+    return `${event.fromMember} → ${event.toMember}`;
+  }
+  return event.reason || membershipEventLabels[event.action] || event.action;
+}
+
+function eventDetailLines(event) {
+  const details = event.details || {};
+  const lines = [];
+  if (event.action === "freeze") {
+    if (details.startsAt || details.endsAt) {
+      lines.push(`Thời gian bảo lưu: ${shortDate(details.startsAt)} → ${shortDate(details.endsAt)}`);
+    }
+    if (details.previousExpiry || details.newExpiry) {
+      lines.push(`Hạn gói: ${shortDate(details.previousExpiry)} → ${shortDate(details.newExpiry)}`);
+    }
+  } else if (event.action === "unfreeze") {
+    if (details.startsAt || details.actualEndsAt || details.plannedEndsAt) {
+      lines.push(`Thực tế: ${shortDate(details.startsAt)} → ${shortDate(details.actualEndsAt || details.plannedEndsAt)}`);
+    }
+    if (details.previousExpiry || details.newExpiry) {
+      lines.push(`Hạn sau cộng bù: ${shortDate(details.previousExpiry)} → ${shortDate(details.newExpiry)}`);
+    }
+  } else if (event.action === "adjust_days") {
+    if (details.previousExpiry || details.newExpiry) {
+      lines.push(`Hạn gói: ${shortDate(details.previousExpiry)} → ${shortDate(details.newExpiry)}`);
+    }
+  } else if (event.action === "suspend" && details.suspendedAt) {
+    lines.push(`Ngày tạm dừng: ${shortDate(details.suspendedAt)}`);
+  } else if (event.action === "activate" && details.activatedAt) {
+    lines.push(`Ngày kích hoạt: ${shortDate(details.activatedAt)}`);
+  } else if ((event.action === "change" || event.action === "upgrade") && details.previousPrice != null) {
+    lines.push(`Giá gói: ${money(details.previousPrice)} → ${money(details.newPrice)}`);
+  }
+  if (event.reason) lines.push(`Lý do: ${event.reason}`);
+  return lines;
+}
+
+function isoFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addIsoDays(value, days) {
+  if (!value || !days) return value;
+  const date = new Date(`${value}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return isoFromDate(date);
+}
+
+function dayDiff(startsAt, endsAt) {
+  if (!startsAt || !endsAt) return 0;
+  return Math.max(
+    Math.round(
+      (new Date(`${endsAt}T00:00:00`) - new Date(`${startsAt}T00:00:00`)) /
+        86400000,
+    ),
+    0,
+  );
+}
+
+function freezeDays(freeze) {
+  return freeze.plannedDays ?? dayDiff(freeze.startsAt, freeze.endsAt);
+}
+
+function membershipPeriodInfo(membership) {
+  const freezes = membership.freezes || [];
+  const pendingFreezeDays = freezes
+    .filter((freeze) => !freeze.completedAt)
+    .reduce(
+      (sum, freeze) =>
+        sum + Math.max(freezeDays(freeze) - Number(freeze.compensatedDays || 0), 0),
+      0,
+    );
+  const displayExpiresAt = addIsoDays(membership.expiresAt, pendingFreezeDays);
+  const suspendedEvent = (membership.events || []).find(
+    (event) => event.action === "suspend" && event.details?.suspendedAt,
+  );
+  const isSuspendedWithoutRestart = membership.status === "suspended";
+  const adjustmentNotes = [];
+  const registeredLine = membership.registeredAt
+    ? `Đăng ký: ${shortDate(membership.registeredAt)}`
+    : "Đăng ký: —";
+  const actualLine = isSuspendedWithoutRestart
+    ? `Thực tế: ${shortDate(membership.startsAt)} → đang tạm dừng`
+    : `Thực tế: ${shortDate(membership.startsAt)} → ${shortDate(displayExpiresAt)}`;
+
+  if (isSuspendedWithoutRestart && suspendedEvent) {
+    adjustmentNotes.push(`Tạm dừng từ ${shortDate(suspendedEvent.details.suspendedAt)} · chưa kích hoạt lại`);
+  }
+
+  if (!isSuspendedWithoutRestart && pendingFreezeDays > 0 && displayExpiresAt !== membership.expiresAt) {
+    adjustmentNotes.push(`Hạn trước bảo lưu: ${shortDate(membership.expiresAt)}`);
+  }
+
+  freezes.forEach((freeze) => {
+    const days = freezeDays(freeze);
+    adjustmentNotes.push(
+      `${
+        freeze.completedAt
+          ? `Đã cộng +${freeze.compensatedDays || 0} ngày bảo lưu`
+          : `Dự kiến cộng +${days} ngày bảo lưu`
+      } (${shortDate(freeze.startsAt)} → ${shortDate(freeze.endsAt)})${
+        freeze.reason ? ` · Lý do: ${freeze.reason}` : ""
+      }`,
+    );
+  });
+
+  if (!isSuspendedWithoutRestart) (membership.events || [])
+    .filter((event) => event.action === "adjust_days")
+    .forEach((event) => {
+      const days = Number(event.details?.days || 0);
+      if (!days) return;
+      adjustmentNotes.push(
+        `Đã ${days > 0 ? "cộng" : "trừ"} ${Math.abs(days)} ngày thủ công: ${shortDate(
+          event.details?.previousExpiry,
+        )} → ${shortDate(event.details?.newExpiry)}${
+          event.reason ? ` · Lý do: ${event.reason}` : ""
+        }`,
+      );
+    });
+
+  return { registeredLine, actualLine, adjustmentNotes };
+}
+
+function activityTimestamp(value) {
+  if (!value) return 0;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? `${value}T00:00:00`
+    : value;
+  return new Date(normalized).getTime() || 0;
+}
+
+function recentMemberActivity(member) {
+  const payments = (member.payments || []).map((payment) => ({
+    id: `payment-${payment.id}`,
+    kind: "payment",
+    occurredAt: payment.paidAt,
+    title: `Đã thu ${money(payment.amount)}`,
+    description: payment.description || "Thanh toán gói tập",
+    meta: payment.number,
+    record: payment,
+  }));
+  const checkins = (member.checkins || []).map((checkin) => ({
+    id: `checkin-${checkin.id}`,
+    kind: "checkin",
+    occurredAt: checkin.checkedInAt,
+    title: checkin.result === "allowed" ? "Check-in thành công" : "Ghi nhận check-in",
+    description: checkin.checkedOutAt
+      ? `Đã rời phòng lúc ${dateTime(checkin.checkedOutAt).split(" · ")[0]}`
+      : "Đang ở phòng hoặc chưa ghi nhận check-out",
+    meta: checkin.source || "Hệ thống",
+    status: checkin.status,
+  }));
+  const membershipEvents = (member.membershipEvents || []).map((event) => ({
+    id: `membership-${event.id}`,
+    kind: "membership",
+    occurredAt: event.effectiveAt,
+    title: eventPrimaryText(event),
+    description: eventDetailLines(event)[0] || membershipEventLabels[event.action] || "Thay đổi gói tập",
+    meta: event.createdBy,
+    action: event.action,
+  }));
+  return [...payments, ...checkins, ...membershipEvents]
+    .sort((left, right) => activityTimestamp(right.occurredAt) - activityTimestamp(left.occurredAt));
+}
+
+function CopyValueButton({ value, label }) {
+  if (!value) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(String(value));
+      notify.success(`Đã sao chép ${label}.`);
+    } catch {
+      notify.error(`Không thể sao chép ${label}.`);
+    }
+  };
+  return (
+    <button type="button" className="copy-value-button" onClick={copy} title={`Sao chép ${label}`} aria-label={`Sao chép ${label}`}>
+      <Copy size={12} />
+    </button>
+  );
+}
 
 export function MemberDetailPage() {
   const { memberId } = useParams();
@@ -65,6 +287,9 @@ export function MemberDetailPage() {
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
+  const [activityFilter, setActivityFilter] = useState("all");
+  const workspaceHeaderRef = useRef(null);
+  const [showStickyHeader, setShowStickyHeader] = useState(false);
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
     queryFn: () => api(`/api/members/${memberId}`),
@@ -75,6 +300,16 @@ export function MemberDetailPage() {
     staleTime: 300000,
   });
   const member = memberQuery.data;
+  useEffect(() => {
+    const header = workspaceHeaderRef.current;
+    if (!header || !member) return undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => setShowStickyHeader(!entry.isIntersecting),
+      { rootMargin: "-72px 0px 0px 0px", threshold: 0 },
+    );
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [member]);
   const refresh = () => {
     client.invalidateQueries({ queryKey: ["member", memberId] });
     client.invalidateQueries({ queryKey: ["members"] });
@@ -215,6 +450,44 @@ export function MemberDetailPage() {
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
     : null;
+  const joinedAt = member.memberships.at(-1)?.registeredAt;
+  const currentPeriod = current ? membershipPeriodInfo(current) : null;
+  const genderLabel =
+    ({ male: "Nam", female: "Nữ", other: "Khác" })[member.gender] ||
+    member.gender ||
+    "Chưa cập nhật";
+  const age = ageFromDate(member.dateOfBirth);
+  const recentActivity = recentMemberActivity(member);
+  const filteredRecentActivity = recentActivity
+    .filter((item) => activityFilter === "all" || item.kind === activityFilter)
+    .slice(0, 8);
+  const activeTabGroup = tabGroups.find((group) =>
+    group.tabs.some(([key]) => key === tab),
+  ) || tabGroups[0];
+  const lifecycleLedger = (current?.events || []).filter((event) =>
+    ["activate", "suspend", "freeze", "unfreeze", "adjust_days"].includes(event.action),
+  );
+  const accessEligible =
+    member.status === "lead" ||
+    (!!current &&
+      ["active", "pending", "suspended"].includes(current.status) &&
+      (!current.expiresAt || new Date(`${current.expiresAt}T23:59:59`) >= new Date()));
+  const accessSummary = member.status === "lead"
+    ? { title: "Có thể check-in", detail: "Khách tiềm năng" }
+    : accessEligible
+      ? { title: "Có thể check-in", detail: current?.status === "pending" ? "Sẽ kích hoạt theo quy trình hiện tại" : "Gói còn hiệu lực" }
+      : { title: "Không thể check-in", detail: "Gói không hoạt động hoặc đã hết hạn" };
+  const membershipUsagePercent = current?.timeline?.totalDays
+    ? Math.min(
+        Math.max(
+          ((current.timeline.totalDays - Math.max(current.timeline.remainingDays, 0)) /
+            current.timeline.totalDays) *
+            100,
+          0,
+        ),
+        100,
+      )
+    : 0;
   const lifecycleActions = [];
   if (current?.status === "pending") {
     lifecycleActions.push(["activate", "Kích hoạt ngay"]);
@@ -247,6 +520,46 @@ export function MemberDetailPage() {
     if (name === "training") setSelectedTraining(record);
     setDialog(name);
   };
+  const selectTab = (key) => {
+    setTab(key);
+    setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
+  };
+  const renderMemberActions = ({ compact = false } = {}) => (
+    <>
+      {canFinancial && (
+        <Button
+          size={compact ? "sm" : undefined}
+          variant={current?.debtAmount > 0 ? undefined : "secondary"}
+          onClick={() => current?.debtAmount ? open("payment", current) : notify.info("Hội viên không có công nợ.")}
+        >
+          <CreditCard size={15} /> Thu tiền
+        </Button>
+      )}
+      {canFinancial && (
+        <Button
+          size={compact ? "sm" : undefined}
+          variant={current?.debtAmount > 0 ? "secondary" : undefined}
+          onClick={() => open("renew")}
+        >
+          <CalendarPlus size={15} /> Gia hạn
+        </Button>
+      )}
+      {!compact && canFinancial && (
+        <Button variant="secondary" onClick={() => open("edit")}>
+          <Pencil size={15} /> Sửa hồ sơ
+        </Button>
+      )}
+      {canManageLifecycle && current && lifecycleActions.length > 0 && (
+        <RowMenu label={compact ? "Quản lý" : "Quản lý gói"}>
+          {lifecycleActions.map(([action, label]) => (
+            <button key={action} onClick={() => open("operations", current, action)}>
+              {label}
+            </button>
+          ))}
+        </RowMenu>
+      )}
+    </>
+  );
   const membershipColumns = [
     {
       key: "package",
@@ -261,11 +574,22 @@ export function MemberDetailPage() {
     {
       key: "period",
       label: "Thời hạn",
-      render: (r) => (
-        <span>
-          {shortDate(r.startsAt)} → {shortDate(r.expiresAt)}
-        </span>
-      ),
+      render: (r) => {
+        const period = membershipPeriodInfo(r);
+        return (
+          <div className="membership-period-cell">
+            <span>{period.registeredLine}</span>
+            <strong>{period.actualLine}</strong>
+            {!!period.adjustmentNotes.length && (
+              <ul>
+                {period.adjustmentNotes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      },
     },
     { key: "paid", label: "Đã thanh toán", render: (r) => money(r.paidAmount) },
     {
@@ -410,165 +734,149 @@ export function MemberDetailPage() {
   ];
   return (
     <>
-      <div className="mb-4">
+      <div className="member-breadcrumb">
         <Link
           to="/members"
           className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900"
         >
           <ArrowLeft size={14} />
-          Hội viên
+          Danh sách hội viên
         </Link>
       </div>
-      <header className="profile-header">
-        <div className="avatar">
-          {member.avatarImageData ? (
-            <img src={member.avatarImageData} alt="" />
-          ) : (
-            initials(member.name)
-          )}
-        </div>
-        <div className="profile-title">
-          <div className="flex items-center gap-3">
-            <h1>{member.name}</h1>
-            <StatusBadge status={displayStatus} />
+      <header ref={workspaceHeaderRef} className="member-workspace-header member-command-center">
+        <div className="member-identity-row">
+          <div className="member-identity">
+            <div className="avatar member-avatar">
+              {member.avatarImageData ? (
+                <img src={member.avatarImageData} alt={`Ảnh ${member.name}`} />
+              ) : initials(member.name)}
+            </div>
+            <div className="member-identity-copy">
+              <div className="member-name-row">
+                <h1>{member.name}</h1>
+                <StatusBadge status={displayStatus} />
+              </div>
+              <div className="member-identity-meta">
+                <span className="member-code">{member.code}</span>
+                {member.phone ? <a href={`tel:${member.phone}`}><Phone size={13} />{formatPhone(member.phone)}</a> : <span><Phone size={13} />Chưa có điện thoại</span>}
+                {member.email && <a href={`mailto:${member.email}`}><Mail size={13} />{member.email}</a>}
+                <span><CalendarClock size={13} />Tham gia {shortDate(joinedAt)}</span>
+              </div>
+            </div>
           </div>
-          <p>
-            {member.code} · {member.phone || "Chưa có số điện thoại"} · Tham gia
-            từ {shortDate(member.memberships.at(-1)?.registeredAt)}
-          </p>
+          <div className="member-header-actions">
+            {renderMemberActions()}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {canFinancial && (
-            <>
-              <Button onClick={() => current?.debtAmount ? open("payment", current) : notify.info("Hội viên không có công nợ.")}>
-                <CreditCard size={15} /> Thu tiền
-              </Button>
-              <Button variant="secondary" onClick={() => open("renew")}>
-                <CalendarPlus size={15} /> Gia hạn
-              </Button>
-              <Button variant="secondary" onClick={() => open("edit")}>
-                <Pencil size={15} /> Sửa
-              </Button>
-            </>
-          )}
-          {canManageLifecycle && current && lifecycleActions.length > 0 && (
-            <RowMenu>
-              {lifecycleActions.map(([action, label]) => (
-                <button key={action} onClick={() => open("operations", current, action)}>
-                  {label}
-                </button>
-              ))}
-            </RowMenu>
-          )}
+        <div className="command-center-body">
+          <section className="command-contract">
+            <div className="command-contract-label">
+              <span>Gói hiện tại</span>
+              {current && <StatusBadge status={current.status} />}
+            </div>
+            <div className="command-contract-title">
+              <div>
+                <h2>{current?.package.name || "Chưa đăng ký gói"}</h2>
+                <p>{current ? `${current.code} · Đăng ký ${shortDate(current.registeredAt)}` : "Chưa có hợp đồng membership đang được ghi nhận"}</p>
+              </div>
+              {daysLeft != null && current?.status !== "suspended" && (
+                <div className={`command-days ${daysLeft < 0 ? "danger" : daysLeft <= 14 ? "warning" : ""}`}>
+                  <strong>{daysLeft < 0 ? Math.abs(daysLeft) : daysLeft}</strong>
+                  <span>{daysLeft < 0 ? "ngày quá hạn" : "ngày còn lại"}</span>
+                </div>
+              )}
+            </div>
+            {current && (
+              <>
+                <div className="command-period">
+                  <span><small>Bắt đầu</small><strong>{shortDate(current.startsAt)}</strong></span>
+                  <i aria-hidden="true" />
+                  <span><small>{current.status === "suspended" ? "Trạng thái" : "Hạn thực tế"}</small><strong>{current.status === "suspended" ? "Đang tạm dừng" : currentPeriod?.actualLine.split(" → ").at(-1)}</strong></span>
+                </div>
+                <div className="command-usage-track" aria-label={`Đã sử dụng ${Math.round(membershipUsagePercent)}% thời hạn gói`}>
+                  <span style={{ width: `${membershipUsagePercent}%` }} />
+                </div>
+              </>
+            )}
+          </section>
+          <dl className="command-operational-facts">
+            <div className={accessEligible ? "access-allowed" : "has-issue"}>
+              <dt>Trạng thái vào phòng</dt>
+              <dd className="access-value">{accessEligible ? <CircleCheck size={14} /> : <CircleX size={14} />}{accessSummary.title}</dd>
+              <small>{accessSummary.detail}</small>
+            </div>
+            <div className={current?.debtAmount ? "has-issue" : ""}>
+              <dt>Tài chính</dt>
+              <dd>{current?.debtAmount ? money(current.debtAmount) : "Đã thanh toán đủ"}</dd>
+              <small>{current?.debtAmount ? `Công nợ · hạn ${shortDate(current.debtDueDate)}` : `${money(current?.paidAmount)} đã thu`}</small>
+            </div>
+            <div>
+              <dt>Check-in gần nhất</dt>
+              <dd>{lastCheckin ? dateTime(lastCheckin.checkedInAt) : "Chưa có lượt check-in"}</dd>
+              <small>{member.checkins.length} lượt gần đây</small>
+            </div>
+            <div>
+              <dt>PT phụ trách</dt>
+              <dd>{activeTraining ? activeTrainingCoaches.map((coach) => coach.name).join(", ") || "Chờ phân công" : "Chưa đăng ký PT"}</dd>
+              <small>{activeTraining?.type || "Không có lịch tập"}</small>
+            </div>
+          </dl>
         </div>
       </header>
-      <div className="summary-strip mt-5">
-        <div className="summary-item">
-          <span>Gói hiện tại</span>
-          <strong>{current?.package.name || "Chưa có gói"}</strong>
-        </div>
-        <div className="summary-item">
-          <span>Hết hạn</span>
-          <strong>
-            {shortDate(current?.expiresAt)}{" "}
-            {daysLeft != null &&
-              `· ${daysLeft >= 0 ? `${daysLeft} ngày` : "Quá hạn"}`}
-          </strong>
-        </div>
-        <div className="summary-item">
-          <span>Công nợ</span>
-          <strong className={current?.debtAmount ? "!text-red-700" : ""}>
-            {money(current?.debtAmount)}
-          </strong>
-        </div>
-        <div className="summary-item">
-          <span>Check-in cuối</span>
-          <strong>
-            {lastCheckin ? shortDate(lastCheckin.checkedInAt) : "Chưa có"}
-          </strong>
-        </div>
-        <div className="summary-item">
-          <span>PT hiện tại</span>
-          <strong>
-            {activeTraining
-              ? activeTrainingCoaches.map((coach) => coach.name).join(", ") ||
-                "Chưa phân công"
-              : "Chưa đăng ký"}
-          </strong>
+      <div className={`member-sticky-shell ${showStickyHeader ? "visible" : ""}`}>
+        <div className="member-sticky-toolbar">
+          <div><span className="sticky-avatar">{initials(member.name)}</span><span><strong>{member.name}</strong><small>{current?.package.name || "Chưa có gói"}</small></span><StatusBadge status={displayStatus} /></div>
+          <div>{renderMemberActions({ compact: true })}</div>
         </div>
       </div>
-      <div className="tabs mt-5">
-        {tabs.map(([key, label]) => (
+      <div className="tabs member-tabs">
+        {tabGroups.map((group) => (
           <button
-            key={key}
-            className={`tab ${tab === key ? "active" : ""}`}
-            onClick={() => {
-              setTab(key);
-              setSearchParams(key === "overview" ? {} : { tab: key }, {
-                replace: true,
-              });
-            }}
+            key={group.key}
+            className={`tab ${activeTabGroup.key === group.key ? "active" : ""}`}
+            onClick={() => selectTab(group.tabs[0][0])}
           >
-            {label}
+            {group.label}
           </button>
         ))}
       </div>
+      {activeTabGroup.tabs.length > 1 && (
+        <div className="member-secondary-tabs" aria-label={activeTabGroup.label}>
+          {activeTabGroup.tabs.map(([key, label]) => (
+            <button key={key} className={tab === key ? "active" : ""} onClick={() => selectTab(key)}>{label}</button>
+          ))}
+        </div>
+      )}
       {tab === "overview" && (
-        <div className="detail-grid">
-          <section>
-            <div className="section-header">
-              <div>
-                <h2>Tình trạng vận hành</h2>
-                <p>Thông tin cần biết và hành động tiếp theo</p>
-              </div>
+        <div className="member-overview-grid">
+          <main className={`member-overview-main member-role-${user.role}`}>
+            {user.role === "coach" && (
+              <section className="workspace-section coach-focus-section">
+                <div className="workspace-section-title"><div><h2>PT & lịch tập hiện tại</h2><p>Thông tin vận hành dành cho Coach</p></div>{activeTraining && canEditPt && <button className="icon-text-action" onClick={() => open("training", activeTraining)}><Pencil size={13} /> Chỉnh sửa</button>}</div>
+                {activeTraining ? (
+                  <div className="coach-focus-body">
+                    <div><span>Coach phụ trách</span><strong>{activeTrainingCoaches.map((coach) => coach.name).join(", ") || "Chưa phân công"}</strong></div>
+                    <div><span>Số buổi còn lại</span><strong>{activeTraining.remainingSessions}/{activeTraining.totalSessions} buổi</strong></div>
+                    <div><span>Thời hạn</span><strong>{shortDate(activeTraining.startsAt)} → {shortDate(activeTraining.expiresAt)}</strong></div>
+                    <div className="coach-schedule"><span>Lịch tập</span><ScheduleSummary schedule={activeTraining.schedule} scheduleDays={activeTraining.scheduleDays} scheduleTime={activeTraining.scheduleTime} emptyText="Chưa chọn thứ" compact /></div>
+                  </div>
+                ) : <div className="compact-empty"><Dumbbell size={19} /><div><strong>Chưa có đăng ký PT</strong><p>Hội viên chưa có lịch PT đang hoạt động.</p></div></div>}
+              </section>
+            )}
+            <section className="workspace-section membership-workspace role-contract-section">
+            <div className="workspace-section-title">
+              <div><h2>Hồ sơ hiệu lực gói</h2><p>Đăng ký, hiệu lực thực tế và toàn bộ nguồn điều chỉnh</p></div>
+              {current && <StatusBadge status={current.status} />}
             </div>
-            {daysLeft != null && daysLeft <= 14 && (
-              <div className="detail-alert">
-                <span className="flex items-center gap-2">
-                  <TriangleAlert size={15} />
-                  Gói{" "}
-                  {daysLeft < 0 ? "đã hết hạn" : `hết hạn sau ${daysLeft} ngày`}
-                </span>
-                {canFinancial && <button onClick={() => open("renew")}>Gia hạn</button>}
-              </div>
-            )}
-            {current?.debtAmount > 0 && (
-              <div className="detail-alert debt">
-                <span className="flex items-center gap-2">
-                  <TriangleAlert size={15} />
-                  Còn nợ {money(current.debtAmount)}
-                </span>
-                {canFinancial && <button onClick={() => open("payment", current)}>Thu tiền</button>}
-              </div>
-            )}
-            {!activeTraining && (
-              <div className="detail-alert">
-                <span className="flex items-center gap-2">
-                  <TriangleAlert size={15} />
-                  Chưa đăng ký PT
-                </span>
-                {canFinancial && <button onClick={() => open("training")}>Đăng ký PT</button>}
-              </div>
-            )}
-            {activeTraining && !activeTrainingCoaches.length && (
-              <div className="detail-alert">
-                <span className="flex items-center gap-2">
-                  <TriangleAlert size={15} />
-                  Đăng ký PT đang chờ phân công Coach
-                </span>
-                {canEditPt && <button onClick={() => open("training", activeTraining)}>Phân công</button>}
-              </div>
-            )}
-            <div className="definition-list mt-4">
+            <div className="definition-list membership-overview-facts">
               <div>
-                <dt>Gói hiện tại</dt>
+                <dt>Gói tập</dt>
                 <dd>
                   {current ? (
                     <>
                       <strong>{current.package.name}</strong>
                       <span className="cell-secondary mt-0.5 block">
-                        {shortDate(current.startsAt)} →{" "}
-                        {shortDate(current.expiresAt)}
+                        {current.code}
                       </span>
                     </>
                   ) : canFinancial ? (
@@ -582,118 +890,117 @@ export function MemberDetailPage() {
                 </dd>
               </div>
               <div>
-                <dt>Tài chính</dt>
+                <dt>Ngày đăng ký</dt>
+                <dd>{shortDate(current?.registeredAt)}</dd>
+              </div>
+              <div>
+                <dt>Bắt đầu sử dụng</dt>
+                <dd>{shortDate(current?.startsAt)}</dd>
+              </div>
+              <div>
+                <dt>Hạn thực tế</dt>
+                <dd>{current?.status === "suspended" ? "Chưa xác định · đang tạm dừng" : currentPeriod?.actualLine.split(" → ").at(-1) || "—"}</dd>
+              </div>
+              <div>
+                <dt>Đối soát tài chính</dt>
                 <dd>
                   {current ? (
                     <>
-                      {money(current.paidAmount)} đã thu ·{" "}
-                      <span
-                        className={
-                          current.debtAmount
-                            ? "text-red-700"
-                            : "text-emerald-700"
-                        }
-                      >
-                        {money(current.debtAmount)} công nợ
-                      </span>
+                      <strong>{money(current.paidAmount)}</strong> đã thu
+                      <span className={`cell-secondary mt-0.5 block ${current.debtAmount ? "!text-red-700" : "!text-emerald-700"}`}>{money(current.debtAmount)} công nợ</span>
                     </>
-                  ) : (
-                    "—"
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>Hạn thanh toán</dt>
-                <dd>
-                  {current?.debtAmount ? (
-                    <button
-                      className="font-medium text-blue-700 hover:underline"
-                      onClick={() => open("deadline", current)}
-                    >
-                      {current.debtDueDate
-                        ? `${shortDate(current.debtDueDate)} · Đổi hạn`
-                        : "+ Đặt hạn"}
-                    </button>
-                  ) : (
-                    "—"
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>Check-in gần nhất</dt>
-                <dd>
-                  {lastCheckin
-                    ? dateTime(lastCheckin.checkedInAt)
-                    : "Chưa có lượt check-in"}
-                </dd>
-              </div>
-              <div>
-                <dt>Tổng check-in gần đây</dt>
-                <dd>{member.checkins.length} lượt</dd>
-              </div>
-              <div>
-                <dt>PT & lịch</dt>
-                <dd>
-                  {activeTraining ? (
-                    <>
-                      {activeTrainingCoaches
-                        .map((coach) => coach.name)
-                        .join(", ") || "Chưa phân công Coach"}{" "}
-                      · {activeTraining.type}
-                      <div className="cell-secondary mt-0.5 block">
-                        <ScheduleSummary
-                          schedule={activeTraining.schedule}
-                          scheduleDays={activeTraining.scheduleDays}
-                          scheduleTime={activeTraining.scheduleTime}
-                          emptyText="Chưa chọn thứ"
-                          compact
-                        />
-                      </div>
-                    </>
-                  ) : canEditPt ? (
-                    <button
-                      className="font-medium text-blue-700"
-                      onClick={() => open("training")}
-                    >
-                      + Gán PT
-                    </button>
                   ) : "—"}
                 </dd>
               </div>
               <div>
-                <dt>Ghi chú quan trọng</dt>
-                <dd>
-                  {member.notes || (canFinancial ? (
-                    <button
-                      className="font-medium text-blue-700"
-                      onClick={() => open("edit")}
-                    >
-                      + Thêm ghi chú
-                    </button>
-                  ) : "—")}
-                </dd>
+                <dt>Hạn thanh toán</dt>
+                <dd>{current?.debtAmount ? <button className="font-medium text-blue-700 hover:underline" onClick={() => open("deadline", current)}>{current.debtDueDate ? `${shortDate(current.debtDueDate)} · Đổi hạn` : "+ Đặt hạn"}</button> : "Không có công nợ"}</dd>
               </div>
             </div>
-          </section>
-          <aside className="info-rail">
-            <h3>Liên hệ & phụ trách</h3>
+            {(!!lifecycleLedger.length || !!currentPeriod?.adjustmentNotes.length) && (
+              <div className="lifecycle-ledger">
+                <div className="lifecycle-ledger-title"><History size={14} /><span><strong>Sổ biến động hiệu lực</strong><small>Ai thay đổi, thời điểm và giá trị trước/sau</small></span></div>
+                {lifecycleLedger.length ? lifecycleLedger.map((event) => (
+                  <div className="lifecycle-ledger-row" key={event.id}>
+                    <span className={`audit-action audit-${event.action}`}>{membershipEventLabels[event.action] || event.action}</span>
+                    <div><strong>{eventPrimaryText(event)}</strong>{eventDetailLines(event).map((line) => <p key={line}>{line}</p>)}</div>
+                    <div><strong>{event.createdBy || "Hệ thống"}</strong><small>{event.createdAt ? dateTime(event.createdAt) : shortDate(event.effectiveAt)}</small></div>
+                  </div>
+                )) : currentPeriod.adjustmentNotes.map((note) => (
+                  <div className="lifecycle-ledger-row legacy" key={note}><span className="audit-action audit-adjust_days">Điều chỉnh</span><div><strong>{note}</strong></div><div><strong>Hệ thống</strong><small>Không có thời điểm ghi nhận</small></div></div>
+                ))}
+              </div>
+            )}
+            {current && <MembershipTimeline membership={current} />}
+            </section>
+            <section className="workspace-section unified-activity-section role-activity-section">
+              <div className="workspace-section-title">
+                <div><h2>Hoạt động gần đây</h2><p>Check-in, thanh toán và biến động gói trên cùng một dòng thời gian</p></div>
+                <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>
+              </div>
+              <div className="activity-filter-bar" aria-label="Lọc hoạt động">
+                {[["all", "Tất cả"], ["membership", "Gói tập"], ["payment", "Thanh toán"], ["checkin", "Check-in"]].map(([key, label]) => (
+                  <button key={key} className={activityFilter === key ? "active" : ""} onClick={() => setActivityFilter(key)}>{label}</button>
+                ))}
+              </div>
+              <div className="unified-activity-list">
+                {filteredRecentActivity.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`unified-activity-row ${item.record ? "clickable" : ""}`}
+                    role={item.record ? "button" : undefined}
+                    tabIndex={item.record ? 0 : undefined}
+                    onClick={() => item.record && setSelectedPayment(item.record)}
+                    onKeyDown={(event) => {
+                      if (item.record && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        setSelectedPayment(item.record);
+                      }
+                    }}
+                  >
+                    <span className={`activity-kind-icon ${item.kind}`}>
+                      {item.kind === "payment" ? <ReceiptText size={15} /> : item.kind === "checkin" ? <Clock3 size={15} /> : <History size={15} />}
+                    </span>
+                    <div className="activity-copy"><strong>{item.title}</strong><p>{item.description}</p></div>
+                    <span className={`activity-kind-label ${item.kind}`}>{item.kind === "payment" ? "Thanh toán" : item.kind === "checkin" ? "Check-in" : membershipEventLabels[item.action] || "Gói tập"}</span>
+                    <div className="activity-when"><strong>{item.occurredAt?.includes("T") ? dateTime(item.occurredAt) : shortDate(item.occurredAt)}</strong><small>{item.meta || "Hệ thống"}</small></div>
+                  </div>
+                ))}
+                {!filteredRecentActivity.length && <div className="compact-empty"><History size={19} /><div><strong>Chưa có hoạt động phù hợp</strong><p>Không có dữ liệu trong nhóm đang chọn.</p></div></div>}
+              </div>
+            </section>
+          </main>
+          <aside className="member-profile-rail">
+            <div className="workspace-section-title"><div><h2>Thông tin hội viên</h2><p>Liên hệ, hồ sơ và phụ trách</p></div>{canFinancial && <button className="icon-text-action" onClick={() => open("edit")}><Pencil size={13} /> Chỉnh sửa</button>}</div>
             <dl>
               {canFinancial ? (
                 <>
-                  <InlineEditField label="Điện thoại" value={member.phone} type="tel" displayValue={formatPhone(member.phone)} onSave={(phone) => updateMember.mutateAsync({ payload: { phone }, silent: true })} pending={updateMember.isPending} />
-                  <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => updateMember.mutateAsync({ payload: { email }, silent: true })} pending={updateMember.isPending} />
+                  <InlineEditField label="Điện thoại" value={member.phone} type="tel" displayValue={formatPhone(member.phone)} onSave={(phone) => updateMember.mutateAsync({ payload: { phone }, silent: true })} pending={updateMember.isPending} utilityActions={member.phone && <><a href={`tel:${member.phone}`} title="Gọi điện" aria-label="Gọi điện"><Phone size={12} /></a><CopyValueButton value={member.phone} label="số điện thoại" /></>} />
+                  <InlineEditField label="Email" value={member.email} type="email" emptyAction="+ Thêm email" onSave={(email) => updateMember.mutateAsync({ payload: { email }, silent: true })} pending={updateMember.isPending} utilityActions={member.email && <><a href={`mailto:${member.email}`} title="Gửi email" aria-label="Gửi email"><Mail size={12} /></a><CopyValueButton value={member.email} label="email" /></>} />
                   <InlineEditField label="Nguồn khách" value={member.source} onSave={(source) => updateMember.mutateAsync({ payload: { source }, silent: true })} pending={updateMember.isPending} />
                 </>
               ) : (
                 <>
-                  <div><dt>Điện thoại</dt><dd>{formatPhone(member.phone) || "—"}</dd></div>
-                  <div><dt>Email</dt><dd>{member.email || "—"}</dd></div>
+                  <div><dt>Điện thoại</dt><dd><span className="profile-value-actions">{formatPhone(member.phone) || "—"}{member.phone && <><a href={`tel:${member.phone}`} title="Gọi điện"><Phone size={12} /></a><CopyValueButton value={member.phone} label="số điện thoại" /></>}</span></dd></div>
+                  <div><dt>Email</dt><dd><span className="profile-value-actions">{member.email || "—"}{member.email && <><a href={`mailto:${member.email}`} title="Gửi email"><Mail size={12} /></a><CopyValueButton value={member.email} label="email" /></>}</span></dd></div>
                   <div><dt>Nguồn khách</dt><dd>{member.source || "—"}</dd></div>
                 </>
               )}
               <div>
+                <dt>Ngày sinh</dt>
+                <dd>{member.dateOfBirth ? `${shortDate(member.dateOfBirth)}${age != null ? ` · ${age} tuổi` : ""}` : "Chưa cập nhật"}</dd>
+              </div>
+              <div>
+                <dt>Giới tính</dt>
+                <dd>{genderLabel}</dd>
+              </div>
+              <div>
+                <dt>Mã hội viên</dt>
+                <dd><span className="profile-value-actions font-mono">{member.code}<CopyValueButton value={member.code} label="mã hội viên" /></span></dd>
+              </div>
+              <div>
                 <dt>Mã MBS</dt>
-                <dd>{member.mbsCode || "—"}</dd>
+                <dd><span className="profile-value-actions font-mono">{member.mbsCode || "—"}<CopyValueButton value={member.mbsCode} label="mã MBS" /></span></dd>
               </div>
               <div>
                 <dt>Định danh DAH</dt>
@@ -703,6 +1010,7 @@ export function MemberDetailPage() {
                         <span className="font-mono text-[12px]">
                           {member.personUuid}
                         </span>
+                        <CopyValueButton value={member.personUuid} label="mã DAH" />
                         {canFinancial && (
                           <button
                             className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
@@ -729,6 +1037,10 @@ export function MemberDetailPage() {
                 <dd>{member.salesEmployee || "Chưa gán"}</dd>
               </div>
             </dl>
+            <section className="member-note-section">
+              <div className="workspace-section-title"><div><h2>Ghi chú chăm sóc</h2><p>Thông tin nội bộ quan trọng</p></div>{canFinancial && <button className="icon-text-action" onClick={() => open("edit")}><Pencil size={13} /> Sửa</button>}</div>
+              <p>{member.notes || "Chưa có ghi chú cho hội viên này."}</p>
+            </section>
           </aside>
         </div>
       )}
@@ -755,10 +1067,19 @@ export function MemberDetailPage() {
                 {member.membershipEvents.map((event) => (
                   <div key={event.id}>
                     <time>{shortDate(event.effectiveAt)}</time>
-                    <span className={`audit-action audit-${event.action}`}>{({ freeze: "Bảo lưu", unfreeze: "Kết thúc bảo lưu", transfer: "Chuyển nhượng", upgrade: "Nâng cấp", change: "Đổi gói", cancel: "Hủy dịch vụ" })[event.action] || event.action}</span>
-                    <div>
-                      <strong>{event.action === "freeze" ? `${event.details?.compensatedDays || ""} ngày bảo lưu` : event.fromPackage && event.toPackage && event.fromPackage !== event.toPackage ? `${event.fromPackage} → ${event.toPackage}` : event.fromMember && event.toMember && event.fromMember !== event.toMember ? `${event.fromMember} → ${event.toMember}` : event.reason}</strong>
-                      <p>{event.reason} · {event.createdBy}</p>
+                    <div className="membership-event-card">
+                      <div className="membership-event-card-head">
+                        <span className={`audit-action audit-${event.action}`}>
+                          {membershipEventLabels[event.action] || event.action}
+                        </span>
+                        <small>{event.createdBy}</small>
+                      </div>
+                      <strong>{eventPrimaryText(event)}</strong>
+                      <ul>
+                        {eventDetailLines(event).map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
                     </div>
                   </div>
                 ))}

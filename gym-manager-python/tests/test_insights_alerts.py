@@ -76,3 +76,34 @@ def test_expired_yesterday_membership_appears_in_alerts_and_dashboard_attention(
         assert dashboard_data["attention"][0]["issue"] == "Gói đã hết hạn"
     finally:
         db.close()
+
+
+def test_alert_read_state_is_per_user_and_resets_for_a_new_expiry(tmp_path):
+    from server.models import Membership, User
+    from server.services.alerts_service import alerts, mark_all_read, mark_read
+
+    db = make_session(tmp_path)
+    try:
+        seed_expired_member(db)
+        first_user = User(username="manager-one", display_name="Manager One", password_hash="x", role="manager")
+        second_user = User(username="manager-two", display_name="Manager Two", password_hash="x", role="manager")
+        db.add_all([first_user, second_user])
+        db.commit()
+
+        first_alert = alerts(db, first_user.id)["items"][0]
+        assert first_alert["isRead"] is False
+        assert mark_read(db, first_user.id, first_alert["id"]) is True
+        assert alerts(db, first_user.id)["counts"]["unread"] == 0
+        assert alerts(db, first_user.id)["items"][0]["isRead"] is True
+        assert alerts(db, second_user.id)["counts"]["unread"] == 1
+
+        membership = db.query(Membership).one()
+        membership.expires_at = membership.expires_at - timedelta(days=1)
+        db.commit()
+        refreshed = alerts(db, first_user.id)
+        assert refreshed["counts"]["unread"] == 1
+        assert refreshed["items"][0]["id"] != first_alert["id"]
+        assert mark_all_read(db, first_user.id) == 1
+        assert alerts(db, first_user.id)["counts"]["unread"] == 0
+    finally:
+        db.close()

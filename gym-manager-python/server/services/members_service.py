@@ -14,7 +14,7 @@ from ..models import (
 )
 from .audit_service import member_audit_logs, record_audit
 from . import dah_service
-from .membership_lifecycle import activate_membership
+from .membership_lifecycle import activate_membership, _complete_freeze
 from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_iso, utc_now, vietnam_today
@@ -796,8 +796,10 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
     reason = str(payload.get("reason", "")).strip()
     if not starts_at or not ends_at or ends_at <= starts_at:
         raise HTTPException(422, "Ngày hết bảo lưu phải sau ngày bắt đầu bảo lưu.")
-    if starts_at < vietnam_today():
-        raise HTTPException(422, "Ngày bắt đầu bảo lưu không được ở quá khứ.")
+    if row.starts_at and starts_at < row.starts_at:
+        raise HTTPException(422, "Ngày bắt đầu bảo lưu không được trước ngày bắt đầu gói.")
+    if row.expires_at and ends_at > row.expires_at:
+        raise HTTPException(422, "Thời gian bảo lưu phải nằm trong thời hạn gói.")
     if not reason:
         raise HTTPException(422, "Vui lòng nhập lý do bảo lưu.")
     overlap = db.query(MembershipFreeze).filter(
@@ -836,6 +838,8 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
     )
     db.add_all([freeze, event])
     db.flush()
+    if ends_at < vietnam_today():
+        _complete_freeze(db, row, freeze, ends_at, actor, reason="Hoàn tất bảo lưu nhập bù")
     record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {planned_days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
     db.commit()
     return get_member(db, row.customer_id)
