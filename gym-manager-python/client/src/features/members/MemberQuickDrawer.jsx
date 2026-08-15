@@ -277,7 +277,7 @@ export function MemberQuickDrawer({
                 onClick={() => openDialog("training")}
               >
                 <Dumbbell size={17} />
-                <span>{training ? "Đổi PT" : "Gán PT"}</span>
+                <span>{training ? "Đổi nhóm PT" : "Gán nhóm PT"}</span>
               </button>
               {canManageLifecycle && current && lifecycleActions.length > 0 && (
                 <RowMenu>
@@ -442,7 +442,7 @@ export function MemberQuickDrawer({
                         className="text-xs font-medium text-blue-700"
                         onClick={() => openDialog("training")}
                       >
-                        + Gán PT
+                        + Gán nhóm PT
                       </button>
                     ) : "Chưa đăng ký"}
                   </dd>

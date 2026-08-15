@@ -495,7 +495,7 @@ export function MembersPage() {
                 openMember(row, "training");
               }}
             >
-              + Gán PT
+              + Gán nhóm PT
             </button>
           ),
       },
@@ -1479,7 +1479,7 @@ export function MembersPage() {
                 />
                 <span>
                   <strong className="block text-sm text-slate-800">
-                    Đăng ký PT cho hội viên này
+                    Đăng ký nhóm PT cho hội viên này
                   </strong>
                   <small className="mt-0.5 block text-xs text-slate-500">
                     Hồ sơ hội viên và đăng ký PT sẽ được lưu cùng lúc.

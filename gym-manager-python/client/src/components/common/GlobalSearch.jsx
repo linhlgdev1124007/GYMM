@@ -88,7 +88,7 @@ export function GlobalSearch() {
       ...base,
       { ...item, kind: "member-action", action: "payment", actionLabel: "Thu tiền" },
       { ...item, kind: "member-action", action: "renew", actionLabel: item.membership ? "Gia hạn" : "Đăng ký gói" },
-      { ...item, kind: "member-action", action: "training", actionLabel: item.trainers?.length ? "Đổi PT" : "Gán PT" },
+      { ...item, kind: "member-action", action: "training", actionLabel: item.trainers?.length ? "Đổi nhóm PT" : "Gán nhóm PT" },
     ];
   });
   const choices = [
