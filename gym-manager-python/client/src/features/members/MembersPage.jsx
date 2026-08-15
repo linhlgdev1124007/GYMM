@@ -474,18 +474,16 @@ export function MembersPage() {
         key: "trainer",
         label: "PT",
         className: "max-[640px]:hidden",
-        sortValue: (row) => row.trainers?.map((trainer) => trainer.name).join(", ") || "",
+        sortValue: (row) => row.ptGroup || "",
         render: (row) =>
-          row.trainers?.length ? (
-            <div className="flex max-w-48 flex-wrap gap-1">
-              {row.trainers.map((trainer) => (
-                <span
-                  key={trainer.id}
-                  className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700"
-                >
-                  {trainer.name}
-                </span>
-              ))}
+          row.ptGroup ? (
+            <div>
+              <span className="rounded bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-100">
+                Nhóm PT {row.ptGroup}
+              </span>
+              <div className="cell-secondary mt-1">
+                {row.activeTraining?.remainingSessions ?? 0}/{row.activeTraining?.totalSessions ?? 0} buổi
+              </div>
             </div>
           ) : (
             <button
@@ -606,7 +604,7 @@ export function MembersPage() {
           row.membership?.package.name || "",
           row.membership?.debtAmount || 0,
           row.membership?.debtDueDate || "",
-          row.trainer?.name || "",
+          row.ptGroup || "",
           row.status,
         ]
           .map((value) => `"${String(value).replaceAll('"', '""')}"`)

@@ -67,6 +67,39 @@ const membershipEventLabels = {
   cancel: "Hủy dịch vụ",
 };
 
+const auditFieldLabels = {
+  name: "Họ tên",
+  phone: "SĐT",
+  email: "Email",
+  gender: "Giới tính",
+  dateOfBirth: "Ngày sinh",
+  mbsCode: "Mã MBS",
+  personUuid: "Định danh DAH",
+  source: "Nguồn khách",
+  notes: "Ghi chú",
+  salesEmployeeId: "Nhân viên phụ trách",
+};
+
+function auditChangeLines(item) {
+  const changes = Array.isArray(item.details?.changes) ? item.details.changes : [];
+  if (changes.length) {
+    return changes.map((change) => ({
+      key: change.field,
+      label: change.label || auditFieldLabels[change.field] || change.field,
+      text: `${String(change.old ?? "—")} → ${String(change.new ?? "—")}`,
+    }));
+  }
+  const labels = Array.isArray(item.details?.fieldLabels) ? item.details.fieldLabels : [];
+  if (labels.length) {
+    return [{ key: "fields", label: "Đã cập nhật", text: labels.join(", ") }];
+  }
+  const fields = Array.isArray(item.details?.fields) ? item.details.fields : [];
+  if (fields.length) {
+    return [{ key: "fields", label: "Đã cập nhật", text: fields.map((field) => auditFieldLabels[field] || field).join(", ") }];
+  }
+  return [];
+}
+
 function eventPrimaryText(event) {
   const details = event.details || {};
   if (event.action === "freeze") {
@@ -346,7 +379,8 @@ export function MemberDetailPage() {
   const updateMember = useMutation({
     mutationFn: ({ payload }) =>
       api(`/api/members/${memberId}`, { method: "PATCH", body: payload }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
+      client.setQueryData(["member", memberId], data);
       refresh();
       if (!variables.silent) {
         setDialog(null);
@@ -1236,6 +1270,12 @@ export function MemberDetailPage() {
                   <time>{dateTime(item.createdAt)}</time>
                   <div>
                     <strong>{item.summary}</strong>
+                    {auditChangeLines(item).map((change) => (
+                      <span className="audit-change-line" key={change.key}>
+                        <strong>{change.label}</strong>
+                        <span>{change.text}</span>
+                      </span>
+                    ))}
                     <p>
                       {item.actor.name} · {item.actor.role}
                     </p>

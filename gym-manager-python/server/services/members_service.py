@@ -334,14 +334,18 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     ids = [row.id for row in rows]
     last_checkins = {}
     trainers = {}
+    active_training = {}
     if ids:
         checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id.in_(ids)).order_by(AttendanceSession.checked_in_at.desc()).all()
         for checkin in checkins:
             last_checkins.setdefault(checkin.customer_id, _attendance_iso(checkin.checked_in_at, checkin.source))
-        training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").all()
+        training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").order_by(PtEnrollment.id.desc()).all()
         for training in training_rows:
+            active_training.setdefault(training.customer_id, training)
             assigned = trainers.setdefault(training.customer_id, [])
             for assignment in training.coach_assignments:
+                if not assignment.coach:
+                    continue
                 if not any(item["id"] == assignment.coach.id for item in assigned):
                     assigned.append({"id": assignment.coach.id, "name": assignment.coach.person.display_name})
     items = []
@@ -360,6 +364,8 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             "salesEmployee": employee_data(member.sales_employee),
             "trainer": (trainers.get(member.id) or [None])[0],
             "trainers": trainers.get(member.id, []),
+            "ptGroup": active_training.get(member.id).group_type if active_training.get(member.id) else None,
+            "activeTraining": pt_data(active_training[member.id]) if member.id in active_training else None,
             "membership": membership_data(current) if current else None,
             "lastCheckin": last_checkins.get(member.id),
         })
@@ -651,7 +657,7 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
         },
     )
     db.commit()
-    return get_member(db, member_id)
+    return get_member(db, member_id, include_audit=bool(actor and actor.role == "admin"))
 
 
 def reactivate_cancelled_member(db: Session, member_id: int, actor: User | None = None):
