@@ -436,7 +436,7 @@ export function MemberQuickDrawer({
                   <dt>PT hiện tại</dt>
                   <dd>
                     {training ? (
-                      `${trainingCoaches.map((coach) => coach.name).join(", ") || "Chưa phân công"} · ${training.type}`
+                      training.type
                     ) : canFinancial ? (
                       <button
                         className="text-xs font-medium text-blue-700"

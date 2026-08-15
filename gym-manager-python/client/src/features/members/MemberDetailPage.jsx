@@ -682,17 +682,7 @@ export function MemberDetailPage() {
     },
   ];
   const trainingColumns = [
-    { key: "type", label: "Hình thức" },
-    {
-      key: "coach",
-      label: "Coach",
-      render: (r) =>
-        r.coaches?.length ? (
-          r.coaches.map((coach) => coach.name).join(", ")
-        ) : (
-          <span className="font-medium text-amber-700">Chưa phân công</span>
-        ),
-    },
+    { key: "type", label: "Nhóm PT" },
     {
       key: "schedule",
       label: "Lịch tập",
@@ -818,9 +808,9 @@ export function MemberDetailPage() {
               <small>{member.checkins.length} lượt gần đây</small>
             </div>
             <div>
-              <dt>PT phụ trách</dt>
-              <dd>{activeTraining ? activeTrainingCoaches.map((coach) => coach.name).join(", ") || "Chờ phân công" : "Chưa đăng ký PT"}</dd>
-              <small>{activeTraining?.type || "Không có lịch tập"}</small>
+              <dt>Nhóm PT</dt>
+              <dd>{activeTraining?.type || "Chưa đăng ký PT"}</dd>
+              <small>{activeTraining ? "Gói PT hiện tại" : "Không có lịch tập"}</small>
             </div>
           </dl>
         </div>
