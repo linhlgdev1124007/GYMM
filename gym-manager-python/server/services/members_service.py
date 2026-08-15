@@ -892,6 +892,8 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         db.commit()
         return {"membershipId": row.id, "customerId": old_customer_id, "action": action, "summary": summary}
     if action == "adjust_days":
+        if row.status == "cancelled":
+            raise HTTPException(409, "Gói đã hủy không thể cộng/trừ ngày. Hãy đăng ký dịch vụ mới.")
         days = _int(payload.get("days"))
         if not days:
             raise HTTPException(422, "Vui lòng nhập số ngày cần cộng hoặc trừ.")

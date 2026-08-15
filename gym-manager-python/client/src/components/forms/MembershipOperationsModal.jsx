@@ -12,6 +12,7 @@ import { money, shortDate } from "../../utils/format";
 
 const today = () => format(new Date(), "yyyy-MM-dd");
 const nextDay = (value) => format(addDays(new Date(`${value || today()}T00:00:00`), 1), "yyyy-MM-dd");
+const ADJUSTABLE_STATUSES = ["active", "pending", "frozen", "suspended", "expired"];
 
 export function MembershipOperationsModal({ membership, memberships = [], memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
@@ -19,7 +20,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
   const adjustableMemberships = useMemo(
     () =>
       (memberships.length ? memberships : membership ? [membership] : [])
-        .filter((row) => ["active", "pending", "frozen", "suspended"].includes(row.status) && row.expiresAt),
+        .filter((row) => ADJUSTABLE_STATUSES.includes(row.status) && row.expiresAt),
     [memberships, membership],
   );
   const members = useQuery({
@@ -30,7 +31,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
   });
   useEffect(() => {
     const eligible = (memberships.length ? memberships : membership ? [membership] : [])
-      .filter((row) => ["active", "pending", "frozen", "suspended"].includes(row.status) && row.expiresAt);
+      .filter((row) => ADJUSTABLE_STATUSES.includes(row.status) && row.expiresAt);
     setForm({
       startsAt: today(),
       endsAt: nextDay(today()),
@@ -142,7 +143,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
           )}
           {action === "adjust_days" && (
             <section className="operation-panel">
-              <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>Điều chỉnh trực tiếp ngày hết hạn gói và lưu lịch sử đối soát.</span></div></div>
+              <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>Điều chỉnh trực tiếp ngày hết hạn gói và lưu lịch sử đối soát. Gói hết hạn sẽ tự hoạt động lại nếu hạn mới từ hôm nay trở đi.</span></div></div>
               <Field label="Gói áp dụng" required>
                 <Select value={form.membershipId || ""} onChange={(event) => setForm({ ...form, membershipId: event.target.value })}>
                   {adjustableMemberships.map((row) => (

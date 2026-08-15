@@ -564,6 +564,76 @@ def test_adjust_membership_days_updates_expiry_and_history(tmp_path):
         db.close()
 
 
+def test_adjust_expired_membership_days_can_reactivate_when_new_expiry_is_current(tmp_path):
+    from server.models import MembershipEvent
+    from server.services.members_service import membership_action
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=today - timedelta(days=40),
+            activated_at=today - timedelta(days=40),
+        )
+        membership.expires_at = today - timedelta(days=5)
+        customer.status = "inactive"
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "adjust_days",
+            "days": 3,
+            "reason": "Cộng ngày tặng bị sót",
+        }, None)
+        db.refresh(membership)
+        db.refresh(customer)
+        assert membership.expires_at == today - timedelta(days=2)
+        assert membership.status == "expired"
+        assert customer.status == "inactive"
+
+        membership_action(db, membership.id, {
+            "action": "adjust_days",
+            "days": 10,
+            "reason": "Cộng đủ ngày tặng bị sót",
+        }, None)
+        db.refresh(membership)
+        db.refresh(customer)
+
+        assert membership.expires_at == today + timedelta(days=8)
+        assert membership.status == "active"
+        assert customer.status == "active"
+        assert db.query(MembershipEvent).filter_by(membership_id=membership.id, action="adjust_days").count() == 2
+    finally:
+        db.close()
+
+
+def test_cancelled_membership_cannot_adjust_days(tmp_path):
+    from fastapi import HTTPException
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="cancelled",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="đã hủy"):
+            membership_action(db, membership.id, {
+                "action": "adjust_days",
+                "days": 10,
+                "reason": "Không được mở lại gói đã hủy",
+            }, None)
+    finally:
+        db.close()
+
+
 def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_path):
     import asyncio
     from server.models import Membership, ServicePackage
