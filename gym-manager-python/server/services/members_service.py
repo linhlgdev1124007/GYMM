@@ -37,6 +37,15 @@ MEMBER_AUDIT_FIELD_LABELS = {
     "notes": "Ghi chú",
     "salesEmployeeId": "Nhân viên phụ trách",
 }
+MEMBERSHIP_AUDIT_FIELD_LABELS = {
+    "startsAt": "Ngày bắt đầu",
+    "expiresAt": "Ngày hết hạn",
+    "finalPrice": "Giá gói",
+    "paidAmount": "Đã thanh toán",
+    "debtDueDate": "Hạn thanh toán",
+    "status": "Trạng thái",
+    "activationDate": "Ngày kích hoạt",
+}
 
 
 def _parse_date(value):
@@ -805,6 +814,16 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
 async def update_membership(db: Session, membership_id: int, form: dict, receipts: list[UploadFile], actor: User | None = None):
     row = db.query(Membership).options(joinedload(Membership.package)).filter(Membership.id == membership_id).first()
     if not row or row.package.is_pt: raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký gói.")
+    old_values = {
+        "startsAt": row.starts_at,
+        "expiresAt": row.expires_at,
+        "finalPrice": row.final_price,
+        "paidAmount": row.paid_amount,
+        "debtAmount": row.debt_amount,
+        "debtDueDate": row.debt_due_date,
+        "status": row.status,
+        "activationDate": row.activated_at,
+    }
     row.starts_at = _parse_date(form.get("startsAt")) or row.starts_at
     row.expires_at = _parse_date(form.get("expiresAt"))
     row.final_price = _money(form.get("finalPrice"), row.final_price)
@@ -835,7 +854,57 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
         await attach_receipts(payment, receipts, actor)
         db.flush()
         record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts)})
-    record_audit(db, actor, "update", "membership", row.id, f"Cập nhật gói {row.package.name}", customer_id=row.customer_id, details={"fields": list(form.keys()), "expiresAt": row.expires_at})
+    new_values = {
+        "startsAt": row.starts_at,
+        "expiresAt": row.expires_at,
+        "finalPrice": row.final_price,
+        "paidAmount": row.paid_amount,
+        "debtAmount": row.debt_amount,
+        "debtDueDate": row.debt_due_date,
+        "status": row.status,
+        "activationDate": row.activated_at,
+    }
+    fields = []
+    changes = []
+    for field in form.keys():
+        if field not in MEMBERSHIP_AUDIT_FIELD_LABELS or field in fields:
+            continue
+        if old_values.get(field) == new_values.get(field):
+            continue
+        fields.append(field)
+        changes.append({
+            "field": field,
+            "label": MEMBERSHIP_AUDIT_FIELD_LABELS[field],
+            "old": _audit_display_value(old_values.get(field)),
+            "new": _audit_display_value(new_values.get(field)),
+        })
+    if old_values.get("debtAmount") != new_values.get("debtAmount"):
+        fields.append("debtAmount")
+        changes.append({
+            "field": "debtAmount",
+            "label": "Công nợ",
+            "old": _audit_display_value(old_values.get("debtAmount")),
+            "new": _audit_display_value(new_values.get("debtAmount")),
+        })
+    label_suffix = f": {', '.join(change['label'] for change in changes)}" if changes else ""
+    record_audit(
+        db,
+        actor,
+        "update",
+        "membership",
+        row.id,
+        f"Cập nhật gói {row.package.name}{label_suffix}",
+        customer_id=row.customer_id,
+        details={
+            "fields": fields,
+            "fieldLabels": [change["label"] for change in changes],
+            "changes": changes,
+            "expiresAt": row.expires_at,
+            "paymentMethod": method,
+            "bankAccountId": bank_account_id,
+            "receiptCount": len(receipts),
+        },
+    )
     _sync_customer_statuses(db, row.customer_id)
     db.commit()
     row = db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person), joinedload(Membership.package), joinedload(Membership.sale_online_employee).joinedload(Employee.person), joinedload(Membership.direct_sales_employee).joinedload(Employee.person)).get(row.id)

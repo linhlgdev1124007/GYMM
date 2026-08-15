@@ -58,6 +58,7 @@ def assign_identity(member_id: int, payload: dict, db: Session = Depends(get_db)
         db,
         member_id,
         payload.get("eventId"),
+        actor=user,
         replace=bool(payload.get("replace")),
         confirmation_text=payload.get("confirmationText"),
     )
@@ -65,4 +66,4 @@ def assign_identity(member_id: int, payload: dict, db: Session = Depends(get_db)
 
 @router.post("/api/employees/{employee_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager"))])
 def assign_employee_identity(employee_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
-    return dah_service.assign_identity_to_employee(db, employee_id, payload.get("eventId"))
+    return dah_service.assign_identity_to_employee(db, employee_id, payload.get("eventId"), actor=user)

@@ -12,6 +12,7 @@ from ..models import (
 )
 from ..timeutils import utc_iso, utc_now, vietnam_today
 from .membership_lifecycle import activate_customer_first_checkin
+from .audit_service import record_audit
 from .serializers import pagination
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
@@ -97,6 +98,10 @@ def _payload_json(payload: dict) -> str:
         if key in compact:
             compact[key] = "[omitted:image_data]"
     return json.dumps(compact, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+def _display_value(value):
+    return str(value) if value not in (None, "") else "—"
 
 
 def _image_data(payload: dict) -> str | None:
@@ -321,6 +326,46 @@ def _toggle_customer_attendance(
     return {"status": "processed", "action": "checkin", "note": "Check-in hội viên.", "session_id": session.id}
 
 
+def _record_dah_customer_audit(
+    db: Session,
+    customer: Customer | None,
+    action: str | None,
+    status: str,
+    session_id: int | None,
+    device: Device | None,
+    note: str | None,
+    event_time: datetime,
+    identity_key: str | None,
+):
+    if not customer:
+        return
+    audit_action = {
+        "checkin": "dah_checkin",
+        "checkout": "dah_checkout",
+        "denied": "dah_denied",
+    }.get(action or "", "dah_event")
+    if status not in ("processed", "denied"):
+        return
+    record_audit(
+        db,
+        None,
+        audit_action,
+        "attendance",
+        session_id,
+        f"DAH {note or 'ghi nhận sự kiện'} {customer.person.display_name}",
+        customer_id=customer.id,
+        details={
+            "source": "dah",
+            "device": device.code if device else None,
+            "eventTime": event_time,
+            "personUuid": identity_key,
+            "status": status,
+            "action": action,
+            "note": note,
+        },
+    )
+
+
 def heartbeat(db: Session, payload: dict):
     info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
     device = _device(db, info)
@@ -431,6 +476,7 @@ def verify(db: Session, payload: dict):
                 status = denied.get("status") or "denied"
                 action = denied.get("action") or "denied"
                 note = denied.get("note")
+            _record_dah_customer_audit(db, customer, action, status, member_session_id, device, note, event_time, identity_key)
 
     event = DahWebhookEvent(
         event_key=key,
@@ -697,6 +743,7 @@ def assign_identity_to_customer(
     db: Session,
     customer_id: int,
     event_id: int,
+    actor=None,
     replace: bool = False,
     confirmation_text: str | None = None,
 ):
@@ -717,6 +764,8 @@ def assign_identity_to_customer(
     if changing_identity and str(confirmation_text or "").strip().lower() != "tôi xác nhận thay đổi":
         raise HTTPException(422, "Nhập đúng câu 'tôi xác nhận thay đổi' để gán lại định danh DAH.")
 
+    old_identity_key = customer.person_uuid
+    old_avatar = customer.avatar_image_data
     if changing_identity:
         old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.customer_id == customer.id).all()
         for old_link in old_links:
@@ -744,6 +793,30 @@ def assign_identity_to_customer(
     event.note = "Định danh DAH đã được gán thủ công."
     event.image_data = None
     db.add(identity)
+    record_audit(
+        db,
+        actor,
+        "identity_link",
+        "dah_identity",
+        identity.id,
+        f"{'Gán lại' if changing_identity else 'Gán'} FaceID cho {customer.person.display_name}",
+        customer_id=customer.id,
+        details={
+            "eventId": event.id,
+            "replace": changing_identity,
+            "oldPersonUuid": _display_value(old_identity_key),
+            "newPersonUuid": _display_value(identity.person_uuid),
+            "changes": [{
+                "field": "personUuid",
+                "label": "FaceID",
+                "old": _display_value(old_identity_key),
+                "new": _display_value(identity.person_uuid),
+            }],
+            "avatarUpdated": bool(customer.avatar_image_data and customer.avatar_image_data != old_avatar),
+            "personId": identity.person_id,
+            "faceName": identity.face_name,
+        },
+    )
     db.commit()
     return {
         "memberId": customer.id,
@@ -752,7 +825,7 @@ def assign_identity_to_customer(
     }
 
 
-def assign_identity_to_employee(db: Session, employee_id: int, event_id: int):
+def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, actor=None):
     employee = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.id == employee_id).first()
     if not employee:
         raise HTTPException(404, "Không tìm thấy nhân viên.")
@@ -760,11 +833,13 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int):
     if not event or event.operator != "VerifyPush" or not _event_identity_key(event):
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
     identity_key = _event_identity_key(event)
+    old_identity_key = None
     existing_identity = _identity_query(db, event.person_uuid, event.person_id)
     if existing_identity and existing_identity.employee_id and existing_identity.employee_id != employee.id:
         raise HTTPException(409, "Định danh DAH này đã được gán cho nhân viên khác.")
 
     old_links = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.employee_id == employee.id).all()
+    old_identity_key = old_links[0].person_uuid if old_links else None
     for old_link in old_links:
         if old_link.person_uuid == identity_key:
             continue
@@ -787,6 +862,28 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int):
     event.note = "Định danh DAH đã được gán cho nhân viên."
     event.image_data = None
     db.add(identity)
+    record_audit(
+        db,
+        actor,
+        "identity_link",
+        "dah_identity",
+        identity.id,
+        f"Gán FaceID cho nhân viên {employee.person.display_name}",
+        details={
+            "eventId": event.id,
+            "employeeId": employee.id,
+            "oldPersonUuid": _display_value(old_identity_key),
+            "newPersonUuid": _display_value(identity.person_uuid),
+            "changes": [{
+                "field": "personUuid",
+                "label": "FaceID",
+                "old": _display_value(old_identity_key),
+                "new": _display_value(identity.person_uuid),
+            }],
+            "personId": identity.person_id,
+            "faceName": identity.face_name,
+        },
+    )
     db.commit()
     return {
         "employeeId": employee.id,

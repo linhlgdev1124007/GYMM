@@ -27,6 +27,11 @@ const actionLabels = {
   upgrade: "Nâng cấp gói",
   change: "Đổi gói",
   cancel: "Hủy dịch vụ",
+  identity_link: "Gán FaceID",
+  dah_checkin: "DAH check-in",
+  dah_checkout: "DAH check-out",
+  dah_denied: "DAH từ chối",
+  dah_event: "DAH",
 };
 const entityLabels = {
   member: "Hội viên",
@@ -38,6 +43,8 @@ const entityLabels = {
   attendance: "Check-in",
   user: "Tài khoản",
   membership_freeze: "Lịch bảo lưu",
+  dah_identity: "FaceID",
+  auth: "Xác thực",
 };
 
 const fieldLabels = {
@@ -51,6 +58,23 @@ const fieldLabels = {
   source: "Nguồn khách",
   notes: "Ghi chú",
   salesEmployeeId: "Nhân viên phụ trách",
+  startsAt: "Ngày bắt đầu",
+  expiresAt: "Ngày hết hạn",
+  finalPrice: "Giá gói",
+  paidAmount: "Đã thanh toán",
+  debtAmount: "Công nợ",
+  debtDueDate: "Hạn thanh toán",
+  status: "Trạng thái",
+  activationDate: "Ngày kích hoạt",
+  coachIds: "Coach phụ trách",
+  type: "Nhóm PT",
+  totalSessions: "Tổng buổi",
+  remainingSessions: "Buổi còn lại",
+  schedule: "Lịch tập",
+  scheduleDays: "Ngày tập",
+  scheduleTime: "Giờ tập",
+  oldPersonUuid: "FaceID cũ",
+  newPersonUuid: "FaceID mới",
 };
 
 function compactValue(value) {

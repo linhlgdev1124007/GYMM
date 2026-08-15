@@ -19,6 +19,19 @@ from ..timeutils import utc_iso, utc_now, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
 DEFAULT_PT_TITLES = {"Coach"}
+PT_AUDIT_FIELD_LABELS = {
+    "coachIds": "Coach phụ trách",
+    "coachId": "Coach phụ trách",
+    "type": "Nhóm PT",
+    "startsAt": "Ngày bắt đầu",
+    "expiresAt": "Ngày hết hạn",
+    "totalSessions": "Tổng buổi",
+    "remainingSessions": "Buổi còn lại",
+    "schedule": "Lịch tập",
+    "scheduleDays": "Ngày tập",
+    "scheduleTime": "Giờ tập",
+    "status": "Trạng thái",
+}
 
 
 def _as_int(value, default=None):
@@ -28,6 +41,16 @@ def _as_int(value, default=None):
 
 def _as_date(value):
     return date.fromisoformat(value) if value else None
+
+
+def _audit_value(value):
+    if value in (None, ""):
+        return "—"
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) if value else "—"
+    return str(value)
 
 
 def _attendance_iso(value, source: str | None):
@@ -343,6 +366,18 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
 def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None = None):
     row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy đăng ký PT.")
+    old_values = {
+        "coachIds": [assignment.coach_id for assignment in row.coach_assignments],
+        "type": row.group_type,
+        "startsAt": row.starts_at,
+        "expiresAt": row.expires_at,
+        "totalSessions": row.total_sessions,
+        "remainingSessions": row.remaining_sessions,
+        "schedule": row.schedule_json,
+        "scheduleDays": row.schedule_days,
+        "scheduleTime": row.schedule_time,
+        "status": row.status,
+    }
     if "coachIds" in payload or "coachId" in payload:
         raw_ids=payload.get("coachIds") if "coachIds" in payload else ([payload.get("coachId")] if payload.get("coachId") else [])
         coach_ids=list(dict.fromkeys(value for value in (_as_int(value) for value in (raw_ids or [])) if value))
@@ -359,7 +394,44 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
         row.schedule_json,row.schedule_days,row.schedule_time=schedule_storage(normalize_schedule(payload))
     if payload.get("status") in ("active","completed","inactive"): row.status=payload["status"]
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
-    record_audit(db, actor, "update", "pt_enrollment", row.id, "Cập nhật đăng ký PT", customer_id=row.customer_id, details={"fields": list(payload.keys()), "coachIds": [assignment.coach_id for assignment in row.coach_assignments]})
+    new_values = {
+        "coachIds": [assignment.coach_id for assignment in row.coach_assignments],
+        "type": row.group_type,
+        "startsAt": row.starts_at,
+        "expiresAt": row.expires_at,
+        "totalSessions": row.total_sessions,
+        "remainingSessions": row.remaining_sessions,
+        "schedule": row.schedule_json,
+        "scheduleDays": row.schedule_days,
+        "scheduleTime": row.schedule_time,
+        "status": row.status,
+    }
+    fields = []
+    changes = []
+    for field in payload.keys():
+        normalized = "coachIds" if field == "coachId" else field
+        if normalized not in PT_AUDIT_FIELD_LABELS or normalized in fields:
+            continue
+        if old_values.get(normalized) == new_values.get(normalized):
+            continue
+        fields.append(normalized)
+        changes.append({
+            "field": normalized,
+            "label": PT_AUDIT_FIELD_LABELS[normalized],
+            "old": _audit_value(old_values.get(normalized)),
+            "new": _audit_value(new_values.get(normalized)),
+        })
+    label_suffix = f": {', '.join(change['label'] for change in changes)}" if changes else ""
+    record_audit(
+        db,
+        actor,
+        "update",
+        "pt_enrollment",
+        row.id,
+        f"Cập nhật đăng ký PT{label_suffix}",
+        customer_id=row.customer_id,
+        details={"fields": fields, "fieldLabels": [change["label"] for change in changes], "changes": changes, "coachIds": new_values["coachIds"]},
+    )
     db.commit();db.refresh(row);return pt_data(row)
 
 
