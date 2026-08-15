@@ -14,8 +14,9 @@ def logs(
     action: str = "all",
     actor_id: int | None = Query(None, alias="actorId"),
     entity_type: str = Query("all", alias="entityType"),
+    scope: str = "all",
     page: int = Query(1, ge=1),
-    page_size: int = Query(30, ge=10, le=100, alias="pageSize"),
+    page_size: int = Query(30, ge=5, le=100, alias="pageSize"),
     db: Session = Depends(get_db),
 ):
     return audit_controller.list_logs(
@@ -24,6 +25,7 @@ def logs(
         action=action,
         actor_id=actor_id,
         entity_type=entity_type,
+        scope=scope,
         page=page,
         page_size=page_size,
     )

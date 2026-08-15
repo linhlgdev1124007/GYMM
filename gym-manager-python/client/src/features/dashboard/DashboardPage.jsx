@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -8,6 +9,7 @@ import {
   CreditCard,
   RefreshCw,
   ScanLine,
+  ScrollText,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -23,10 +25,21 @@ import {
 } from "recharts";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../app/AuthContext";
-import { api } from "../../services/api";
+import { api, queryString } from "../../services/api";
 import { DataTable } from "../../components/ui/DataTable";
+import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { Select } from "../../components/ui/Form";
 import { dateTime, money } from "../../utils/format";
+
+const initials = (name = "") =>
+  name
+    .split(" ")
+    .filter(Boolean)
+    .slice(-2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "PF";
 
 const roleLabels = {
   admin: "Điều hành hệ thống",
@@ -52,6 +65,57 @@ const metricToneClasses = {
   warning: "tone-warning",
   danger: "tone-danger",
   neutral: "tone-neutral",
+};
+
+const auditActionLabels = {
+  create: "Tạo mới",
+  update: "Cập nhật",
+  delete: "Xóa",
+  archive: "Lưu trữ",
+  payment: "Thanh toán",
+  upload_receipt: "Thêm chứng từ",
+  checkin: "Check-in",
+  checkout: "Check-out",
+  freeze: "Bảo lưu",
+  unfreeze: "Kết thúc bảo lưu",
+  adjust_days: "Cộng / trừ ngày",
+  activate: "Kích hoạt",
+  suspend: "Tạm dừng",
+  transfer: "Chuyển nhượng",
+  upgrade: "Nâng cấp gói",
+  change: "Đổi gói",
+  cancel: "Hủy dịch vụ",
+  login: "Đăng nhập",
+  logout: "Đăng xuất",
+  login_failed: "Đăng nhập lỗi",
+};
+
+const auditEntityLabels = {
+  member: "Hội viên",
+  membership: "Gói đăng ký",
+  payment: "Thanh toán",
+  pt_enrollment: "Đăng ký PT",
+  employee: "Nhân viên",
+  plan: "Gói tập",
+  attendance: "Check-in",
+  user: "Tài khoản",
+  auth: "Xác thực",
+  membership_freeze: "Lịch bảo lưu",
+};
+
+const roleDisplay = {
+  admin: "Admin",
+  manager: "Manager",
+  receptionist: "Lễ tân",
+  coach: "Coach",
+  system: "Hệ thống",
+};
+
+const personStatusLabels = {
+  active: "Đang hoạt động",
+  lead: "Tiềm năng",
+  inactive: "Không hoạt động",
+  cancelled: "Đã hủy",
 };
 
 function numericDelta(current, previous, comparison = "so với hôm qua") {
@@ -97,12 +161,150 @@ function DashboardSkeleton() {
   );
 }
 
+function HoverPerson({ person, fallback = "Không xác định", type = "member" }) {
+  const name = person?.name || fallback;
+  return (
+    <span className="audit-person-hover">
+      <span className="audit-person-name">{name}</span>
+      <span className={`audit-person-card ${type === "actor" ? "actor-card" : "member-card"}`} role="tooltip">
+        {type !== "actor" && (
+          <span className="audit-person-avatar">
+            {person?.avatarImageData ? <img src={person.avatarImageData} alt="" /> : initials(name)}
+          </span>
+        )}
+        <span>
+          <strong>{name}</strong>
+          <small>{type === "actor" ? `${person?.username || "system"} · ${roleDisplay[person?.role] || person?.role || "—"}` : `${person?.code || "Chưa có mã"} · ${person?.phone || "Chưa có SĐT"}`}</small>
+          {type !== "actor" && <em>{personStatusLabels[person?.status] || person?.status || "Không rõ trạng thái"}</em>}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function auditTarget(row) {
+  if (row.customer) return row.customer;
+  if (row.customerId) {
+    return {
+      id: row.customerId,
+      name: `Hội viên #${row.customerId}`,
+      code: `#${row.customerId}`,
+      phone: "",
+      status: "",
+    };
+  }
+  return null;
+}
+
+function RecentAuditPanel({ query, scope, pageSize, onScope, onPage, onPageSize }) {
+  return (
+    <section className={`dashboard-workspace-section dashboard-audit-panel ${query.isFetching ? "is-refreshing" : ""}`} aria-busy={query.isFetching}>
+      <div className="dashboard-section-header">
+        <div>
+          <h2>Thao tác gần đây</h2>
+          <p>Các thay đổi mới nhất trong hệ thống để admin kiểm soát nhanh.</p>
+        </div>
+        <div className="dashboard-audit-tools">
+          <div className="dashboard-audit-tabs" role="tablist" aria-label="Phạm vi thao tác">
+            <button type="button" className={scope === "today" ? "active" : ""} onClick={() => onScope("today")}>Hôm nay</button>
+            <button type="button" className={scope === "all" ? "active" : ""} onClick={() => onScope("all")}>Toàn bộ</button>
+          </div>
+          <label>
+            <span>Số bản ghi</span>
+            <Select value={pageSize} onChange={(event) => onPageSize(Number(event.target.value))}>
+              {[5, 10, 20].map((value) => <option key={value} value={value}>{value}</option>)}
+            </Select>
+          </label>
+          <Link to="/audit-logs">Xem toàn bộ <ArrowRight size={13} /></Link>
+        </div>
+      </div>
+      {query.isLoading && !query.data ? (
+        <div className="dashboard-audit-loading">
+          <div className="skeleton h-12" />
+          <div className="skeleton h-12" />
+          <div className="skeleton h-12" />
+        </div>
+      ) : query.isError ? (
+        <div className="dashboard-audit-error">
+          <strong>Không thể tải thao tác gần đây</strong>
+          <button type="button" onClick={() => query.refetch()}>Thử lại</button>
+        </div>
+      ) : query.data?.items?.length ? (
+        <>
+          <div className="dashboard-audit-list">
+            {query.data.items.map((row) => {
+              const target = auditTarget(row);
+              const actionLabel = auditActionLabels[row.action] || row.action;
+              return (
+                <div className="dashboard-audit-row" key={row.id}>
+                  <div className="dashboard-audit-rail">
+                    <span className={`audit-action audit-${row.action}`}>{actionLabel}</span>
+                    <time>{dateTime(row.createdAt)}</time>
+                  </div>
+                  <div className="dashboard-audit-copy">
+                    <strong>
+                      <HoverPerson person={row.actor} type="actor" />
+                      <span> đã {actionLabel.toLowerCase()}</span>
+                      {target ? (
+                        <>
+                          <span> cho </span>
+                          <HoverPerson person={target} />
+                        </>
+                      ) : (
+                        <span> trên {auditEntityLabels[row.entityType] || row.entityType}</span>
+                      )}
+                    </strong>
+                    <small>{row.summary}</small>
+                  </div>
+                  <div className="dashboard-audit-meta">
+                    <span>{auditEntityLabels[row.entityType] || row.entityType} #{row.entityId || "—"}</span>
+                    {row.customerId ? (
+                      <Link className="queue-action" to={`/members/${row.customerId}?tab=activity`}>
+                        Xem hồ sơ <ArrowRight size={12} />
+                      </Link>
+                    ) : (
+                      <span className="dashboard-audit-empty-link">Không có hồ sơ</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <Pagination
+            data={query.data.pagination}
+            onPage={onPage}
+            pageSize={pageSize}
+          />
+        </>
+      ) : (
+        <div className="dashboard-empty">
+          <ScrollText size={18} />
+          <span><strong>{scope === "today" ? "Chưa có hoạt động mới hôm nay." : "Chưa có thao tác nào"}</strong>{scope !== "today" && <small>Nhật ký mới sẽ xuất hiện tại đây.</small>}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
+  const [auditScope, setAuditScope] = useState("today");
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(5);
   const query = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api("/api/dashboard"),
     refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const auditQuery = useQuery({
+    queryKey: ["dashboard-audit-logs", auditScope, auditPage, auditPageSize],
+    queryFn: () =>
+      api(
+        `/api/audit-logs?${queryString({ scope: auditScope, page: auditPage, pageSize: auditPageSize })}`,
+      ),
+    enabled: user.role === "admin",
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
   const data = query.data;
@@ -165,6 +367,23 @@ export function DashboardPage() {
           {isFinancialRole && <Link className="btn btn-primary" to="/payments"><CreditCard size={15} /> Thanh toán</Link>}
         </div>
       </header>
+
+      {user.role === "admin" && (
+        <RecentAuditPanel
+          query={auditQuery}
+          scope={auditScope}
+          pageSize={auditPageSize}
+          onScope={(scope) => {
+            setAuditScope(scope);
+            setAuditPage(1);
+          }}
+          onPage={setAuditPage}
+          onPageSize={(value) => {
+            setAuditPageSize(value);
+            setAuditPage(1);
+          }}
+        />
+      )}
 
       <section className="command-metric-strip" aria-label="Chỉ số điều hành">
         {metrics.map((item) => <Metric item={item} key={item.label} />)}

@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes dashboard-audit-refresh {
+  0% { opacity: 0.35; transform: scaleX(0.35); transform-origin: left; }
+  50% { opacity: 1; transform: scaleX(1); transform-origin: left; }
+  100% { opacity: 0.35; transform: scaleX(0.35); transform-origin: right; }
+}
+
 @layer base {
   :root {
     color: #0f172a;
@@ -1352,6 +1358,46 @@
   .dashboard-section-header h2 { @apply text-[13px] font-semibold text-slate-950; }
   .dashboard-section-header p { @apply mt-0.5 text-[10px] leading-4 text-slate-500; }
   .dashboard-section-header > a { @apply inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-blue-700 hover:underline; }
+  .dashboard-audit-panel { @apply mt-4 overflow-visible border-slate-300; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06); }
+  .dashboard-audit-panel::before { @apply block h-0.5 w-full bg-transparent; content: ""; }
+  .dashboard-audit-panel.is-refreshing::before { @apply bg-blue-500; animation: dashboard-audit-refresh 1s ease-in-out infinite; }
+  .dashboard-audit-panel .dashboard-section-header { @apply bg-gradient-to-r from-slate-50 to-white; }
+  .dashboard-audit-tools { @apply flex shrink-0 items-center gap-3; }
+  .dashboard-audit-tabs { @apply inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm; }
+  .dashboard-audit-tabs button { @apply rounded-md px-3 py-1.5 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .dashboard-audit-tabs button.active { @apply bg-navy-900 text-white shadow-sm hover:bg-navy-900 hover:text-white; }
+  .dashboard-audit-tools label { @apply flex items-center gap-2 text-[10px] font-medium text-slate-500; }
+  .dashboard-audit-tools .input { @apply h-8 w-20 py-1 text-[11px]; }
+  .dashboard-audit-tools > a { @apply inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-blue-700 hover:underline; }
+  .dashboard-audit-list { @apply divide-y divide-slate-100 bg-white; }
+  .dashboard-audit-panel.is-refreshing .dashboard-audit-list { @apply opacity-80; transition: opacity 0.15s ease; }
+  .dashboard-audit-row { @apply relative grid min-h-[76px] grid-cols-[128px_minmax(0,1fr)_170px] items-center gap-4 px-4 py-3 transition-colors hover:bg-slate-50; }
+  .dashboard-audit-row::before { @apply absolute left-[142px] top-0 h-full w-px bg-slate-100; content: ""; }
+  .dashboard-audit-rail { @apply relative z-10 flex min-w-0 flex-col items-start gap-1.5; }
+  .dashboard-audit-rail time { @apply text-[9px] font-medium text-slate-400; }
+  .dashboard-audit-copy { @apply min-w-0; }
+  .dashboard-audit-copy strong { @apply block text-[13px] font-semibold leading-5 text-slate-950; }
+  .dashboard-audit-copy small { @apply mt-1 block truncate text-[10px] leading-4 text-slate-500; }
+  .audit-person-hover { @apply relative inline-flex align-baseline; }
+  .audit-person-name { @apply cursor-help rounded px-1 py-0.5 text-blue-800 underline decoration-blue-300 decoration-dotted underline-offset-2 hover:bg-blue-50; }
+  .audit-person-card { @apply pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2 grid min-w-60 grid-cols-[38px_minmax(0,1fr)] gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-3 text-left opacity-0 shadow-xl transition-all duration-150; transform: translateY(4px); }
+  .audit-person-card > span:last-child { @apply min-w-0; }
+  .audit-person-card::after { @apply absolute left-4 top-full h-2 w-2 rotate-45 border-b border-r border-slate-200 bg-white; content: ""; margin-top: -5px; }
+  .audit-person-card strong { @apply block truncate text-[12px] font-semibold text-slate-950; }
+  .audit-person-card small { @apply mt-1 block truncate text-[10px] text-slate-500; }
+  .audit-person-card em { @apply mt-2 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[9px] not-italic text-slate-600; }
+  .audit-person-avatar { @apply flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy-900 text-[11px] font-semibold text-white; }
+  .audit-person-avatar img { @apply h-full w-full object-cover; }
+  .audit-person-card.actor-card { @apply block min-w-52; }
+  .audit-person-hover:hover .audit-person-card, .audit-person-hover:focus-within .audit-person-card { @apply visible opacity-100; transform: translateY(0); }
+  .dashboard-audit-meta { @apply flex min-w-0 flex-col items-end gap-1.5; }
+  .dashboard-audit-meta > span:first-child { @apply max-w-full truncate rounded bg-slate-100 px-2 py-1 text-[9px] font-medium text-slate-500; }
+  .dashboard-audit-empty-link { @apply text-[10px] text-slate-300; }
+  .dashboard-audit-panel .pagination { @apply border-t border-slate-100 px-4 py-2.5; }
+  .dashboard-audit-panel .pagination-summary { @apply text-[10px]; }
+  .dashboard-audit-loading { @apply space-y-2 px-4 py-3; }
+  .dashboard-audit-error { @apply flex min-h-20 items-center justify-center gap-3 px-4 text-xs text-red-700; }
+  .dashboard-audit-error button { @apply rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold hover:bg-red-100; }
   .dashboard-chart { @apply h-[270px] px-3 py-3; }
   .health-distribution { @apply mx-4 mt-4 flex h-2 overflow-hidden rounded-sm bg-slate-100; }
   .health-distribution > span { @apply block h-full; }
@@ -1782,6 +1828,15 @@
   .dashboard-section-header { align-items: flex-start; }
   .dashboard-section-header > a { margin-top: 2px; }
   .dashboard-chart { height: 230px; padding-inline: 4px; }
+  .dashboard-audit-tools { width: 100%; justify-content: space-between; }
+  .dashboard-audit-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; }
+  .dashboard-audit-row::before { display: none; }
+  .dashboard-audit-rail { flex-direction: row; align-items: center; justify-content: space-between; }
+  .dashboard-audit-copy strong { white-space: normal; overflow: visible; }
+  .dashboard-audit-meta { align-items: flex-start; }
+  .audit-person-card { left: 0; right: auto; max-width: min(260px, calc(100vw - 48px)); }
+  .dashboard-audit-row .queue-action, .dashboard-audit-empty-link { justify-self: start; }
+  .dashboard-audit-panel .pagination { align-items: flex-start; flex-direction: column; gap: 8px; }
   .finance-summary { grid-template-columns: 1fr; }
   .finance-summary > span { border-right: 0; border-bottom: 1px solid #e2e8f0; }
   .finance-summary > span:last-child { border-bottom: 0; }
