@@ -25,6 +25,18 @@ ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 CUSTOMER_CODE_PREFIX = "CUS"
 CUSTOMER_CODE_WIDTH = 7
 SALES_TITLE_KEYWORDS = ("sale",)
+MEMBER_AUDIT_FIELD_LABELS = {
+    "name": "Họ tên",
+    "phone": "SĐT",
+    "email": "Email",
+    "gender": "Giới tính",
+    "dateOfBirth": "Ngày sinh",
+    "mbsCode": "Mã MBS",
+    "personUuid": "Định danh DAH",
+    "source": "Nguồn khách",
+    "notes": "Ghi chú",
+    "salesEmployeeId": "Nhân viên phụ trách",
+}
 
 
 def _parse_date(value):
@@ -56,6 +68,21 @@ def _money(value, default=0):
         return max(float(value), 0) if value not in (None, "") else default
     except (TypeError, ValueError):
         return default
+
+
+def _audit_display_value(value):
+    if value in (None, ""):
+        return "—"
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _employee_display_name(db: Session, employee_id: int | None):
+    if not employee_id:
+        return None
+    employee = db.get(Employee, employee_id)
+    return employee.person.display_name if employee and employee.person else f"Nhân viên #{employee_id}"
 
 
 def _bool(value, default=False):
@@ -548,8 +575,18 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
         raise HTTPException(status_code=404, detail="Không tìm thấy hội viên.")
     if "name" in payload and not str(payload["name"]).strip():
         raise HTTPException(status_code=422, detail="Họ tên không được để trống.")
-    old_name = member.person.display_name
-    changed_fields = list(payload.keys())
+    old_values = {
+        "name": member.person.display_name,
+        "phone": member.person.phone,
+        "email": member.person.email,
+        "gender": member.person.gender,
+        "dateOfBirth": member.person.date_of_birth,
+        "mbsCode": member.mbs_card_code,
+        "personUuid": member.person_uuid,
+        "source": member.source,
+        "notes": member.notes,
+        "salesEmployeeId": member.sales_employee_id,
+    }
     member.person.display_name = str(payload.get("name", member.person.display_name)).strip()
     for source, target in [("phone", "phone"), ("email", "email"), ("gender", "gender")]:
         if source in payload:
@@ -567,9 +604,52 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
     if "source" in payload: member.source = payload.get("source") or None
     if "notes" in payload: member.notes = payload.get("notes") or None
     if "salesEmployeeId" in payload: member.sales_employee_id = _sales_employee_id(db, payload.get("salesEmployeeId"))
-    if "status" in payload:
-        changed_fields = [field for field in changed_fields if field != "status"]
-    record_audit(db, actor, "update", "member", member.id, f"Cập nhật hồ sơ {member.person.display_name}", customer_id=member.id, details={"fields": changed_fields, "previousName": old_name})
+    candidate_fields = [field for field in payload.keys() if field in MEMBER_AUDIT_FIELD_LABELS]
+    new_values = {
+        "name": member.person.display_name,
+        "phone": member.person.phone,
+        "email": member.person.email,
+        "gender": member.person.gender,
+        "dateOfBirth": member.person.date_of_birth,
+        "mbsCode": member.mbs_card_code,
+        "personUuid": member.person_uuid,
+        "source": member.source,
+        "notes": member.notes,
+        "salesEmployeeId": member.sales_employee_id,
+    }
+    changes = []
+    for field in candidate_fields:
+        old_value = old_values.get(field)
+        new_value = new_values.get(field)
+        if old_value == new_value:
+            continue
+        if field == "salesEmployeeId":
+            old_value = _employee_display_name(db, old_value)
+            new_value = _employee_display_name(db, new_value)
+        changes.append({
+            "field": field,
+            "label": MEMBER_AUDIT_FIELD_LABELS[field],
+            "old": _audit_display_value(old_value),
+            "new": _audit_display_value(new_value),
+        })
+    changed_fields = [change["field"] for change in changes]
+    changed_labels = [change["label"] for change in changes]
+    summary_suffix = f": {', '.join(changed_labels)}" if changed_labels else ""
+    record_audit(
+        db,
+        actor,
+        "update",
+        "member",
+        member.id,
+        f"Cập nhật hồ sơ {member.person.display_name}{summary_suffix}",
+        customer_id=member.id,
+        details={
+            "fields": changed_fields,
+            "fieldLabels": changed_labels,
+            "changes": changes,
+            "previousName": old_values["name"],
+        },
+    )
     db.commit()
     return get_member(db, member_id)
 

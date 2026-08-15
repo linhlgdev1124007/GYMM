@@ -40,6 +40,39 @@ const entityLabels = {
   membership_freeze: "Lịch bảo lưu",
 };
 
+const fieldLabels = {
+  name: "Họ tên",
+  phone: "SĐT",
+  email: "Email",
+  gender: "Giới tính",
+  dateOfBirth: "Ngày sinh",
+  mbsCode: "Mã MBS",
+  personUuid: "Định danh DAH",
+  source: "Nguồn khách",
+  notes: "Ghi chú",
+  salesEmployeeId: "Nhân viên phụ trách",
+};
+
+function compactValue(value) {
+  const text = String(value ?? "—");
+  return text.length > 46 ? `${text.slice(0, 43)}…` : text;
+}
+
+function auditDetailText(row) {
+  const changes = Array.isArray(row.details?.changes) ? row.details.changes : [];
+  if (changes.length) {
+    return changes
+      .slice(0, 3)
+      .map((change) => `${change.label || fieldLabels[change.field] || change.field}: ${compactValue(change.old)} → ${compactValue(change.new)}`)
+      .join(" · ");
+  }
+  const labels = Array.isArray(row.details?.fieldLabels) ? row.details.fieldLabels : [];
+  if (labels.length) return `Đã cập nhật: ${labels.join(", ")}`;
+  const fields = Array.isArray(row.details?.fields) ? row.details.fields : [];
+  if (fields.length) return `Đã cập nhật: ${fields.map((field) => fieldLabels[field] || field).join(", ")}`;
+  return `${entityLabels[row.entityType] || row.entityType} #${row.entityId || "—"}`;
+}
+
 export function AuditLogPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -101,8 +134,7 @@ export function AuditLogPage() {
         <div>
           <span className="cell-primary">{row.summary}</span>
           <div className="cell-secondary">
-            {entityLabels[row.entityType] || row.entityType} #
-            {row.entityId || "—"}
+            {auditDetailText(row)}
           </div>
         </div>
       ),
@@ -238,7 +270,21 @@ export function AuditLogPage() {
                 <dt>Thời gian</dt>
                 <dd>{dateTime(selected.createdAt)}</dd>
               </div>
+              {Array.isArray(selected.details?.changes) && selected.details.changes.length && (
+                <div>
+                  <dt>Thay đổi</dt>
+                  <dd>
+                    {selected.details.changes.map((change) => (
+                      <span className="audit-change-line" key={change.field}>
+                        <strong>{change.label || fieldLabels[change.field] || change.field}</strong>
+                        <span>{String(change.old ?? "—")} → {String(change.new ?? "—")}</span>
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              )}
               {Object.entries(selected.details || {}).map(([key, value]) => (
+                key === "changes" ? null : (
                 <div key={key}>
                   <dt>{key}</dt>
                   <dd>
@@ -247,6 +293,7 @@ export function AuditLogPage() {
                       : String(value ?? "—")}
                   </dd>
                 </div>
+                )
               ))}
             </dl>
           </div>

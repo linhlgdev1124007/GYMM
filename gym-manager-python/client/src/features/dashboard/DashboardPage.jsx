@@ -118,6 +118,39 @@ const personStatusLabels = {
   cancelled: "Đã hủy",
 };
 
+const auditFieldLabels = {
+  name: "Họ tên",
+  phone: "SĐT",
+  email: "Email",
+  gender: "Giới tính",
+  dateOfBirth: "Ngày sinh",
+  mbsCode: "Mã MBS",
+  personUuid: "Định danh DAH",
+  source: "Nguồn khách",
+  notes: "Ghi chú",
+  salesEmployeeId: "Nhân viên phụ trách",
+};
+
+function compactValue(value) {
+  const text = String(value ?? "—");
+  return text.length > 38 ? `${text.slice(0, 35)}…` : text;
+}
+
+function auditDetailText(row) {
+  const changes = Array.isArray(row.details?.changes) ? row.details.changes : [];
+  if (changes.length) {
+    return changes
+      .slice(0, 3)
+      .map((change) => `${change.label || auditFieldLabels[change.field] || change.field}: ${compactValue(change.old)} → ${compactValue(change.new)}`)
+      .join(" · ");
+  }
+  const labels = Array.isArray(row.details?.fieldLabels) ? row.details.fieldLabels : [];
+  if (labels.length) return `Đã cập nhật: ${labels.join(", ")}`;
+  const fields = Array.isArray(row.details?.fields) ? row.details.fields : [];
+  if (fields.length) return `Đã cập nhật: ${fields.map((field) => auditFieldLabels[field] || field).join(", ")}`;
+  return row.summary;
+}
+
 function numericDelta(current, previous, comparison = "so với hôm qua") {
   const difference = Number(current || 0) - Number(previous || 0);
   if (!difference) return { direction: "neutral", text: `Không đổi ${comparison}` };
@@ -254,7 +287,7 @@ function RecentAuditPanel({ query, scope, pageSize, onScope, onPage, onPageSize 
                         <span> trên {auditEntityLabels[row.entityType] || row.entityType}</span>
                       )}
                     </strong>
-                    <small>{row.summary}</small>
+                    <small>{auditDetailText(row)}</small>
                   </div>
                   <div className="dashboard-audit-meta">
                     <span>{auditEntityLabels[row.entityType] || row.entityType} #{row.entityId || "—"}</span>

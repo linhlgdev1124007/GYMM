@@ -1101,6 +1101,15 @@
   .audit-detail-list dd {
     @apply whitespace-pre-wrap break-words text-xs text-slate-800;
   }
+  .audit-change-line {
+    @apply mb-1.5 grid gap-0.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 last:mb-0;
+  }
+  .audit-change-line strong {
+    @apply text-[11px] font-semibold text-slate-950;
+  }
+  .audit-change-line span {
+    @apply text-[11px] text-slate-600;
+  }
   .audit-freeze,
   .audit-unfreeze,
   .audit-transfer,
