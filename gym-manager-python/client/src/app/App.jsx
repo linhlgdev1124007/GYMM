@@ -122,7 +122,7 @@ export function App() {
           />
           <Route
             path="audit-logs"
-            element={allowed(["admin", "manager"], <AuditLogPage />)}
+            element={allowed(["admin"], <AuditLogPage />)}
           />
           <Route
             path="accounts"

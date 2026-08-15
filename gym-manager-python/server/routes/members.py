@@ -25,8 +25,8 @@ def create_member(payload: dict, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.get("/members/{member_id}")
-def get_member(member_id: int, db: Session = Depends(get_db)):
-    return members_controller.get_member(db, member_id)
+def get_member(member_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return members_controller.get_member(db, member_id, include_audit=user.role == "admin")
 
 
 @router.patch("/members/{member_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
@@ -39,7 +39,7 @@ def reactivate_member(member_id: int, db: Session = Depends(get_db), user: User 
     return members_controller.reactivate_member(db, member_id, user)
 
 
-@router.get("/plans")
+@router.get("/plans", dependencies=[Depends(require_roles("admin", "manager"))])
 def list_plans(include_inactive: bool = Query(False, alias="includeInactive"), db: Session = Depends(get_db)):
     return members_controller.list_plans(db, include_inactive)
 
@@ -59,7 +59,7 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db), user: User = Depend
     return members_controller.delete_plan(db, plan_id, user)
 
 
-@router.get("/memberships")
+@router.get("/memberships", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def list_memberships(q: str = "", status: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
     return members_controller.list_memberships(db, q=q, membership_status=status, page=page, page_size=page_size)
 

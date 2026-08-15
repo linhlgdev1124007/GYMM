@@ -49,12 +49,12 @@ def update_training(enrollment_id: int, payload: dict, db: Session = Depends(get
     return operations_controller.update_pt(db, enrollment_id, payload, user)
 
 
-@router.get("/checkins/candidates")
+@router.get("/checkins/candidates", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def candidates(q: str = "", db: Session = Depends(get_db)):
     return operations_controller.checkin_candidates(db, q)
 
 
-@router.get("/checkins")
+@router.get("/checkins", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def checkins(day: str = "", type: str = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
     return operations_controller.recent_checkins(db, day=day, person_type=type, page=page, page_size=page_size)
 
@@ -69,7 +69,7 @@ def checkout(session_id: int, db: Session = Depends(get_db), user: User = Depend
     return operations_controller.checkout(db, session_id, user)
 
 
-@router.get("/payments")
+@router.get("/payments", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def payments(q: str = "", method: str = "all", date_from: str = Query("", alias="dateFrom"), date_to: str = Query("", alias="dateTo"), page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
     return operations_controller.list_payments(db, q=q, method=method, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 

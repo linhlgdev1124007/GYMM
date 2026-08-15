@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Pencil, Plus, ShieldCheck } from "lucide-react";
+import { HelpCircle, KeyRound, Pencil, Plus, ShieldCheck } from "lucide-react";
 import { api } from "../../services/api";
 import { notify } from "../../services/notify";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -11,6 +11,91 @@ import { Field, Input, Select } from "../../components/ui/Form";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 
 const blank = { username: "", displayName: "", employeeId: "", role: "receptionist", active: true, password: "" };
+
+const roleColumns = [
+  ["admin", "Admin"],
+  ["manager", "Manager"],
+  ["receptionist", "Receptionist"],
+  ["coach", "Coach"],
+];
+
+const rolePermissionRows = [
+  ["Dashboard", { admin: true, manager: true, receptionist: true, coach: true }],
+  ["Hội viên", { admin: true, manager: true, receptionist: true, coach: true }],
+  ["Chi tiết hội viên", { admin: true, manager: true, receptionist: true, coach: true }],
+  ["Đăng ký gói", { admin: true, manager: true, receptionist: true, coach: false }],
+  ["Gói tập", { admin: true, manager: true, receptionist: false, coach: false }],
+  ["Nhân viên", { admin: true, manager: true, receptionist: false, coach: false }],
+  ["Khách PT / Training", { admin: true, manager: true, receptionist: true, coach: true }],
+  ["Điểm danh", { admin: true, manager: true, receptionist: true, coach: false }],
+  ["Thanh toán", { admin: true, manager: true, receptionist: true, coach: false }],
+  ["Báo cáo", { admin: true, manager: true, receptionist: false, coach: false }],
+  ["Settings", { admin: true, manager: false, receptionist: false, coach: false }],
+  ["Audit logs", { admin: true, manager: false, receptionist: false, coach: false }],
+  ["Accounts", { admin: true, manager: false, receptionist: false, coach: false }],
+];
+
+function RolePermissionHelp() {
+  return (
+    <span className="role-help">
+      <span className="role-help-trigger" tabIndex={0} aria-label="Xem bảng quyền theo vai trò">
+        <HelpCircle size={14} />
+      </span>
+      <span className="role-help-popover" role="tooltip">
+        <span className="role-help-head">
+          <span>
+            <strong>Ma trận quyền theo vai trò</strong>
+            <small>So sánh nhanh các trang được phép truy cập trước khi cấp tài khoản.</small>
+          </span>
+          <span className="role-help-legend">
+            <em className="allowed">Có</em>
+            <em className="denied">Không</em>
+          </span>
+        </span>
+        <span className="role-help-matrix">
+          <span className="role-help-matrix-row header">
+            <span>Trang</span>
+            {roleColumns.map(([key, label]) => (
+              <span key={key}>{label}</span>
+            ))}
+          </span>
+          {rolePermissionRows.map(([page, permissions]) => (
+            <span className="role-help-matrix-row" key={page}>
+              <span>{page}</span>
+              {roleColumns.map(([key]) => (
+                <span key={key}>
+                  <em className={permissions[key] ? "allowed" : "denied"}>
+                    {permissions[key] ? "Có" : "Không"}
+                  </em>
+                </span>
+              ))}
+            </span>
+          ))}
+        </span>
+        <span className="role-help-note">
+          Audit logs, log hệ thống và log biến động gói chỉ hiển thị cho Admin.
+        </span>
+        <span className="role-help-mobile">
+          {roleColumns.map(([key, label]) => (
+            <span className="role-help-card" key={key}>
+              <strong>{label}</strong>
+              <span>
+                {rolePermissionRows.map(([page, permissions]) => (
+                  <small key={page}>
+                    <span>{page}</span>
+                    <em className={permissions[key] ? "allowed" : "denied"}>
+                      {permissions[key] ? "Có" : "Không"}
+                    </em>
+                  </small>
+                ))}
+              </span>
+            </span>
+          ))}
+        </span>
+      </span>
+    </span>
+  );
+}
 
 export function AccountsPage() {
   const client = useQueryClient();
@@ -170,7 +255,7 @@ export function AccountsPage() {
                   <Input type="password" minLength={8} autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
                 </Field>
               )}
-              <Field className="form-span" label="Vai trò" required>
+              <Field className="form-span" label={<>Vai trò <RolePermissionHelp /></>} required>
                 <Select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
                   {query.data?.roles?.map((role) => <option key={role.value} value={role.value}>{role.label} — {role.description}</option>)}
                 </Select>

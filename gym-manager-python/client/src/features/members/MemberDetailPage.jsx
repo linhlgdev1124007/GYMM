@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -53,7 +53,7 @@ const tabGroups = [
   { key: "operations", label: "Check-in & PT", tabs: [["checkins", "Lịch sử check-in"], ["training", "PT & lịch tập"]] },
   { key: "profile", label: "Hồ sơ & nhật ký", tabs: [["notes", "Ghi chú"], ["activity", "Nhật ký thao tác"]] },
 ];
-const tabs = tabGroups.flatMap((group) => group.tabs);
+const allTabs = tabGroups.flatMap((group) => group.tabs);
 
 const membershipEventLabels = {
   activate: "Kích hoạt",
@@ -276,7 +276,7 @@ export function MemberDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
   const [tab, setTab] = useState(() =>
-    tabs.some(([key]) => key === searchParams.get("tab"))
+    allTabs.some(([key]) => key === searchParams.get("tab"))
       ? searchParams.get("tab")
       : "overview",
   );
@@ -290,6 +290,32 @@ export function MemberDetailPage() {
   const [activityFilter, setActivityFilter] = useState("all");
   const workspaceHeaderRef = useRef(null);
   const [showStickyHeader, setShowStickyHeader] = useState(false);
+  const isAdmin = user.role === "admin";
+  const visibleTabGroups = useMemo(
+    () =>
+      tabGroups
+        .map((group) =>
+          group.key === "profile" && !isAdmin
+            ? {
+                ...group,
+                label: "Hồ sơ",
+                tabs: group.tabs.filter(([key]) => key !== "activity"),
+              }
+            : group,
+        )
+        .filter((group) => group.tabs.length),
+    [isAdmin],
+  );
+  const visibleTabs = useMemo(
+    () => visibleTabGroups.flatMap((group) => group.tabs),
+    [visibleTabGroups],
+  );
+  useEffect(() => {
+    if (!visibleTabs.some(([key]) => key === tab)) {
+      setTab("overview");
+      setSearchParams({}, { replace: true });
+    }
+  }, [tab, visibleTabs, setSearchParams]);
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
     queryFn: () => api(`/api/members/${memberId}`),
@@ -461,9 +487,9 @@ export function MemberDetailPage() {
   const filteredRecentActivity = recentActivity
     .filter((item) => activityFilter === "all" || item.kind === activityFilter)
     .slice(0, 8);
-  const activeTabGroup = tabGroups.find((group) =>
+  const activeTabGroup = visibleTabGroups.find((group) =>
     group.tabs.some(([key]) => key === tab),
-  ) || tabGroups[0];
+  ) || visibleTabGroups[0];
   const lifecycleLedger = (current?.events || []).filter((event) =>
     ["activate", "suspend", "freeze", "unfreeze", "adjust_days"].includes(event.action),
   );
@@ -822,7 +848,7 @@ export function MemberDetailPage() {
         </div>
       </div>
       <div className="tabs member-tabs">
-        {tabGroups.map((group) => (
+        {visibleTabGroups.map((group) => (
           <button
             key={group.key}
             className={`tab ${activeTabGroup.key === group.key ? "active" : ""}`}
@@ -928,7 +954,7 @@ export function MemberDetailPage() {
             <section className="workspace-section unified-activity-section role-activity-section">
               <div className="workspace-section-title">
                 <div><h2>Hoạt động gần đây</h2><p>Check-in, thanh toán và biến động gói trên cùng một dòng thời gian</p></div>
-                <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>
+                {isAdmin && <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>}
               </div>
               <div className="activity-filter-bar" aria-label="Lọc hoạt động">
                 {[["all", "Tất cả"], ["membership", "Gói tập"], ["payment", "Thanh toán"], ["checkin", "Check-in"]].map(([key, label]) => (
@@ -1195,7 +1221,7 @@ export function MemberDetailPage() {
           </div>
         </section>
       )}
-      {tab === "activity" && (
+      {isAdmin && tab === "activity" && (
         <section className="mt-5 max-w-3xl">
           <div className="section-header">
             <div>

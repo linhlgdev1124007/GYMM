@@ -10,7 +10,7 @@ export function Field({
     <label className={`field ${className}`}>
       <span className="field-label">
         {label}
-        {required && <span aria-hidden="true"> *</span>}
+        {required && <span className="field-required" aria-hidden="true"> *</span>}
       </span>
       {children}
       {error && <span className="field-error">{error}</span>}

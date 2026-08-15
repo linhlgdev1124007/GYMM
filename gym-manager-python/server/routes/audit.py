@@ -8,7 +8,7 @@ from ..dependencies import require_roles
 router = APIRouter(prefix="/api/audit-logs", tags=["audit"])
 
 
-@router.get("", dependencies=[Depends(require_roles("admin", "manager"))])
+@router.get("", dependencies=[Depends(require_roles("admin"))])
 def logs(
     q: str = "",
     action: str = "all",

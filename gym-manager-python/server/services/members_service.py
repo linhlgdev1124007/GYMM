@@ -356,7 +356,7 @@ def member_options(db: Session):
     }
 
 
-def get_member(db: Session, member_id: int):
+def get_member(db: Session, member_id: int, include_audit: bool = False):
     member = db.query(Customer).options(
         joinedload(Customer.person),
         joinedload(Customer.sales_employee).joinedload(Employee.person),
@@ -392,12 +392,12 @@ def get_member(db: Session, member_id: int):
         "notes": member.notes,
         "salesEmployeeId": member.sales_employee_id,
         "salesEmployee": member.sales_employee.person.display_name if member.sales_employee else None,
-        "memberships": [membership_data(row, include_payments=True, include_history=True) for row in sorted([row for row in memberships if not row.package.is_pt], key=_membership_sort_key)],
-        "membershipEvents": [membership_event_data(row) for row in membership_events],
+        "memberships": [membership_data(row, include_payments=True, include_history=include_audit) for row in sorted([row for row in memberships if not row.package.is_pt], key=_membership_sort_key)],
+        "membershipEvents": [membership_event_data(row) for row in membership_events] if include_audit else [],
         "training": [pt_data(row) for row in pt_rows],
         "checkins": [{"id": row.id, "checkedInAt": _attendance_iso(row.checked_in_at, row.source), "checkedOutAt": _attendance_iso(row.checked_out_at, row.source), "result": row.result, "status": row.status, "source": row.source} for row in checkins],
         "payments": [payment_data(row) for row in payments],
-        "auditLogs": member_audit_logs(db, member_id),
+        "auditLogs": member_audit_logs(db, member_id) if include_audit else [],
     }
 
 
