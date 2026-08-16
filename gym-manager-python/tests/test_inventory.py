@@ -37,9 +37,13 @@ def test_inventory_flow_keeps_stock_and_weighted_cost_consistent(tmp_path):
             "name": "Nước suối 500ml",
             "category": "Đồ uống",
             "unit": "Chai",
-            "initialStock": 10,
-            "initialCost": 4000,
+            "initialStock": 0,
+            "initialCost": 0,
             "minimumStock": 3,
+        }, actor)
+        create_transaction(db, {
+            "productId": product["id"], "type": "IN", "quantity": 10,
+            "unitCost": 4000, "occurredAt": "2026-08-16T08:00:00",
         }, actor)
         create_transaction(db, {
             "productId": product["id"], "type": "IN", "quantity": 10,

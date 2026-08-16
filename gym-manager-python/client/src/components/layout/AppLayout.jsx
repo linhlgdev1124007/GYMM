@@ -28,6 +28,7 @@ import { initials } from "../../utils/format";
 import { GlobalSearch } from "../common/GlobalSearch";
 import { NetworkStatusBanner } from "../common/NetworkStatusBanner";
 import { AlertCenter } from "../common/AlertCenter";
+import { CheckinSpeechPlayer } from "../common/CheckinSpeechPlayer";
 import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
 
 const groups = [
@@ -288,6 +289,7 @@ export function AppLayout() {
             <strong>{current?.label || "Dashboard"}</strong>
           </div>
           <GlobalSearch />
+          <CheckinSpeechPlayer enabled={["admin", "manager", "receptionist"].includes(user?.role)} />
           <AlertCenter />
           <div className="user-menu">
             <div className="avatar avatar-sm">

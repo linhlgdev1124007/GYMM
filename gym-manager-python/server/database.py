@@ -377,3 +377,24 @@ def migrate_employee_shift_overrides():
                 f"CREATE INDEX {quote(f'ix_employee_shift_overrides_{column}')} "
                 f"ON {quote('employee_shift_overrides')} ({quote(column)})"
             )
+
+
+def migrate_checkin_speech_config():
+    inspector = inspect(engine)
+    if "checkin_speech_configs" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("checkin_speech_configs")}
+    quote = engine.dialect.identifier_preparer.quote
+    definitions = {
+        "voice_uri": "VARCHAR(300) NULL",
+        "voice_name": "VARCHAR(200) NULL",
+        "volume": "FLOAT NOT NULL DEFAULT 1",
+        "rate": "FLOAT NOT NULL DEFAULT 1",
+        "pitch": "FLOAT NOT NULL DEFAULT 1",
+    }
+    with engine.begin() as connection:
+        for column, definition in definitions.items():
+            if column not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('checkin_speech_configs')} ADD COLUMN {quote(column)} {definition}"
+                )

@@ -13,6 +13,7 @@ from ..models import (
 from ..timeutils import utc_iso, utc_now, vietnam_today
 from .membership_lifecycle import activate_customer_first_checkin
 from .audit_service import record_audit
+from .checkin_speech_service import queue_checkin_speech
 from .employee_shift_attendance import sync_employee_scan
 from .serializers import pagination
 
@@ -432,14 +433,22 @@ def verify(db: Session, payload: dict):
             note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
         else:
             results = []
+            speech_candidate = None
             if employee:
                 employee_result = _toggle_employee_attendance(db, employee, event_time, device)
                 employee_session_id = employee_result["session_id"]
                 results.append(employee_result)
+                if employee_result.get("action") == "checkin":
+                    speech_candidate = (employee_session_id, "employee", employee.person.display_name)
             if customer:
                 customer_result = _toggle_customer_attendance(db, customer, event_time, device, image, identity_created)
                 member_session_id = customer_result["session_id"]
                 results.append(customer_result)
+                if customer_result.get("action") == "checkin" and not speech_candidate:
+                    speech_candidate = (member_session_id, "member", customer.person.display_name)
+
+            if speech_candidate:
+                queue_checkin_speech(db, *speech_candidate)
 
             processed = [row for row in results if row["status"] == "processed"]
             if processed:

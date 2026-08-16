@@ -95,6 +95,47 @@ class InventoryTransaction(Base):
     reversed_transaction: Mapped["InventoryTransaction | None"] = relationship(remote_side=[id])
 
 
+class CheckinSpeechConfig(Base):
+    __tablename__ = "checkin_speech_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    voice_uri: Mapped[str | None] = mapped_column(String(300))
+    voice_name: Mapped[str | None] = mapped_column(String(200))
+    volume: Mapped[float] = mapped_column(Float, default=1.0)
+    rate: Mapped[float] = mapped_column(Float, default=1.0)
+    pitch: Mapped[float] = mapped_column(Float, default=1.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    updated_by: Mapped["User | None"] = relationship()
+
+
+class CheckinSpeechPattern(Base):
+    __tablename__ = "checkin_speech_patterns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(String(500))
+    person_type: Mapped[str] = mapped_column(String(20), default="all", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class CheckinSpeechEvent(Base):
+    __tablename__ = "checkin_speech_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    attendance_session_id: Mapped[int] = mapped_column(ForeignKey("attendance_sessions.id"), unique=True, index=True)
+    person_type: Mapped[str] = mapped_column(String(20), index=True)
+    person_name: Mapped[str] = mapped_column(String(180))
+    message: Mapped[str] = mapped_column(String(700))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+    attendance_session: Mapped["AttendanceSession"] = relationship()
+
+
 class AlertRead(Base):
     __tablename__ = "alert_reads"
     __table_args__ = (UniqueConstraint("user_id", "alert_key", name="uq_alert_reads_user_key"),)

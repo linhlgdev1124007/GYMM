@@ -11,6 +11,7 @@ from ..models import (
     ServicePackage, User,
 )
 from .audit_service import record_audit
+from .checkin_speech_service import queue_checkin_speech, speech_settings_data
 from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
 from .employee_shift_attendance import create_employee_shift, create_employee_shifts_bulk, delete_employee_shift, import_employee_shifts, list_employee_shifts, list_employee_shifts_week, preview_employee_shift_excel, replace_employee_shifts_week, update_employee_shift
 from .membership_lifecycle import activate_customer_first_checkin
@@ -965,6 +966,7 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     if member.status != "lead" and (member.status!="active" or not current): raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
     row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
+    queue_checkin_speech(db, row.id, "member", member.person.display_name)
     db.commit();return {"id":row.id,"checkedInAt":utc_iso(row.checked_in_at)}
 
 
@@ -996,6 +998,7 @@ def settings(db: Session):
         "jobTitles": [_job_title_data(row) for row in employee_job_titles(db)],
         "bankAccounts":[_bank_account_data(row) for row in accounts],
         "devices":[device_data(device)],
+        "checkinSpeech": speech_settings_data(db),
     }
 
 

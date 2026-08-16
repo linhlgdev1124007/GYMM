@@ -2637,3 +2637,58 @@ thead .shift-employee-col { z-index: 18; background: #f8fafc; }
   .inventory-report-toolbar > .input { flex: 1 1 calc(50% - 8px); width: auto; }
   .inventory-chart { height: 230px; }
 }
+
+/* Realtime check-in speech */
+.checkin-speech-toggle { position: relative; display: inline-flex; width: 36px; height: 36px; flex: 0 0 36px; align-items: center; justify-content: center; border-radius: 50%; color: #64748b; }
+.checkin-speech-toggle:hover { background: #f1f5f9; color: #0f172a; }
+.checkin-speech-toggle.active { color: #0f766e; }
+.checkin-speech-toggle > i { position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border: 2px solid #fff; border-radius: 50%; background: #f59e0b; }
+.checkin-speech-toggle.connected > i { background: #10b981; }
+.checkin-speech-section-header { align-items: center; }
+.checkin-speech-master-control { display: flex; align-items: center; gap: 10px; }
+.checkin-speech-master-control > span { color: #64748b; font-size: 11px; font-weight: 650; }
+.switch-control { position: relative; display: inline-flex; width: 38px; height: 22px; flex: 0 0 38px; cursor: pointer; }
+.switch-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.switch-control i { width: 100%; height: 100%; border-radius: 12px; background: #cbd5e1; transition: background 150ms ease; }
+.switch-control i::after { display: block; width: 18px; height: 18px; margin: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.25); content: ""; transition: transform 150ms ease; }
+.switch-control input:checked + i { background: #0f766e; }
+.switch-control input:checked + i::after { transform: translateX(16px); }
+.switch-control input:focus-visible + i { box-shadow: 0 0 0 3px rgba(13,148,136,.18); }
+.checkin-speech-settings { overflow: hidden; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+.checkin-speech-voice-panel { display: grid; grid-template-columns: minmax(260px,1.7fr) repeat(3,minmax(140px,1fr)); gap: 14px; padding: 14px; border-bottom: 1px solid #e2e8f0; }
+.checkin-speech-voice-panel .field-hint { line-height: 1.35; }
+.checkin-speech-range { width: 100%; height: 34px; margin: 0; accent-color: #0f766e; cursor: pointer; }
+.checkin-speech-preview-name { display: flex; align-items: flex-end; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+.checkin-speech-preview-name .field { width: min(320px,100%); }
+.checkin-speech-preview-name > button { min-height: 34px; color: #1d4ed8; font-size: 11px; font-weight: 650; }
+.checkin-speech-patterns { display: flex; flex-direction: column; padding: 0 14px 14px; }
+.checkin-speech-pattern { display: grid; min-height: 58px; grid-template-columns: 20px minmax(260px,1fr) auto auto 32px; align-items: center; gap: 8px; border-bottom: 1px solid #e2e8f0; }
+.checkin-speech-pattern.inactive { opacity: .58; }
+.checkin-speech-pattern-toggle { display: flex; align-items: center; justify-content: center; }
+.checkin-speech-pattern-toggle input { width: 15px; height: 15px; accent-color: #0f766e; }
+.checkin-token-button { min-height: 28px; padding: 0 7px; border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.checkin-token-button:hover { border-color: #94a3b8; background: #f1f5f9; }
+.checkin-speech-pattern .icon-button.danger { color: #dc2626; }
+.checkin-speech-add { display: inline-flex; min-height: 38px; align-self: flex-start; align-items: center; gap: 6px; margin-top: 10px; color: #1d4ed8; font-size: 11px; font-weight: 650; }
+.checkin-speech-add:hover { text-decoration: underline; }
+.checkin-speech-settings > .inline-error { margin: 0 14px 14px; }
+
+@media (max-width: 760px) {
+  .checkin-speech-section-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .checkin-speech-master-control { width: 100%; }
+  .checkin-speech-master-control .btn { margin-left: auto; }
+  .checkin-speech-pattern { grid-template-columns: 20px minmax(0,1fr) 32px; gap: 7px; padding: 10px 0; }
+  .checkin-speech-pattern > .input { grid-column: 2 / -1; }
+  .checkin-speech-pattern > .checkin-token-button { grid-column: 2; justify-self: start; }
+  .checkin-speech-pattern > .btn { grid-column: 2; justify-self: start; }
+  .checkin-speech-pattern > .icon-button { grid-column: 3; grid-row: 2; }
+  .checkin-speech-voice-panel { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .checkin-speech-voice-panel .field:first-child { grid-column: 1/-1; }
+}
+
+@media (max-width: 640px) {
+  .checkin-speech-voice-panel { grid-template-columns: 1fr; }
+  .checkin-speech-voice-panel .field:first-child { grid-column: auto; }
+  .checkin-speech-preview-name { align-items: stretch; flex-direction: column; }
+  .checkin-speech-preview-name .field { width: 100%; }
+}
