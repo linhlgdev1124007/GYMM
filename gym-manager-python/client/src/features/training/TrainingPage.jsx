@@ -15,8 +15,11 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { formatPhone, shortDate } from "../../utils/format";
+import { useAuth } from "../../app/AuthContext";
 
 export function TrainingPage() {
+  const { user } = useAuth();
+  const coachMode = user.role === "coach";
   const client = useQueryClient();
   const [type, setType] = useState("1:1");
   const [search, setSearch] = useState("");
@@ -39,19 +42,23 @@ export function TrainingPage() {
     staleTime: 300000,
   });
   const save = useMutation({
-    mutationFn: (payload) =>
-      api(`/api/training/${selected.id}`, { method: "PATCH", body: payload }),
+    mutationFn: (payload) => {
+      const body = coachMode
+        ? (({ remainingSessions, schedule, status }) => ({ remainingSessions, schedule, status }))(payload)
+        : payload;
+      return api(`/api/training/${selected.id}`, { method: "PATCH", body });
+    },
     onSuccess: (_data, payload) => {
       client.invalidateQueries({ queryKey: ["training"] });
       client.invalidateQueries({ queryKey: ["members"] });
       client.invalidateQueries({ queryKey: ["member", selected.memberId] });
       setSelected(null);
       const coachCount = payload.coachIds?.length || 0;
-      notify.success(
+      notify.success(coachMode ? `Đã cập nhật tiến độ PT của ${selected.member.name}.` : (
         coachCount
           ? `Đã cập nhật ${coachCount} Coach cho ${selected.member.name}.`
-          : `Đã để ${selected.member.name} ở trạng thái chưa phân Coach.`,
-      );
+          : `Đã để ${selected.member.name} ở trạng thái chưa phân Coach.`
+      ));
     },
     onError: (error) => setFormError(error.message),
   });
@@ -92,6 +99,8 @@ export function TrainingPage() {
               </span>
             ))}
           </div>
+        ) : coachMode ? (
+          <span className="text-xs text-slate-400">Chưa phân công</span>
         ) : (
           <button
             className="inline-flex items-center gap-1.5 rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
@@ -138,16 +147,18 @@ export function TrainingPage() {
       key: "action",
       label: "",
       sortable: false,
-      render: (row) => (
-        <Button size="sm" variant="ghost" onClick={() => edit(row)}>
+      render: (row) => {
+        const isAssignedCoach = row.coaches?.some((coach) => coach.id === user.employee?.id);
+        if (coachMode && !isAssignedCoach) return null;
+        return <Button size="sm" variant="ghost" onClick={() => edit(row)}>
           {row.coaches?.length ? (
             <UserRoundCheck size={14} />
           ) : (
             <UserRoundPlus size={14} />
           )}
-          {row.coaches?.length ? "Sửa phân công" : "Phân công"}
-        </Button>
-      ),
+          {coachMode ? "Cập nhật" : row.coaches?.length ? "Sửa phân công" : "Phân công"}
+        </Button>;
+      },
     },
   ];
   return (
@@ -245,6 +256,7 @@ export function TrainingPage() {
         onSubmit={(payload) => save.mutate(payload)}
         pending={save.isPending}
         error={formError}
+        coachMode={coachMode}
       />
     </>
   );

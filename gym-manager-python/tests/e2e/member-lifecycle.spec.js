@@ -87,6 +87,7 @@ async function registerMembership(memberId, planId, overrides = {}) {
     activationDate: overrides.activationDate || "",
     finalPrice: "100000",
     paidAmount: "0",
+    debtDueDate: overrides.debtDueDate || "2026-08-31",
     paymentMethod: "cash",
     ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
   });
@@ -279,21 +280,19 @@ test("active membership starts with a full term and expires by the background jo
   expect(state.memberships[0].expiresAt).toBe("2026-08-31");
 });
 
-test("freeze validates dates and compensates only actual frozen days", async () => {
+test("freeze supports reconciliation, validates ranges and compensates actual frozen days", async () => {
   await setToday("2026-08-01");
   const plan = await createPlan("E2E Freeze");
 
   const invalid = await createMember("E2E Freeze Invalid", "0901000006");
   const invalidMembership = await registerMembership(invalid.id, plan.id, { activateNow: "true" });
   await setToday("2026-08-10");
-  await expectError(
-    await post(`/api/memberships/${invalidMembership.id}/freeze`, {
-      startsAt: "2026-08-09",
-      endsAt: "2026-08-12",
-      reason: "Ngày quá khứ",
-    }),
-    "quá khứ",
-  );
+  const backdated = await post(`/api/memberships/${invalidMembership.id}/freeze`, {
+    startsAt: "2026-08-09",
+    endsAt: "2026-08-12",
+    reason: "Nhập bù bảo lưu",
+  });
+  expect(backdated.ok()).toBeTruthy();
   await expectError(
     await post(`/api/memberships/${invalidMembership.id}/freeze`, {
       startsAt: "2026-08-10",

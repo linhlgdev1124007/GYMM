@@ -715,3 +715,42 @@ def test_recent_checkins_flags_members_with_membership_warnings(tmp_path):
         assert data["items"][0]["memberAccessWarning"] == "Gói đang chờ kích hoạt."
     finally:
         db.close()
+
+
+def test_coach_can_only_update_assigned_pt_operational_fields(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from server.models import Customer, Employee, Person, PtEnrollment, PtEnrollmentCoach, User
+    from server.services.operations_service import update_pt
+
+    db = make_session(tmp_path)
+    try:
+        member_person = Person(display_name="PT Member", phone="0900000040")
+        assigned_person = Person(display_name="Assigned Coach", phone="0900000041")
+        other_person = Person(display_name="Other Coach", phone="0900000042")
+        db.add_all([member_person, assigned_person, other_person])
+        db.flush()
+        member = Customer(person_id=member_person.id, customer_code="CUS-PT-AUTH", status="active")
+        assigned = Employee(person_id=assigned_person.id, employee_code="EMP-PT-ASSIGNED", job_title="Coach", status="active")
+        other = Employee(person_id=other_person.id, employee_code="EMP-PT-OTHER", job_title="Coach", status="active")
+        db.add_all([member, assigned, other])
+        db.flush()
+        enrollment = PtEnrollment(customer_id=member.id, coach_id=assigned.id, total_sessions=12, remaining_sessions=12, status="active")
+        db.add(enrollment)
+        db.flush()
+        enrollment.coach_assignments = [PtEnrollmentCoach(coach_id=assigned.id)]
+        assigned_user = User(username="assigned-coach", display_name="Assigned Coach", password_hash="x", role="coach", employee_id=assigned.id)
+        other_user = User(username="other-coach", display_name="Other Coach", password_hash="x", role="coach", employee_id=other.id)
+        db.add_all([assigned_user, other_user])
+        db.commit()
+
+        updated = update_pt(db, enrollment.id, {"remainingSessions": 11}, assigned_user)
+        assert updated["remainingSessions"] == 11
+        with pytest.raises(HTTPException) as forbidden_owner:
+            update_pt(db, enrollment.id, {"remainingSessions": 10}, other_user)
+        assert forbidden_owner.value.status_code == 403
+        with pytest.raises(HTTPException) as forbidden_field:
+            update_pt(db, enrollment.id, {"totalSessions": 99}, assigned_user)
+        assert forbidden_field.value.status_code == 403
+    finally:
+        db.close()

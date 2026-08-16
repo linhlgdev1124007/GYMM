@@ -386,7 +386,7 @@ export function DashboardPage() {
         { label: "Hội viên hoạt động", value: data.metrics.activeMembers.toLocaleString("vi-VN"), to: "/members?view=active", context: `${data.metrics.activeRate}% trên tổng hội viên` },
         { label: "Hết hạn trong 7 ngày", value: data.metrics.expiring7.toLocaleString("vi-VN"), to: "/members?view=expiring", tone: data.metrics.expiring7 ? "warning" : "positive", context: `${data.metrics.expiringSoon} hợp đồng trong 14 ngày` },
         { label: "Vừa hết hạn", value: data.metrics.newlyExpired30.toLocaleString("vi-VN"), to: "/members?view=expired", tone: data.metrics.newlyExpired30 ? "danger" : "positive", context: "Hợp đồng trong 30 ngày qua" },
-        { label: "Công nợ cần thu", value: money(data.metrics.overdueDebt), to: "/members?view=debt", tone: data.metrics.overdueDebt ? "danger" : "positive", context: "Các khoản đã quá hạn" },
+        { label: "Check-in hôm qua", value: data.metrics.checkinsYesterday.toLocaleString("vi-VN"), to: "/check-in", context: "Mốc đối chiếu hoạt động" },
       ];
 
   const health = data.membershipHealth;
@@ -400,13 +400,13 @@ export function DashboardPage() {
     { key: "suspended", label: "Đang tạm dừng", value: health.suspended, colorClass: "health-frozen" },
   ];
 
-  const debtRows = [
+  const debtRows = isFinancialRole ? [
     ["Chưa đến hạn", data.financialHealth.debtAging.notDue],
     ["Quá hạn 1–7 ngày", data.financialHealth.debtAging.days1To7],
     ["Quá hạn 8–30 ngày", data.financialHealth.debtAging.days8To30],
     ["Quá hạn trên 30 ngày", data.financialHealth.debtAging.over30],
     ["Chưa đặt hạn", data.financialHealth.debtAging.noDueDate],
-  ];
+  ] : [];
 
   return (
     <div className={`operations-dashboard role-${user.role}`}>
@@ -481,7 +481,7 @@ export function DashboardPage() {
             { key: "action", label: "", className: "text-right", render: (row) => <Link className="queue-action" to={`/members/${row.memberId}`}>{row.actionLabel} <ArrowRight size={12} /></Link> },
           ]}
           emptyTitle="Không có vấn đề ưu tiên"
-          emptyDescription="Các vấn đề mới và công nợ cần xử lý hiện đã ổn định."
+          emptyDescription={isFinancialRole ? "Các vấn đề mới và công nợ cần xử lý hiện đã ổn định." : "Các vấn đề vận hành cần xử lý hiện đã ổn định."}
         />
       </section>
 

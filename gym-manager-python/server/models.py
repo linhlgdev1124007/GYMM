@@ -127,7 +127,9 @@ class CheckinSpeechEvent(Base):
     __tablename__ = "checkin_speech_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    attendance_session_id: Mapped[int] = mapped_column(ForeignKey("attendance_sessions.id"), unique=True, index=True)
+    attendance_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("attendance_sessions.id", ondelete="SET NULL"), unique=True, index=True
+    )
     person_type: Mapped[str] = mapped_column(String(20), index=True)
     person_name: Mapped[str] = mapped_column(String(180))
     message: Mapped[str] = mapped_column(String(700))

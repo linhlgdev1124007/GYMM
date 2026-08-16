@@ -46,7 +46,7 @@ function enrollmentForm(enrollment) {
   };
 }
 
-export function TrainingFields({ form, setForm, options, editing = false }) {
+export function TrainingFields({ form, setForm, options, editing = false, coachMode = false }) {
   const coaches =
     options?.employees?.filter((row) => row.isPtRole) ||
     [];
@@ -85,7 +85,7 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
   return (
     <>
       <div className="form-grid">
-        <Field label="Hình thức">
+        {!coachMode && <Field label="Hình thức">
           <Select
             value={form.type || "1:1"}
             onChange={(event) => setForm({ ...form, type: event.target.value })}
@@ -94,8 +94,8 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
             <option>1:2</option>
             <option>1:3</option>
           </Select>
-        </Field>
-        <Field
+        </Field>}
+        {!coachMode && <Field
           label="Coach phụ trách"
           hint="Không bắt buộc · có thể phân công sau."
         >
@@ -105,8 +105,8 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
             options={coachOptions}
             ariaLabel="Chọn Coach phụ trách"
           />
-        </Field>
-        <Field label="Tổng số buổi">
+        </Field>}
+        {!coachMode && <Field label="Tổng số buổi">
           <Select
             value={sessionPreset}
             onChange={(event) =>
@@ -124,8 +124,8 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
             <option value="36">36 buổi</option>
             <option value="other">Khác</option>
           </Select>
-        </Field>
-        {sessionPreset === "other" && (
+        </Field>}
+        {!coachMode && sessionPreset === "other" && (
           <Field label="Số buổi khác">
             <NumberUnitInput
               min="1"
@@ -149,18 +149,18 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
             />
           </Field>
         )}
-        <Field label="Ngày bắt đầu">
+        {!coachMode && <Field label="Ngày bắt đầu">
           <DateInput
             value={form.startsAt || ""}
             onChange={(startsAt) => setForm({ ...form, startsAt })}
           />
-        </Field>
-        <Field label="Ngày hết hạn">
+        </Field>}
+        {!coachMode && <Field label="Ngày hết hạn">
           <DateInput
             value={form.expiresAt || ""}
             onChange={(expiresAt) => setForm({ ...form, expiresAt })}
           />
-        </Field>
+        </Field>}
         <div className="field form-span">
           <span className="field-label">Lịch tập theo thứ</span>
           <div className="flex flex-wrap gap-2">
@@ -210,7 +210,7 @@ export function TrainingFields({ form, setForm, options, editing = false }) {
           </Field>
         )}
       </div>
-      {!form.coachIds?.length && (
+      {!coachMode && !form.coachIds?.length && (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           Đăng ký sẽ được lưu ở trạng thái chưa phân công Coach để đội ngũ xử lý sau.
         </div>
@@ -227,6 +227,7 @@ export function TrainingForm({
   onSubmit,
   pending,
   error,
+  coachMode = false,
 }) {
   const [form, setForm] = useState(emptyTrainingForm);
   const [initial, setInitial] = useState(emptyTrainingForm);
@@ -240,8 +241,8 @@ export function TrainingForm({
       open={open}
       onClose={onClose}
       dirty={JSON.stringify(form) !== JSON.stringify(initial)}
-      title={enrollment ? "Chỉnh sửa đăng ký PT" : "Đăng ký PT"}
-      description="Lịch tập có thể đặt một mốc giờ riêng cho từng thứ."
+      title={coachMode ? "Cập nhật tiến độ PT" : enrollment ? "Chỉnh sửa đăng ký PT" : "Đăng ký PT"}
+      description={coachMode ? "Cập nhật lịch tập, số buổi còn lại và trạng thái của khách được phân công." : "Lịch tập có thể đặt một mốc giờ riêng cho từng thứ."}
     >
       <form
         onSubmit={(event) => {
@@ -255,6 +256,7 @@ export function TrainingForm({
             setForm={setForm}
             options={options}
             editing={!!enrollment}
+            coachMode={coachMode}
           />
           {error && <div className="inline-error mt-4">{error}</div>}
         </div>
@@ -263,7 +265,7 @@ export function TrainingForm({
             Hủy
           </Button>
           <Button type="submit" loading={pending} loadingText="Đang lưu…">
-            Lưu đăng ký PT
+            {coachMode ? "Lưu cập nhật" : "Lưu đăng ký PT"}
           </Button>
         </div>
       </form>

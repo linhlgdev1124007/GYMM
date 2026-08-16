@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from io import BytesIO
+import asyncio
 
 TEST_DIR = Path(tempfile.mkdtemp(prefix="pulsefit-security-tests-"))
 os.environ.update({
@@ -185,6 +187,23 @@ def test_admin_can_change_an_account_password(client):
 def test_untrusted_host_is_rejected(client):
     response = client.get("/api/health/live", headers={"Host": "evil.example"})
     assert response.status_code == 400
+
+
+def test_receipts_require_authentication_and_validate_real_image_content(client, tmp_path, monkeypatch):
+    from starlette.datastructures import UploadFile
+    from server.services import members_service
+
+    client.cookies.clear()
+    assert client.get("/uploads/receipts/missing.png").status_code == 401
+    assert login(client, "10.0.0.88").status_code == 200
+    assert client.get("/uploads/receipts/missing.png").status_code == 404
+
+    monkeypatch.setattr(members_service, "RECEIPT_DIR", tmp_path)
+    fake = UploadFile(BytesIO(b"<html>not an image</html>"), filename="receipt.png")
+    with pytest.raises(Exception) as error:
+        asyncio.run(members_service.save_receipt(fake))
+    assert error.value.status_code == 400
+    assert not list(tmp_path.iterdir())
 
 
 def test_production_configuration_fails_closed(monkeypatch):

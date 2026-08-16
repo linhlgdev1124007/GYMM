@@ -6,7 +6,7 @@ from ..models import AlertRead, Customer, Employee, Membership, PtEnrollment, Pt
 from ..timeutils import utc_iso, utc_now, vietnam_today
 
 
-def _active_alerts(db: Session, expiring_days: int = 14, pt_sessions: int = 3):
+def _active_alerts(db: Session, expiring_days: int = 14, pt_sessions: int = 3, include_financial: bool = True):
     today = vietnam_today()
     soon = today + timedelta(days=expiring_days)
     items = []
@@ -19,7 +19,7 @@ def _active_alerts(db: Session, expiring_days: int = 14, pt_sessions: int = 3):
         Membership.debt_due_date != None,
         Membership.debt_due_date < today,
         Membership.status.in_(("active", "pending")),
-    ).all()
+    ).all() if include_financial else []
     for row in overdue:
         days = (today - row.debt_due_date).days
         items.append({
@@ -90,8 +90,8 @@ def _active_alerts(db: Session, expiring_days: int = 14, pt_sessions: int = 3):
     return items
 
 
-def alerts(db: Session, user_id: int | None = None, expiring_days: int = 14, pt_sessions: int = 3, limit: int = 30):
-    items = _active_alerts(db, expiring_days, pt_sessions)
+def alerts(db: Session, user_id: int | None = None, expiring_days: int = 14, pt_sessions: int = 3, limit: int = 30, include_financial: bool = True):
+    items = _active_alerts(db, expiring_days, pt_sessions, include_financial)
     reads = {}
     if user_id is not None and items:
         keys = [item["id"] for item in items]
@@ -111,11 +111,12 @@ def alerts(db: Session, user_id: int | None = None, expiring_days: int = 14, pt_
     counts = {
         "total": len(items),
         "unread": len(unread_items),
-        "overdueDebt": sum(item["type"] == "overdue_debt" for item in items),
         "expired": sum(item["type"] == "membership_expired" for item in items),
         "expiring": sum(item["type"] == "membership_expiring" for item in items),
         "ptLowSessions": sum(item["type"] == "pt_low_sessions" for item in items),
     }
+    if include_financial:
+        counts["overdueDebt"] = sum(item["type"] == "overdue_debt" for item in items)
     return {
         "counts": counts,
         "items": unread_items[:limit] + read_items[:limit],
@@ -123,8 +124,8 @@ def alerts(db: Session, user_id: int | None = None, expiring_days: int = 14, pt_
     }
 
 
-def mark_read(db: Session, user_id: int, alert_key: str):
-    active_keys = {item["id"] for item in _active_alerts(db)}
+def mark_read(db: Session, user_id: int, alert_key: str, include_financial: bool = True):
+    active_keys = {item["id"] for item in _active_alerts(db, include_financial=include_financial)}
     if alert_key not in active_keys:
         return False
     existing = db.query(AlertRead).filter(
@@ -137,8 +138,8 @@ def mark_read(db: Session, user_id: int, alert_key: str):
     return True
 
 
-def mark_all_read(db: Session, user_id: int):
-    active_keys = {item["id"] for item in _active_alerts(db)}
+def mark_all_read(db: Session, user_id: int, include_financial: bool = True):
+    active_keys = {item["id"] for item in _active_alerts(db, include_financial=include_financial)}
     existing_keys = {
         key for (key,) in db.query(AlertRead.alert_key).filter(
             AlertRead.user_id == user_id,

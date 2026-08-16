@@ -49,7 +49,12 @@ MEMBERSHIP_AUDIT_FIELD_LABELS = {
 
 
 def _parse_date(value):
-    return date.fromisoformat(value) if value else None
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Ngày không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.") from exc
 
 
 def _attendance_iso(value, source: str | None):
@@ -252,6 +257,16 @@ async def save_receipt(upload: UploadFile | None) -> str | None:
     content = await upload.read(5 * 1024 * 1024 + 1)
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Ảnh phiếu thu không được vượt quá 5 MB.")
+    image_type = None
+    if content.startswith(b"\xff\xd8\xff"):
+        image_type = "jpeg"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+        image_type = "png"
+    elif len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        image_type = "webp"
+    expected_type = "jpeg" if suffix in {".jpg", ".jpeg"} else suffix.lstrip(".")
+    if image_type != expected_type:
+        raise HTTPException(status_code=400, detail="Nội dung phiếu thu không phải ảnh hợp lệ hoặc không khớp định dạng file.")
     filename = f"receipt-{utc_now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}{suffix}"
     (RECEIPT_DIR / filename).write_bytes(content)
     return f"/uploads/receipts/{filename}"

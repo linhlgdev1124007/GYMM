@@ -1,10 +1,11 @@
 from datetime import date, datetime, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
-from ..timeutils import utc_iso, utc_now, vietnam_today
+from ..timeutils import attendance_vietnam_datetime, utc_iso, utc_now, utc_vietnam_date, vietnam_day_utc_bounds, vietnam_today
 
 
 def _attendance_iso(value, source: str | None):
@@ -44,7 +45,18 @@ def _sale_owner(membership: Membership | None):
     return employee.id, employee.person.display_name, employee.job_title
 
 
-def dashboard(db: Session):
+def _attendance_range_filter(start: date, end: date):
+    local_start = datetime.combine(start, datetime.min.time())
+    local_end = datetime.combine(end + timedelta(days=1), datetime.min.time())
+    utc_start, utc_end = vietnam_day_utc_bounds(start, end)
+    non_dah = or_(AttendanceSession.source != "dah", AttendanceSession.source == None)
+    return or_(
+        and_(AttendanceSession.source == "dah", AttendanceSession.checked_in_at >= local_start, AttendanceSession.checked_in_at < local_end),
+        and_(non_dah, AttendanceSession.checked_in_at >= utc_start, AttendanceSession.checked_in_at < utc_end),
+    )
+
+
+def dashboard(db: Session, include_financial: bool = True):
     today = vietnam_today()
     yesterday = today - timedelta(days=1)
     month_start = today.replace(day=1)
@@ -59,13 +71,13 @@ def dashboard(db: Session):
 
     attendance_start = today - timedelta(days=13)
     attendance_rows = db.query(
-        func.date(AttendanceSession.checked_in_at),
-        func.count(AttendanceSession.id),
-    ).filter(
-        func.date(AttendanceSession.checked_in_at) >= attendance_start.isoformat(),
-        func.date(AttendanceSession.checked_in_at) <= today.isoformat(),
-    ).group_by(func.date(AttendanceSession.checked_in_at)).all()
-    attendance_counts = {str(day): count for day, count in attendance_rows}
+        AttendanceSession.checked_in_at,
+        AttendanceSession.source,
+    ).filter(_attendance_range_filter(attendance_start, today)).all()
+    attendance_counts = {}
+    for checked_in_at, source in attendance_rows:
+        local_day = attendance_vietnam_datetime(checked_in_at, source).date().isoformat()
+        attendance_counts[local_day] = attendance_counts.get(local_day, 0) + 1
     checkins_today = attendance_counts.get(today.isoformat(), 0)
     checkins_yesterday = attendance_counts.get(yesterday.isoformat(), 0)
     open_visits = db.query(AttendanceSession).filter(AttendanceSession.status == "open").count()
@@ -114,14 +126,14 @@ def dashboard(db: Session):
     }
 
     expiring = health["expiring7"] + health["expiring8To14"]
-    today_start = datetime.combine(today, datetime.min.time())
-    today_end = datetime.combine(today, datetime.max.time())
-    month_start_dt = datetime.combine(month_start, datetime.min.time())
-    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at <= today_end))
-    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at <= today_end))
+    today_start, today_end = vietnam_day_utc_bounds(today)
+    month_start_dt, month_end_dt = vietnam_day_utc_bounds(month_start, today)
+    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at < today_end))
+    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at < month_end_dt))
+    previous_start_dt, previous_end_dt = vietnam_day_utc_bounds(previous_month_start, previous_mtd_end - timedelta(days=1))
     revenue_previous_mtd = _sum(db.query(func.sum(Payment.amount)).filter(
-        Payment.paid_at >= datetime.combine(previous_month_start, datetime.min.time()),
-        Payment.paid_at < datetime.combine(previous_mtd_end, datetime.min.time()),
+        Payment.paid_at >= previous_start_dt,
+        Payment.paid_at < previous_end_dt,
     ))
     debt = _sum(db.query(func.sum(Membership.debt_amount)))
     overdue_debt = _sum(db.query(func.sum(Membership.debt_amount)).filter(
@@ -228,7 +240,7 @@ def dashboard(db: Session):
         })
 
     recent = db.query(AttendanceSession).options(joinedload(AttendanceSession.customer).joinedload(Customer.person)).order_by(AttendanceSession.checked_in_at.desc()).limit(8).all()
-    return {
+    result = {
         "generatedAt": utc_iso(utc_now()),
         "metrics": {
             "totalMembers": total_members,
@@ -260,31 +272,39 @@ def dashboard(db: Session):
             "status": r.status,
         } for r in recent],
     }
+    if not include_financial:
+        for key in ("revenueToday", "revenueMonth", "revenuePreviousMtd", "outstanding", "overdueDebt"):
+            result["metrics"].pop(key, None)
+        result.pop("financialHealth", None)
+        result["attention"] = [item for item in result["attention"] if item["issueType"] not in {"debt", "overdue_debt"}]
+    return result
 
 
 def reports(db: Session, date_from: str | None, date_to: str | None):
     today = vietnam_today()
-    start=date.fromisoformat(date_from) if date_from else today.replace(day=1)
-    end=date.fromisoformat(date_to) if date_to else today
+    try:
+        start=date.fromisoformat(date_from) if date_from else today.replace(day=1)
+        end=date.fromisoformat(date_to) if date_to else today
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Khoảng thời gian báo cáo không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.") from exc
     if start > end:
         start, end = end, start
-    start_dt=datetime.combine(start,datetime.min.time());end_dt=datetime.combine(end,datetime.max.time())
+    start_dt,end_dt=vietnam_day_utc_bounds(start,end)
     period_days = (end - start).days + 1
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days - 1)
-    previous_start_dt = datetime.combine(previous_start, datetime.min.time())
-    previous_end_dt = datetime.combine(previous_end, datetime.max.time())
+    previous_start_dt, previous_end_dt = vietnam_day_utc_bounds(previous_start, previous_end)
     payments=db.query(Payment).options(
         joinedload(Payment.customer).joinedload(Customer.person),
         joinedload(Payment.membership).joinedload(Membership.package),
         joinedload(Payment.membership).joinedload(Membership.customer).joinedload(Customer.sales_employee).joinedload(Employee.person),
         joinedload(Payment.membership).joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
         joinedload(Payment.membership).joinedload(Membership.sale_online_employee).joinedload(Employee.person),
-    ).filter(Payment.paid_at>=start_dt,Payment.paid_at<=end_dt).order_by(Payment.paid_at.desc(), Payment.id.desc()).all()
+    ).filter(Payment.paid_at>=start_dt,Payment.paid_at<end_dt).order_by(Payment.paid_at.desc(), Payment.id.desc()).all()
     revenue=sum(row.amount or 0 for row in payments)
     previous_revenue = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= previous_start_dt,
-        Payment.paid_at <= previous_end_dt,
+        Payment.paid_at < previous_end_dt,
     ))
     by_method={}
     for row in payments:by_method[row.method]=by_method.get(row.method,0)+(row.amount or 0)
@@ -322,15 +342,11 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "note": row.note,
         })
     revenue_by_sale = sorted(by_sale.values(), key=lambda item: (-item["amount"], item["saleName"] or ""))
-    attendance_rows = db.query(AttendanceSession.checked_in_at).filter(
-        AttendanceSession.checked_in_at>=start_dt,
-        AttendanceSession.checked_in_at<=end_dt,
+    attendance_rows = db.query(AttendanceSession.checked_in_at, AttendanceSession.source).filter(
+        _attendance_range_filter(start, end),
     ).all()
     checkins=len(attendance_rows)
-    previous_checkins=db.query(AttendanceSession).filter(
-        AttendanceSession.checked_in_at>=previous_start_dt,
-        AttendanceSession.checked_in_at<=previous_end_dt,
-    ).count()
+    previous_checkins=db.query(AttendanceSession).filter(_attendance_range_filter(previous_start, previous_end)).count()
     active=active_membership_member_count(db)
     debts=db.query(Membership).options(
         joinedload(Membership.customer).joinedload(Customer.person),
@@ -363,12 +379,12 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         })
     revenue_daily = {start + timedelta(days=offset): {"amount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
     for row in payments:
-        local_day = row.paid_at.date()
+        local_day = utc_vietnam_date(row.paid_at)
         if local_day in revenue_daily:
             revenue_daily[local_day]["amount"] += float(row.amount or 0)
             revenue_daily[local_day]["payments"] += 1
-    for checked_in_at, in attendance_rows:
-        local_day = checked_in_at.date()
+    for checked_in_at, source in attendance_rows:
+        local_day = attendance_vietnam_datetime(checked_in_at, source).date()
         if local_day in revenue_daily:
             revenue_daily[local_day]["checkins"] += 1
     overdue_amount = sum(float(row["amount"] or 0) for row in debt_items if row["dueDate"] and row["dueDate"] < today.isoformat())

@@ -10,8 +10,8 @@ router = APIRouter(prefix="/api", tags=["insights"], dependencies=[Depends(curre
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db)):
-    return insights_controller.dashboard(db)
+def dashboard(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return insights_controller.dashboard(db, user.role in {"admin", "manager"})
 
 
 @router.get("/reports", dependencies=[Depends(require_roles("admin", "manager"))])
@@ -27,16 +27,16 @@ def alerts(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    return insights_controller.alerts(db, user.id, expiring_days, pt_sessions, limit)
+    return insights_controller.alerts(db, user.id, expiring_days, pt_sessions, limit, user.role in {"admin", "manager"})
 
 
 @router.patch("/alerts/{alert_key}/read")
 def mark_alert_read(alert_key: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if not insights_controller.mark_alert_read(db, user.id, alert_key):
+    if not insights_controller.mark_alert_read(db, user.id, alert_key, user.role in {"admin", "manager"}):
         raise HTTPException(status_code=404, detail="Cảnh báo không còn tồn tại.")
     return {"ok": True}
 
 
 @router.post("/alerts/read-all")
 def mark_all_alerts_read(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    return {"ok": True, "marked": insights_controller.mark_all_alerts_read(db, user.id)}
+    return {"ok": True, "marked": insights_controller.mark_all_alerts_read(db, user.id, user.role in {"admin", "manager"})}

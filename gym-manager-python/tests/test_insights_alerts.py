@@ -214,3 +214,59 @@ def test_reports_filter_debts_by_due_date_period(tmp_path):
         assert outside["debts"] == []
     finally:
         db.close()
+
+
+def test_vietnam_day_boundaries_and_non_financial_payload(tmp_path):
+    from datetime import datetime
+
+    from server.models import AttendanceSession, Membership, Payment
+    from server.services.alerts_service import alerts
+    from server.services.dashboard_service import dashboard, reports
+    from server.timeutils import vietnam_day_utc_bounds, vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        customer = seed_expired_member(db, code="CUS-TIMEZONE")
+        membership = db.query(Membership).one()
+        today = vietnam_today()
+        membership.debt_amount = 120000
+        membership.debt_due_date = today - timedelta(days=1)
+        utc_start, _ = vietnam_day_utc_bounds(today)
+        db.add_all([
+            Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-VN-DAY", paid_at=utc_start + timedelta(minutes=5), amount=900000),
+            Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-PREVIOUS-VN-DAY", paid_at=utc_start - timedelta(minutes=5), amount=100000),
+            AttendanceSession(customer_id=customer.id, checked_in_at=utc_start + timedelta(minutes=10), source="manual", status="closed"),
+            AttendanceSession(customer_id=customer.id, checked_in_at=datetime.combine(today, datetime.min.time()) + timedelta(minutes=15), source="dah", status="closed"),
+        ])
+        db.commit()
+
+        report = reports(db, today.isoformat(), today.isoformat())
+        restricted_dashboard = dashboard(db, include_financial=False)
+        restricted_alerts = alerts(db, include_financial=False)
+
+        assert report["summary"]["revenue"] == 900000
+        assert report["summary"]["checkins"] == 2
+        assert report["daily"][0]["amount"] == 900000
+        assert report["daily"][0]["checkins"] == 2
+        assert "revenueMonth" not in restricted_dashboard["metrics"]
+        assert "overdueDebt" not in restricted_dashboard["metrics"]
+        assert "financialHealth" not in restricted_dashboard
+        assert all(item["issueType"] not in {"debt", "overdue_debt"} for item in restricted_dashboard["attention"])
+        assert "overdueDebt" not in restricted_alerts["counts"]
+        assert all(item["type"] != "overdue_debt" for item in restricted_alerts["items"])
+    finally:
+        db.close()
+
+
+def test_reports_reject_malformed_dates_with_422(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from server.services.dashboard_service import reports
+
+    db = make_session(tmp_path)
+    try:
+        with pytest.raises(HTTPException) as error:
+            reports(db, "17-08-2026", "not-a-date")
+        assert error.value.status_code == 422
+    finally:
+        db.close()

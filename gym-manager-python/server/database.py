@@ -1,4 +1,5 @@
 from pathlib import Path
+import contextlib
 import os
 
 from sqlalchemy import create_engine, event, inspect
@@ -398,3 +399,74 @@ def migrate_checkin_speech_config():
                 connection.exec_driver_sql(
                     f"ALTER TABLE {quote('checkin_speech_configs')} ADD COLUMN {quote(column)} {definition}"
                 )
+
+
+def migrate_checkin_speech_event_reference():
+    inspector = inspect(engine)
+    table = "checkin_speech_events"
+    if table not in inspector.get_table_names():
+        return
+    columns = {column["name"]: column for column in inspector.get_columns(table)}
+    foreign_keys = inspector.get_foreign_keys(table)
+    attendance_fk = next(
+        (foreign_key for foreign_key in foreign_keys if foreign_key.get("constrained_columns") == ["attendance_session_id"]),
+        None,
+    )
+    on_delete = str((attendance_fk or {}).get("options", {}).get("ondelete") or "").upper()
+    if columns.get("attendance_session_id", {}).get("nullable") and on_delete == "SET NULL":
+        return
+
+    quote = engine.dialect.identifier_preparer.quote
+    if not IS_SQLITE:
+        with engine.begin() as connection:
+            if attendance_fk and attendance_fk.get("name"):
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote(table)} DROP FOREIGN KEY {quote(attendance_fk['name'])}"
+                )
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote(table)} MODIFY COLUMN {quote('attendance_session_id')} INTEGER NULL"
+            )
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote(table)} ADD CONSTRAINT {quote('fk_checkin_speech_events_attendance_session_id')} "
+                f"FOREIGN KEY ({quote('attendance_session_id')}) REFERENCES {quote('attendance_sessions')} ({quote('id')}) ON DELETE SET NULL"
+            )
+        return
+
+    raw = engine.raw_connection()
+    try:
+        cursor = raw.cursor()
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.execute("BEGIN")
+        cursor.execute("DROP TABLE IF EXISTS checkin_speech_events__new")
+        cursor.execute(
+            """
+            CREATE TABLE checkin_speech_events__new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                attendance_session_id INTEGER NULL UNIQUE,
+                person_type VARCHAR(20) NOT NULL,
+                person_name VARCHAR(180) NOT NULL,
+                message VARCHAR(700) NOT NULL,
+                created_at DATETIME NOT NULL,
+                FOREIGN KEY(attendance_session_id) REFERENCES attendance_sessions(id) ON DELETE SET NULL
+            )
+            """
+        )
+        cursor.execute(
+            "INSERT INTO checkin_speech_events__new "
+            "(id, attendance_session_id, person_type, person_name, message, created_at) "
+            "SELECT id, attendance_session_id, person_type, person_name, message, created_at FROM checkin_speech_events"
+        )
+        cursor.execute("DROP TABLE checkin_speech_events")
+        cursor.execute("ALTER TABLE checkin_speech_events__new RENAME TO checkin_speech_events")
+        cursor.execute("CREATE INDEX ix_checkin_speech_events_attendance_session_id ON checkin_speech_events (attendance_session_id)")
+        cursor.execute("CREATE INDEX ix_checkin_speech_events_person_type ON checkin_speech_events (person_type)")
+        cursor.execute("CREATE INDEX ix_checkin_speech_events_created_at ON checkin_speech_events (created_at)")
+        raw.commit()
+        cursor.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        raw.rollback()
+        with contextlib.suppress(Exception):
+            raw.cursor().execute("PRAGMA foreign_keys=ON")
+        raise
+    finally:
+        raw.close()

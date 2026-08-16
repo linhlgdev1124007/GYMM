@@ -17,7 +17,7 @@ from .employee_shift_attendance import create_employee_shift, create_employee_sh
 from .membership_lifecycle import activate_customer_first_checkin
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
-from ..timeutils import utc_iso, utc_now, vietnam_today
+from ..timeutils import utc_iso, utc_now, vietnam_day_utc_bounds, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
 DEFAULT_PT_TITLES = {"Coach"}
@@ -42,13 +42,23 @@ def _as_int(value, default=None):
 
 
 def _as_date(value):
-    return date.fromisoformat(value) if value else None
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Ngày không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.") from exc
 
 
 def _as_time(value):
     if not value:
         return None
-    return datetime.strptime(str(value), "%H:%M").time()
+    try:
+        return datetime.strptime(str(value), "%H:%M").time()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Giờ không hợp lệ. Vui lòng dùng định dạng HH:MM.") from exc
 
 
 def _audit_value(value):
@@ -778,14 +788,25 @@ def delete_trainer(db: Session, trainer_id: int, actor: User | None = None):
     db.delete(row);db.flush();db.delete(person);db.commit();return {"deleted":True,"archived":False}
 
 
-def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, page_size: int):
+def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, page_size: int, actor: User | None = None):
     if group_type not in ("1:1","1:2","1:3"): group_type="1:1"
     query=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.group_type==group_type)
+    if actor and actor.role == "coach":
+        if not actor.employee_id:
+            query = query.filter(PtEnrollment.id == -1)
+        else:
+            query = query.filter(PtEnrollment.coach_assignments.any(PtEnrollmentCoach.coach_id == actor.employee_id))
     if q: query=query.join(PtEnrollment.customer).join(Customer.person).filter(or_(Person.display_name.contains(q),Person.phone.contains(q),Customer.customer_code.contains(q)))
     if assignment=="unassigned": query=query.filter(~PtEnrollment.coach_assignments.any())
     elif assignment=="assigned": query=query.filter(PtEnrollment.coach_assignments.any())
     total=query.count();rows=query.order_by(PtEnrollment.status,PtEnrollment.id.desc()).offset((page-1)*page_size).limit(page_size).all()
-    counts={kind:db.query(PtEnrollment).filter(PtEnrollment.group_type==kind).count() for kind in ("1:1","1:2","1:3")}
+    count_query = lambda kind: db.query(PtEnrollment).filter(PtEnrollment.group_type == kind)
+    counts={}
+    for kind in ("1:1","1:2","1:3"):
+        counter = count_query(kind)
+        if actor and actor.role == "coach":
+            counter = counter.filter(PtEnrollment.coach_assignments.any(PtEnrollmentCoach.coach_id == actor.employee_id)) if actor.employee_id else counter.filter(PtEnrollment.id == -1)
+        counts[kind] = counter.count()
     return {"items":[pt_data(row) for row in rows],"counts":counts,"pagination":pagination(page,page_size,total)}
 
 
@@ -799,7 +820,7 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
     if len(coaches)!=len(coach_ids): raise HTTPException(422,"Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
     kind=payload.get("type") if payload.get("type") in ("1:1","1:2","1:3") else "1:1";sessions=max(_as_int(payload.get("totalSessions"),12),1)
     schedule_json,schedule_days,schedule_time=schedule_storage(normalize_schedule(payload))
-    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or date.today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_json=schedule_json,schedule_days=schedule_days,schedule_time=schedule_time,status="active")
+    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or vietnam_today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_json=schedule_json,schedule_days=schedule_days,schedule_time=schedule_time,status="active")
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     db.add(row);db.flush()
     row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
@@ -811,6 +832,13 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
 def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None = None):
     row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy đăng ký PT.")
+    if actor and actor.role == "coach":
+        assigned_coach_ids = {assignment.coach_id for assignment in row.coach_assignments}
+        if not actor.employee_id or actor.employee_id not in assigned_coach_ids:
+            raise HTTPException(403, "Coach chỉ được cập nhật khách PT do mình phụ trách.")
+        coach_fields = {"remainingSessions", "schedule", "scheduleDays", "scheduleTime", "status"}
+        if set(payload) - coach_fields:
+            raise HTTPException(403, "Coach chỉ được cập nhật lịch tập, số buổi còn lại và trạng thái.")
     old_values = {
         "coachIds": [assignment.coach_id for assignment in row.coach_assignments],
         "type": row.group_type,
@@ -893,10 +921,13 @@ def checkin_candidates(db: Session, q: str):
 
 
 def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: int = 1, page_size: int = 20):
-    target = _as_date(day) or date.today()
+    target = _as_date(day) or vietnam_today()
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
     carryover_start = start - timedelta(days=1)
+    utc_start, utc_end = vietnam_day_utc_bounds(target)
+    utc_carryover_start, _ = vietnam_day_utc_bounds(target - timedelta(days=1))
+    is_non_dah = or_(AttendanceSession.source != "dah", AttendanceSession.source == None)
     query = (
         db.query(AttendanceSession)
         .options(
@@ -904,11 +935,14 @@ def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: 
             joinedload(AttendanceSession.employee).joinedload(Employee.person),
         )
         .filter(or_(
-            and_(AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
+            and_(AttendanceSession.source == "dah", AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
+            and_(is_non_dah, AttendanceSession.checked_in_at >= utc_start, AttendanceSession.checked_in_at < utc_end),
             and_(
                 AttendanceSession.status == "open",
-                AttendanceSession.checked_in_at >= carryover_start,
-                AttendanceSession.checked_in_at < end,
+                or_(
+                    and_(AttendanceSession.source == "dah", AttendanceSession.checked_in_at >= carryover_start, AttendanceSession.checked_in_at < end),
+                    and_(is_non_dah, AttendanceSession.checked_in_at >= utc_carryover_start, AttendanceSession.checked_in_at < utc_end),
+                ),
             ),
         ))
     )

@@ -43,4 +43,4 @@ def member_state(customer_code: str = Query(..., alias="customerCode"), db: Sess
     )
     if not customer:
         raise HTTPException(404, "Không tìm thấy hội viên.")
-    return get_member(db, customer.id)
+    return get_member(db, customer.id, include_audit=True)

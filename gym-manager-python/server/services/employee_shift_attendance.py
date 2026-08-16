@@ -99,7 +99,12 @@ def preview_employee_shift_excel(file_bytes: bytes, filename: str = ""):
 def _as_date(value):
     if isinstance(value, date):
         return value
-    return date.fromisoformat(value) if value else None
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Ngày làm việc không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.") from exc
 
 
 def _as_time(value):
@@ -108,7 +113,10 @@ def _as_time(value):
     text = str(value or "").strip()
     if not text:
         return None
-    return time.fromisoformat(text)
+    try:
+        return time.fromisoformat(text)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Giờ làm việc không hợp lệ. Vui lòng dùng định dạng HH:MM.") from exc
 
 
 def _time_text(value: datetime | None):

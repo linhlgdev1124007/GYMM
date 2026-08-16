@@ -6,7 +6,7 @@ import contextlib
 import hmac
 import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,12 +15,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import or_, text
 
 from .config import settings
-from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_checkin_speech_config, migrate_dah_integration, migrate_employee_shift_attendance, migrate_employee_shift_overrides, migrate_mbs_card_code_not_unique, migrate_membership_activation, migrate_membership_freeze_completion, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_checkin_speech_config, migrate_checkin_speech_event_reference, migrate_dah_integration, migrate_employee_shift_attendance, migrate_employee_shift_overrides, migrate_mbs_card_code_not_unique, migrate_membership_activation, migrate_membership_freeze_completion, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
 from .models import (
-    AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
+    AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach, User,
 )
 from .observability import configure_open_telemetry, metrics
 from .routes import audit, auth, checkin_speech, dah, insights, inventory, members, operations, users
+from .dependencies import require_roles
 from .security import ensure_admin_user
 from .services.attendance_auto_checkout import auto_checkout_open_sessions, AUTO_CHECKOUT_TIME, next_auto_checkout_run
 from .services.operations_service import ensure_employee_job_titles
@@ -44,6 +45,7 @@ def initialize_database():
     migrate_employee_shift_attendance()
     migrate_employee_shift_overrides()
     migrate_checkin_speech_config()
+    migrate_checkin_speech_event_reference()
     if IS_SQLITE:
         with engine.connect() as connection:
             user_columns = {
@@ -265,7 +267,20 @@ if settings.environment == "test":
 
 UPLOAD_DIR = ROOT_DIR / "server" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+@app.get("/uploads/receipts/{filename}", include_in_schema=False)
+def protected_receipt(
+    filename: str,
+    _user: User = Depends(require_roles("admin", "manager", "receptionist")),
+):
+    receipt_dir = (UPLOAD_DIR / "receipts").resolve()
+    target = (receipt_dir / filename).resolve()
+    if target.parent != receipt_dir or target.name != filename:
+        raise HTTPException(404, "Không tìm thấy chứng từ.")
+    if not target.is_file():
+        raise HTTPException(404, "Không tìm thấy chứng từ.")
+    return FileResponse(target, headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"})
 
 DIST_DIR = ROOT_DIR / "client" / "dist"
 ASSETS_DIR = DIST_DIR / "assets"
