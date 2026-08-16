@@ -12,6 +12,17 @@ def iso(value):
     return value.isoformat() if value else None
 
 
+def _freeze_compensation_days(membership, starts_at, ends_at) -> int:
+    if not membership or not membership.starts_at or not membership.expires_at:
+        return 0
+    if ends_at <= membership.starts_at:
+        return 0
+    if starts_at >= membership.expires_at:
+        return 0
+    effective_start = max(starts_at, membership.starts_at)
+    return max((ends_at - effective_start).days, 0)
+
+
 def person_data(person):
     return {
         "name": person.display_name,
@@ -74,6 +85,7 @@ def freeze_data(freeze):
         "endsAt": iso(freeze.ends_at),
         "completedAt": iso(freeze.completed_at),
         "compensatedDays": freeze.compensated_days,
+        "effectiveDays": _freeze_compensation_days(getattr(freeze, "membership", None), freeze.starts_at, freeze.ends_at),
         "plannedDays": planned_days,
         "reason": freeze.reason,
         "status": "completed" if freeze.completed_at else status,
@@ -96,6 +108,7 @@ def membership_timeline(membership):
         ],
         key=lambda row: (row.starts_at, row.id),
     )
+    all_freezes = sorted(getattr(membership, "freezes", []), key=lambda row: (row.starts_at, row.id), reverse=True)
     segments = []
     cursor = starts_at
     total_compensated = 0
@@ -161,6 +174,7 @@ def membership_timeline(membership):
         "activeFreeze": active_freeze,
         "latestFreeze": latest_freeze,
         "hasOverdueUncompletedFreeze": has_overdue_uncompleted,
+        "freezes": [freeze_data(freeze) for freeze in all_freezes],
         "segments": segments,
     }
 

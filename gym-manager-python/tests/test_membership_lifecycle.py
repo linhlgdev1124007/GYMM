@@ -298,36 +298,153 @@ def test_suspend_cannot_be_past_and_freeze_accepts_past_start(tmp_path):
         db.close()
 
 
-def test_freeze_must_stay_within_membership_period(tmp_path):
-    from fastapi import HTTPException
+def test_freeze_compensation_uses_business_rule_without_period_limits(tmp_path):
+    from server.models import MembershipFreeze
     from server.services.members_service import freeze_membership
-    from server.timeutils import vietnam_today
 
     db = make_session(tmp_path)
     try:
-        today = vietnam_today()
+        cases = [
+            (date(2026, 6, 1), date(2026, 7, 1), 0),
+            (date(2026, 7, 15), date(2026, 8, 15), 14),
+            (date(2026, 8, 15), date(2026, 8, 20), 5),
+            (date(2026, 8, 15), date(2026, 9, 15), 31),
+            (date(2026, 9, 15), date(2026, 10, 15), 0),
+        ]
+        for index, (starts_at, ends_at, expected_days) in enumerate(cases, start=1):
+            _customer, membership = seed_member_with_plan(
+                db,
+                status="active",
+                starts_at=date(2026, 8, 1),
+                activated_at=date(2026, 8, 1),
+                code=f"CUS000010{index}",
+            )
+            membership.expires_at = date(2026, 9, 1)
+            db.commit()
+            freeze_membership(db, membership.id, {
+                "startsAt": starts_at.isoformat(),
+                "endsAt": ends_at.isoformat(),
+                "reason": f"Bảo lưu {index}",
+            }, actor=None)
+            freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).order_by(MembershipFreeze.id.desc()).first()
+            assert freeze.starts_at == starts_at
+            assert freeze.ends_at == ends_at
+            assert (freeze.ends_at - freeze.starts_at).days == (ends_at - starts_at).days
+            from server.services.membership_lifecycle import freeze_compensation_days
+            assert freeze_compensation_days(membership, starts_at, ends_at) == expected_days
+    finally:
+        db.close()
+
+
+def test_completed_freeze_beyond_expiry_adds_full_allowed_days(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.members_service import freeze_membership
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        customer.status = "active"
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": "2026-08-15",
+            "endsAt": "2026-09-15",
+            "reason": "Bảo lưu vượt hạn",
+        }, actor=None)
+        refresh_membership_lifecycle(db, today=date(2026, 9, 16))
+        db.refresh(membership)
+        freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).one()
+
+        assert freeze.compensated_days == 31
+        assert membership.expires_at == date(2026, 10, 2)
+        assert membership.status == "active"
+    finally:
+        db.close()
+
+
+def test_no_effect_freeze_after_expiry_does_not_reactivate_membership(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.members_service import freeze_membership
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        customer.status = "inactive"
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": "2026-09-15",
+            "endsAt": "2026-10-15",
+            "reason": "Nhập lịch không tác động",
+        }, actor=None)
+        refresh_membership_lifecycle(db, today=date(2026, 10, 16))
+        db.refresh(membership)
+        db.refresh(customer)
+        freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).one()
+
+        assert freeze.compensated_days == 0
+        assert membership.expires_at == date(2026, 9, 1)
+        assert membership.status == "expired"
+        assert customer.status == "inactive"
+    finally:
+        db.close()
+
+
+def test_update_and_delete_completed_freeze_recalculate_expiry(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.members_service import delete_membership_freeze, freeze_membership, update_membership_freeze
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
         _customer, membership = seed_member_with_plan(
             db,
             status="active",
-            starts_at=today - timedelta(days=10),
-            activated_at=today - timedelta(days=10),
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
         )
-        membership.expires_at = today + timedelta(days=20)
+        membership.expires_at = date(2026, 9, 1)
         db.commit()
 
-        with pytest.raises(HTTPException, match="trước ngày bắt đầu gói"):
-            freeze_membership(db, membership.id, {
-                "startsAt": (membership.starts_at - timedelta(days=1)).isoformat(),
-                "endsAt": (membership.starts_at + timedelta(days=1)).isoformat(),
-                "reason": "Trước hạn gói",
-            }, actor=None)
+        freeze_membership(db, membership.id, {
+            "startsAt": "2026-08-01",
+            "endsAt": "2026-08-06",
+            "reason": "Bảo lưu ngắn",
+        }, actor=None)
+        refresh_membership_lifecycle(db, today=date(2026, 8, 7))
+        db.refresh(membership)
+        freeze = db.query(MembershipFreeze).filter_by(membership_id=membership.id).one()
+        assert membership.expires_at == date(2026, 9, 6)
+        assert freeze.compensated_days == 5
 
-        with pytest.raises(HTTPException, match="trong thời hạn gói"):
-            freeze_membership(db, membership.id, {
-                "startsAt": (membership.expires_at - timedelta(days=1)).isoformat(),
-                "endsAt": (membership.expires_at + timedelta(days=1)).isoformat(),
-                "reason": "Vượt hạn gói",
-            }, actor=None)
+        update_membership_freeze(db, membership.id, freeze.id, {
+            "startsAt": "2026-08-01",
+            "endsAt": "2026-08-11",
+            "reason": "Bảo lưu dài hơn",
+        }, actor=None)
+        db.refresh(membership)
+        db.refresh(freeze)
+        assert freeze.compensated_days == 10
+        assert membership.expires_at == date(2026, 9, 11)
+
+        delete_membership_freeze(db, membership.id, freeze.id, actor=None)
+        db.refresh(membership)
+        assert membership.expires_at == date(2026, 9, 1)
+        assert db.query(MembershipFreeze).filter_by(membership_id=membership.id).count() == 0
     finally:
         db.close()
 

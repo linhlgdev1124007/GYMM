@@ -97,6 +97,16 @@ def freeze_membership(membership_id: int, payload: dict, db: Session = Depends(g
     return members_controller.freeze_membership(db, membership_id, payload, user)
 
 
+@router.patch("/memberships/{membership_id}/freezes/{freeze_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def update_membership_freeze(membership_id: int, freeze_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return members_controller.update_membership_freeze(db, membership_id, freeze_id, payload, user)
+
+
+@router.delete("/memberships/{membership_id}/freezes/{freeze_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def delete_membership_freeze(membership_id: int, freeze_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return members_controller.delete_membership_freeze(db, membership_id, freeze_id, user)
+
+
 @router.post("/memberships/{membership_id}/actions")
 def membership_action(membership_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return members_controller.membership_action(db, membership_id, payload, user)

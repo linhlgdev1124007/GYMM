@@ -36,6 +36,7 @@ import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
 import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
+import { MembershipFreezeForm } from "../../components/forms/MembershipFreezeForm";
 import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
 import {
@@ -332,6 +333,7 @@ export function MemberDetailPage() {
   );
   const [dialog, setDialog] = useState(null);
   const [selectedMembership, setSelectedMembership] = useState(null);
+  const [selectedFreeze, setSelectedFreeze] = useState(null);
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedTraining, setSelectedTraining] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
@@ -506,6 +508,23 @@ export function MemberDetailPage() {
     },
     onError: (reason) => setFormError(reason.message),
   });
+  const freezeMutation = useMutation({
+    mutationFn: ({ membershipId, freezeId, payload, method }) =>
+      api(`/api/memberships/${membershipId}/freezes/${freezeId}`, {
+        method,
+        body: method === "DELETE" ? undefined : payload,
+      }),
+    onSuccess: (_result, variables) => {
+      refresh();
+      client.invalidateQueries({ queryKey: ["alerts"] });
+      client.invalidateQueries({ queryKey: ["audit-logs"] });
+      setDialog(null);
+      setSelectedMembership(null);
+      setSelectedFreeze(null);
+      notify.success(variables.method === "DELETE" ? "Đã hủy lịch bảo lưu." : "Đã cập nhật lịch bảo lưu.");
+    },
+    onError: (reason) => setFormError(reason.message),
+  });
   if (memberQuery.isLoading)
     return (
       <div className="space-y-4">
@@ -579,6 +598,9 @@ export function MemberDetailPage() {
     lifecycleActions.push(["suspend", "Tạm dừng"]);
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
+  if (current?.status === "expired") {
+    lifecycleActions.push(["freeze", "Bảo lưu"]);
+  }
   if (["active", "expired"].includes(current?.status)) {
     lifecycleActions.push(["adjust_days", "Cộng / trừ ngày"]);
   }
@@ -598,6 +620,21 @@ export function MemberDetailPage() {
     if (name === "renew") setSelectedMembership(null);
     if (name === "training") setSelectedTraining(record);
     setDialog(name);
+  };
+  const openFreezeEdit = (membership, freeze) => {
+    setFormError("");
+    setSelectedMembership(membership);
+    setSelectedFreeze(freeze);
+    setDialog("freeze-edit");
+  };
+  const deleteFreeze = (membership, freeze) => {
+    if (!window.confirm(`Hủy lịch bảo lưu ${shortDate(freeze.startsAt)} → ${shortDate(freeze.endsAt)}?`)) return;
+    setFormError("");
+    freezeMutation.mutate({
+      membershipId: membership.id,
+      freezeId: freeze.id,
+      method: "DELETE",
+    });
   };
   const selectTab = (key) => {
     setTab(key);
@@ -1000,7 +1037,7 @@ export function MemberDetailPage() {
                 ))}
               </div>
             )}
-            {current && <MembershipTimeline membership={current} />}
+            {current && <MembershipTimeline membership={current} onEditFreeze={canManageLifecycle ? (freeze) => openFreezeEdit(current, freeze) : undefined} onDeleteFreeze={canManageLifecycle ? (freeze) => deleteFreeze(current, freeze) : undefined} />}
             </section>
             <section className="workspace-section unified-activity-section role-activity-section">
               <div className="workspace-section-title">
@@ -1401,6 +1438,26 @@ export function MemberDetailPage() {
         }}
         onSubmit={(variables) => membershipOperation.mutate(variables)}
         pending={membershipOperation.isPending}
+        error={formError}
+      />
+      <MembershipFreezeForm
+        membership={selectedMembership}
+        freeze={selectedFreeze}
+        open={dialog === "freeze-edit"}
+        onClose={() => {
+          setDialog(null);
+          setSelectedMembership(null);
+          setSelectedFreeze(null);
+        }}
+        onSubmit={(payload) =>
+          freezeMutation.mutate({
+            membershipId: selectedMembership.id,
+            freezeId: selectedFreeze.id,
+            method: "PATCH",
+            payload,
+          })
+        }
+        pending={freezeMutation.isPending}
         error={formError}
       />
       <TrainingForm

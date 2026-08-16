@@ -1,3 +1,4 @@
+import { Pencil, Trash2 } from "lucide-react";
 import { shortDate } from "../../utils/format";
 
 const statusLabel = {
@@ -23,10 +24,10 @@ function remainingText(days) {
   return `${days} ngày`;
 }
 
-export function MembershipTimeline({ membership, compact = false }) {
+export function MembershipTimeline({ membership, compact = false, onEditFreeze, onDeleteFreeze }) {
   const timeline = membership?.timeline;
   if (!timeline?.segments?.length) return null;
-  const freezes = timeline.segments.filter((segment) => segment.type === "freeze");
+  const freezes = timeline.freezes || timeline.segments.filter((segment) => segment.type === "freeze");
   const marker = todayPosition(timeline);
   return (
     <div className={`membership-timeline ${compact ? "compact" : ""}`}>
@@ -79,6 +80,20 @@ export function MembershipTimeline({ membership, compact = false }) {
                   {freeze.reason ? ` · ${freeze.reason}` : ""}
                 </p>
               </div>
+              {(onEditFreeze || onDeleteFreeze) && (
+                <div className="freeze-actions">
+                  {onEditFreeze && (
+                    <button type="button" onClick={() => onEditFreeze(freeze)} title="Sửa bảo lưu" aria-label="Sửa bảo lưu">
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                  {onDeleteFreeze && (
+                    <button type="button" onClick={() => onDeleteFreeze(freeze)} title="Hủy bảo lưu" aria-label="Hủy bảo lưu">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

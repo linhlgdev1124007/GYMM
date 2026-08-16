@@ -14,6 +14,14 @@ const today = () => format(new Date(), "yyyy-MM-dd");
 const nextDay = (value) => format(addDays(new Date(`${value || today()}T00:00:00`), 1), "yyyy-MM-dd");
 const ADJUSTABLE_STATUSES = ["active", "pending", "frozen", "suspended", "expired"];
 
+function freezeCompensationDays(membership, startsAt, endsAt) {
+  if (!membership?.startsAt || !membership?.expiresAt || !startsAt || !endsAt) return 0;
+  if (endsAt <= membership.startsAt) return 0;
+  if (startsAt >= membership.expiresAt) return 0;
+  const effectiveStart = startsAt > membership.startsAt ? startsAt : membership.startsAt;
+  return Math.max(differenceInCalendarDays(new Date(`${endsAt}T00:00:00`), new Date(`${effectiveStart}T00:00:00`)), 0);
+}
+
 export function MembershipOperationsModal({ membership, memberships = [], memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
   const [form, setForm] = useState({});
@@ -55,9 +63,10 @@ export function MembershipOperationsModal({ membership, memberships = [], member
     ? adjustableMemberships.find((row) => String(row.id) === String(form.membershipId)) || membership
     : membership;
   const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
-  const freezeDays = form.startsAt && form.endsAt
+  const enteredFreezeDays = form.startsAt && form.endsAt
     ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)), 0)
     : 0;
+  const freezeDays = freezeCompensationDays(targetMembership, form.startsAt, form.endsAt);
   const compensatedExpiry = targetMembership?.expiresAt && freezeDays
     ? format(addDays(new Date(`${targetMembership.expiresAt}T00:00:00`), freezeDays), "yyyy-MM-dd")
     : targetMembership?.expiresAt;
@@ -93,7 +102,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
     });
   };
   const valid = String(form.reason || "").trim() && (
-    (action === "freeze" && freezeDays > 0) ||
+    (action === "freeze" && enteredFreezeDays > 0) ||
     action === "activate" ||
     action === "suspend" ||
     (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && Number(form.days || 0) !== 0) ||

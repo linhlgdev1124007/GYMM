@@ -19,4 +19,6 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
 def update_debt_due_date(db: Session, membership_id: int, payload: dict, actor=None): return members_service.update_debt_due_date(db, membership_id, payload, actor)
 async def upload_payment_receipts(db: Session, payment_id: int, receipts, actor=None): return await members_service.upload_payment_receipts(db, payment_id, receipts, actor)
 def freeze_membership(db: Session, membership_id: int, payload: dict, actor): return members_service.freeze_membership(db, membership_id, payload, actor)
+def update_membership_freeze(db: Session, membership_id: int, freeze_id: int, payload: dict, actor): return members_service.update_membership_freeze(db, membership_id, freeze_id, payload, actor)
+def delete_membership_freeze(db: Session, membership_id: int, freeze_id: int, actor): return members_service.delete_membership_freeze(db, membership_id, freeze_id, actor)
 def membership_action(db: Session, membership_id: int, payload: dict, actor): return members_service.membership_action(db, membership_id, payload, actor)

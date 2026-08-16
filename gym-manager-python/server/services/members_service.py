@@ -14,7 +14,7 @@ from ..models import (
 )
 from .audit_service import member_audit_logs, record_audit
 from . import dah_service
-from .membership_lifecycle import activate_membership, _complete_freeze
+from .membership_lifecycle import activate_membership, _complete_freeze, freeze_affects_day, freeze_compensation_days, refresh_membership_lifecycle
 from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
 from ..timeutils import utc_iso, utc_now, vietnam_today
@@ -927,6 +927,64 @@ def update_debt_due_date(db: Session, membership_id: int, payload: dict, actor: 
     return membership_data(row)
 
 
+def _membership_for_freeze(db: Session, membership_id: int):
+    row = db.query(Membership).options(
+        joinedload(Membership.package),
+        joinedload(Membership.customer).joinedload(Customer.person),
+    ).filter(Membership.id == membership_id).first()
+    if not row or row.package.is_pt:
+        raise HTTPException(404, "Không tìm thấy đăng ký gói.")
+    if row.status == "cancelled":
+        raise HTTPException(422, "Không thể bảo lưu gói đã hủy.")
+    if not row.expires_at:
+        raise HTTPException(422, "Gói không có ngày hết hạn nên không thể cộng bù tự động.")
+    return row
+
+
+def _freeze_payload(payload: dict):
+    starts_at = _parse_date(payload.get("startsAt"))
+    ends_at = _parse_date(payload.get("endsAt"))
+    reason = str(payload.get("reason", "")).strip()
+    if not starts_at or not ends_at or ends_at <= starts_at:
+        raise HTTPException(422, "Ngày hết bảo lưu phải sau ngày bắt đầu bảo lưu.")
+    if not reason:
+        raise HTTPException(422, "Vui lòng nhập lý do bảo lưu.")
+    return starts_at, ends_at, reason
+
+
+def _ensure_freeze_not_overlapping(
+    db: Session,
+    membership_id: int,
+    starts_at: date,
+    ends_at: date,
+    ignore_freeze_id: int | None = None,
+):
+    query = db.query(MembershipFreeze).filter(
+        MembershipFreeze.membership_id == membership_id,
+        MembershipFreeze.starts_at < ends_at,
+        MembershipFreeze.ends_at > starts_at,
+    )
+    if ignore_freeze_id is not None:
+        query = query.filter(MembershipFreeze.id != ignore_freeze_id)
+    if query.first():
+        raise HTTPException(409, "Thời gian này trùng với một lần bảo lưu đã có.")
+
+
+def _revert_completed_freeze_days(membership: Membership, freeze: MembershipFreeze):
+    days = freeze.compensated_days or 0
+    if days and membership.expires_at:
+        membership.expires_at = membership.expires_at - timedelta(days=days)
+    freeze.completed_at = None
+    freeze.compensated_days = 0
+
+
+def _apply_freeze_status(membership: Membership, starts_at: date, ends_at: date):
+    if freeze_affects_day(membership, starts_at, ends_at, vietnam_today()):
+        membership.status = "frozen"
+        if membership.customer:
+            membership.customer.status = "lead"
+
+
 async def upload_payment_receipts(db: Session, payment_id: int, receipts: list[UploadFile], actor: User | None = None):
     payment = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package), joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by)).filter(Payment.id == payment_id).first()
     if not payment:
@@ -941,36 +999,12 @@ async def upload_payment_receipts(db: Session, payment_id: int, receipts: list[U
 
 
 def freeze_membership(db: Session, membership_id: int, payload: dict, actor: User):
-    row = db.query(Membership).options(joinedload(Membership.package), joinedload(Membership.customer).joinedload(Customer.person)).filter(Membership.id == membership_id).first()
-    if not row or row.package.is_pt:
-        raise HTTPException(404, "Không tìm thấy đăng ký gói.")
-    if row.status in ("cancelled", "expired"):
-        raise HTTPException(422, "Không thể bảo lưu gói đã hủy hoặc hết hạn.")
-    starts_at = _parse_date(payload.get("startsAt"))
-    ends_at = _parse_date(payload.get("endsAt"))
-    reason = str(payload.get("reason", "")).strip()
-    if not starts_at or not ends_at or ends_at <= starts_at:
-        raise HTTPException(422, "Ngày hết bảo lưu phải sau ngày bắt đầu bảo lưu.")
-    if row.starts_at and starts_at < row.starts_at:
-        raise HTTPException(422, "Ngày bắt đầu bảo lưu không được trước ngày bắt đầu gói.")
-    if row.expires_at and ends_at > row.expires_at:
-        raise HTTPException(422, "Thời gian bảo lưu phải nằm trong thời hạn gói.")
-    if not reason:
-        raise HTTPException(422, "Vui lòng nhập lý do bảo lưu.")
-    overlap = db.query(MembershipFreeze).filter(
-        MembershipFreeze.membership_id == row.id,
-        MembershipFreeze.starts_at <= ends_at,
-        MembershipFreeze.ends_at >= starts_at,
-    ).first()
-    if overlap:
-        raise HTTPException(409, "Thời gian này trùng với một lần bảo lưu đã có.")
-    if not row.expires_at:
-        raise HTTPException(422, "Gói không có ngày hết hạn nên không thể cộng bù tự động.")
+    row = _membership_for_freeze(db, membership_id)
+    starts_at, ends_at, reason = _freeze_payload(payload)
+    _ensure_freeze_not_overlapping(db, row.id, starts_at, ends_at)
     planned_days = (ends_at - starts_at).days
     previous_expiry = row.expires_at
-    if starts_at <= vietnam_today() <= ends_at:
-        row.status = "frozen"
-        row.customer.status = "lead"
+    _apply_freeze_status(row, starts_at, ends_at)
     freeze = MembershipFreeze(
         membership_id=row.id,
         starts_at=starts_at,
@@ -989,13 +1023,96 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
         effective_at=starts_at,
         reason=reason,
         created_by_user_id=actor.id if actor else None,
-        details_json=json.dumps({"startsAt": str(starts_at), "endsAt": str(ends_at), "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": str(previous_expiry), "newExpiry": str(row.expires_at)}, ensure_ascii=False),
+        details_json=json.dumps({"startsAt": str(starts_at), "endsAt": str(ends_at), "plannedDays": planned_days, "effectiveDays": freeze_compensation_days(row, starts_at, ends_at), "compensatedDays": 0, "previousExpiry": str(previous_expiry), "newExpiry": str(row.expires_at)}, ensure_ascii=False),
     )
     db.add_all([freeze, event])
     db.flush()
     if ends_at < vietnam_today():
         _complete_freeze(db, row, freeze, ends_at, actor, reason="Hoàn tất bảo lưu nhập bù")
     record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {planned_days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
+    db.commit()
+    return get_member(db, row.customer_id)
+
+
+def update_membership_freeze(db: Session, membership_id: int, freeze_id: int, payload: dict, actor: User):
+    row = _membership_for_freeze(db, membership_id)
+    freeze = db.query(MembershipFreeze).filter(
+        MembershipFreeze.id == freeze_id,
+        MembershipFreeze.membership_id == row.id,
+    ).first()
+    if not freeze:
+        raise HTTPException(404, "Không tìm thấy lịch bảo lưu.")
+    starts_at, ends_at, reason = _freeze_payload(payload)
+    _ensure_freeze_not_overlapping(db, row.id, starts_at, ends_at, ignore_freeze_id=freeze.id)
+    previous = {
+        "startsAt": freeze.starts_at,
+        "endsAt": freeze.ends_at,
+        "completedAt": freeze.completed_at,
+        "compensatedDays": freeze.compensated_days or 0,
+        "reason": freeze.reason,
+        "expiry": row.expires_at,
+    }
+    if freeze.completed_at:
+        _revert_completed_freeze_days(row, freeze)
+    freeze.starts_at = starts_at
+    freeze.ends_at = ends_at
+    freeze.reason = reason
+    _apply_freeze_status(row, starts_at, ends_at)
+    if ends_at < vietnam_today():
+        _complete_freeze(db, row, freeze, ends_at, actor, reason="Hoàn tất bảo lưu sau khi chỉnh sửa")
+    record_audit(
+        db,
+        actor,
+        "update_freeze",
+        "membership_freeze",
+        freeze.id,
+        f"Cập nhật lịch bảo lưu gói {row.package.name}",
+        customer_id=row.customer_id,
+        details={
+            "previous": previous,
+            "startsAt": starts_at,
+            "endsAt": ends_at,
+            "plannedDays": (ends_at - starts_at).days,
+            "effectiveDays": freeze_compensation_days(row, starts_at, ends_at),
+            "newExpiry": row.expires_at,
+        },
+    )
+    refresh_membership_lifecycle(db)
+    db.commit()
+    return get_member(db, row.customer_id)
+
+
+def delete_membership_freeze(db: Session, membership_id: int, freeze_id: int, actor: User):
+    row = _membership_for_freeze(db, membership_id)
+    freeze = db.query(MembershipFreeze).filter(
+        MembershipFreeze.id == freeze_id,
+        MembershipFreeze.membership_id == row.id,
+    ).first()
+    if not freeze:
+        raise HTTPException(404, "Không tìm thấy lịch bảo lưu.")
+    details = {
+        "startsAt": freeze.starts_at,
+        "endsAt": freeze.ends_at,
+        "completedAt": freeze.completed_at,
+        "compensatedDays": freeze.compensated_days or 0,
+        "previousExpiry": row.expires_at,
+        "reason": freeze.reason,
+    }
+    if freeze.completed_at:
+        _revert_completed_freeze_days(row, freeze)
+    details["newExpiry"] = row.expires_at
+    record_audit(
+        db,
+        actor,
+        "cancel_freeze",
+        "membership_freeze",
+        freeze.id,
+        f"Hủy lịch bảo lưu gói {row.package.name}",
+        customer_id=row.customer_id,
+        details=details,
+    )
+    db.delete(freeze)
+    refresh_membership_lifecycle(db)
     db.commit()
     return get_member(db, row.customer_id)
 

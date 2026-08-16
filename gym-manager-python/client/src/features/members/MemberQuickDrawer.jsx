@@ -29,6 +29,7 @@ import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
 import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
+import { MembershipFreezeForm } from "../../components/forms/MembershipFreezeForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
@@ -49,6 +50,7 @@ export function MemberQuickDrawer({
   const client = useQueryClient();
   const [dialog, setDialog] = useState(null);
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
+  const [selectedFreeze, setSelectedFreeze] = useState(null);
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const memberQuery = useQuery({
@@ -148,6 +150,20 @@ export function MemberQuickDrawer({
     },
     onError: (e) => setFormError(e.message),
   });
+  const freezeMutation = useMutation({
+    mutationFn: ({ freezeId, payload, method }) =>
+      api(`/api/memberships/${current.id}/freezes/${freezeId}`, {
+        method,
+        body: method === "DELETE" ? undefined : payload,
+      }),
+    onSuccess: (_result, variables) => {
+      refresh();
+      setDialog(null);
+      setSelectedFreeze(null);
+      notify.success(variables.method === "DELETE" ? "Đã hủy lịch bảo lưu." : "Đã cập nhật lịch bảo lưu.");
+    },
+    onError: (e) => setFormError(e.message),
+  });
   const current = member?.memberships[0];
   const displayStatus = current?.status || member?.status;
   const training = member?.training.find((row) => row.status === "active");
@@ -161,6 +177,16 @@ export function MemberQuickDrawer({
     setMembershipOperationAction(name === "operations" ? operationAction : "");
     setDialog(name);
   };
+  const openFreezeEdit = (freeze) => {
+    setFormError("");
+    setSelectedFreeze(freeze);
+    setDialog("freeze-edit");
+  };
+  const deleteFreeze = (freeze) => {
+    if (!window.confirm(`Hủy lịch bảo lưu ${shortDate(freeze.startsAt)} → ${shortDate(freeze.endsAt)}?`)) return;
+    setFormError("");
+    freezeMutation.mutate({ freezeId: freeze.id, method: "DELETE" });
+  };
   const lifecycleActions = [];
   if (current?.status === "pending") {
     lifecycleActions.push(["activate", "Kích hoạt ngay"]);
@@ -173,6 +199,9 @@ export function MemberQuickDrawer({
   }
   if (current?.status === "active") {
     lifecycleActions.push(["suspend", "Tạm dừng"]);
+    lifecycleActions.push(["freeze", "Bảo lưu"]);
+  }
+  if (current?.status === "expired") {
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
   if (["active", "expired"].includes(current?.status)) {
@@ -406,7 +435,7 @@ export function MemberQuickDrawer({
                       </div>
                     )}
                   </dl>
-                  <MembershipTimeline membership={current} compact />
+                  <MembershipTimeline membership={current} compact onEditFreeze={canManageLifecycle ? openFreezeEdit : undefined} onDeleteFreeze={canManageLifecycle ? deleteFreeze : undefined} />
                 </>
               ) : (
                 <div className="flex items-center justify-between text-sm">
@@ -580,6 +609,18 @@ export function MemberQuickDrawer({
             }}
             onSubmit={(variables) => membershipOperation.mutate(variables)}
             pending={membershipOperation.isPending}
+            error={formError}
+          />
+          <MembershipFreezeForm
+            membership={current}
+            freeze={selectedFreeze}
+            open={dialog === "freeze-edit"}
+            onClose={() => {
+              setDialog(null);
+              setSelectedFreeze(null);
+            }}
+            onSubmit={(payload) => freezeMutation.mutate({ freezeId: selectedFreeze.id, method: "PATCH", payload })}
+            pending={freezeMutation.isPending}
             error={formError}
           />
           <TrainingForm

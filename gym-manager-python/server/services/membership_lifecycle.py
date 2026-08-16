@@ -84,6 +84,27 @@ def _freeze_for_day(membership: Membership, day: date):
     return sorted(freezes, key=lambda row: (row.starts_at, row.id), reverse=True)[0] if freezes else None
 
 
+def freeze_compensation_days(membership: Membership, starts_at: date, ends_at: date) -> int:
+    if not membership.starts_at or not membership.expires_at:
+        return 0
+    if ends_at <= membership.starts_at:
+        return 0
+    if starts_at >= membership.expires_at:
+        return 0
+    effective_start = max(starts_at, membership.starts_at)
+    return max((ends_at - effective_start).days, 0)
+
+
+def freeze_affects_day(membership: Membership, starts_at: date, ends_at: date, day: date) -> bool:
+    if not membership.starts_at or not membership.expires_at:
+        return False
+    return (
+        starts_at <= day <= ends_at
+        and day >= membership.starts_at
+        and starts_at < membership.expires_at
+    )
+
+
 def _complete_freeze(
     db: Session,
     membership: Membership,
@@ -97,14 +118,15 @@ def _complete_freeze(
         return 0
     previous_expiry = membership.expires_at
     planned_end = freeze.ends_at
-    actual_days = max((actual_end - freeze.starts_at).days, 0)
+    actual_days = freeze_compensation_days(membership, freeze.starts_at, actual_end)
     freeze.ends_at = actual_end
     freeze.completed_at = actual_end
     freeze.compensated_days = actual_days
     if membership.expires_at and actual_days:
         membership.expires_at = membership.expires_at + timedelta(days=actual_days)
-    membership.status = "active"
-    if membership.customer:
+    if actual_days or membership.status == "frozen":
+        membership.status = "active"
+    if membership.customer and (actual_days or membership.status == "active"):
         membership.customer.status = "active"
     event = MembershipEvent(
         membership_id=membership.id,
@@ -274,7 +296,7 @@ def refresh_membership_lifecycle(db: Session, today: date | None = None):
         freeze = _freeze_for_day(row, day)
         if freeze and freeze.ends_at < day:
             changed += 1 if _complete_freeze(db, row, freeze, freeze.ends_at, reason="Tự động kết thúc bảo lưu") else 0
-        elif freeze and freeze.starts_at <= day <= freeze.ends_at and row.status == "active":
+        elif freeze and freeze_affects_day(row, freeze.starts_at, freeze.ends_at, day) and row.status == "active":
             row.status = "frozen"
             if row.customer:
                 row.customer.status = "lead"

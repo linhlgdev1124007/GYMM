@@ -944,6 +944,12 @@
   .membership-freeze-list > div {
     @apply flex gap-2;
   }
+  .freeze-actions {
+    @apply ml-auto flex shrink-0 items-center gap-1;
+  }
+  .freeze-actions button {
+    @apply grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-navy-900;
+  }
   .freeze-dot {
     @apply mt-1.5 h-2 w-2 shrink-0 rounded-full bg-red-500;
   }
