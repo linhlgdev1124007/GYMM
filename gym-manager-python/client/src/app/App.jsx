@@ -54,6 +54,11 @@ const ReportsPage = lazy(() =>
     default: module.ReportsPage,
   })),
 );
+const InventoryPage = lazy(() =>
+  import("../features/inventory/InventoryPage").then((module) => ({
+    default: module.InventoryPage,
+  })),
+);
 const SettingsPage = lazy(() =>
   import("../features/settings/SettingsPage").then((module) => ({
     default: module.SettingsPage,
@@ -112,6 +117,7 @@ export function App() {
           <Route path="training" element={<TrainingPage />} />
           <Route path="check-in" element={allowed(["admin", "manager", "receptionist"], <CheckinPage />)} />
           <Route path="payments" element={allowed(["admin", "manager", "receptionist"], <PaymentsPage />)} />
+          <Route path="inventory" element={allowed(["admin"], <InventoryPage />)} />
           <Route
             path="reports"
             element={allowed(["admin", "manager"], <ReportsPage />)}

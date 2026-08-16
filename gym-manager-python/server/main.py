@@ -20,7 +20,7 @@ from .models import (
     AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach,
 )
 from .observability import configure_open_telemetry, metrics
-from .routes import audit, auth, dah, insights, members, operations, users
+from .routes import audit, auth, dah, insights, inventory, members, operations, users
 from .security import ensure_admin_user
 from .services.attendance_auto_checkout import auto_checkout_open_sessions, AUTO_CHECKOUT_TIME, next_auto_checkout_run
 from .services.operations_service import ensure_employee_job_titles
@@ -250,6 +250,7 @@ def prometheus_metrics(request: Request):
 app.include_router(auth.router)
 app.include_router(dah.router)
 app.include_router(insights.router)
+app.include_router(inventory.router)
 app.include_router(members.router)
 app.include_router(operations.router)
 app.include_router(audit.router)

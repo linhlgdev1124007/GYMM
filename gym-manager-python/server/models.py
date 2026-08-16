@@ -1,6 +1,6 @@
 from datetime import datetime, date
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +52,47 @@ class AuthSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     user: Mapped[User] = relationship()
+
+
+class InventoryProduct(Base):
+    __tablename__ = "inventory_products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sku: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(180), index=True)
+    unit: Mapped[str] = mapped_column(String(40))
+    current_stock: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
+    minimum_stock: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
+    average_cost: Mapped[float] = mapped_column(Numeric(18, 2), default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+    transactions: Mapped[list["InventoryTransaction"]] = relationship(back_populates="product")
+
+
+class InventoryTransaction(Base):
+    __tablename__ = "inventory_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("inventory_products.id"), index=True)
+    transaction_type: Mapped[str] = mapped_column(String(20), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    quantity: Mapped[float] = mapped_column(Numeric(14, 3))
+    unit_cost: Mapped[float] = mapped_column(Numeric(18, 2), default=0)
+    total_amount: Mapped[float] = mapped_column(Numeric(18, 2), default=0)
+    stock_before: Mapped[float] = mapped_column(Numeric(14, 3))
+    stock_after: Mapped[float] = mapped_column(Numeric(14, 3))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    reversed_transaction_id: Mapped[int | None] = mapped_column(ForeignKey("inventory_transactions.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="POSTED", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+    product: Mapped[InventoryProduct] = relationship(back_populates="transactions")
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_user_id])
+    reversed_transaction: Mapped["InventoryTransaction | None"] = relationship(remote_side=[id])
 
 
 class AlertRead(Base):

@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   Menu,
   Package,
+  Warehouse,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -59,6 +60,7 @@ const groups = [
     items: [
       { to: "/check-in", label: "Điểm danh", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"] },
       { to: "/payments", label: "Thanh toán", icon: CreditCard, roles: ["admin", "manager", "receptionist"] },
+      { to: "/inventory", label: "Kho nội bộ", icon: Warehouse, roles: ["admin"] },
     ],
   },
   {
