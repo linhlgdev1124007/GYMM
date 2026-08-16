@@ -11,6 +11,7 @@ export function Pagination({
   pageSizeOptions = defaultOptions,
 }) {
   if (!data || data.total === 0) return null;
+  const totalPages = Number(data.totalPages || data.pages || 1);
   const currentPageSize = Number(pageSize || data.pageSize || 20);
   const first = (data.page - 1) * currentPageSize + 1;
   const last = Math.min(data.page * currentPageSize, data.total);
@@ -18,7 +19,7 @@ export function Pagination({
     <div className="pagination">
       <div className="pagination-summary">
         <span>
-          {first}-{last}/{data.total} kết quả · Trang {data.page}/{data.pages}
+          {first}-{last}/{data.total} kết quả · Trang {data.page}/{totalPages}
         </span>
         {onPageSize && (
           <label>
@@ -48,7 +49,7 @@ export function Pagination({
         <Button
           variant="secondary"
           size="sm"
-          disabled={data.page >= data.pages}
+          disabled={data.page >= totalPages}
           onClick={() => onPage(data.page + 1)}
         >
           Sau

@@ -39,8 +39,12 @@ export function DataTable({
   selection,
   onSelectionChange,
   density = "standard",
+  sortState,
+  onSortChange,
+  rowClassName,
 }) {
-  const [sort, setSort] = useState({ key: "", direction: "asc" });
+  const [internalSort, setInternalSort] = useState({ key: "", direction: "asc" });
+  const sort = sortState || internalSort;
   if (error)
     return (
       <div className="empty-state border-y border-red-100 bg-red-50/40">
@@ -115,6 +119,7 @@ export function DataTable({
     [columns, dataRows, onSelectionChange, rowKey, selection],
   );
   const sortedRows = useMemo(() => {
+    if (sortState) return dataRows;
     if (!sort.key || !dataRows.length) return dataRows;
     const column = visibleColumns.find((item) => item.key === sort.key);
     if (!column || column.sortable === false || column.key === "__select") {
@@ -135,18 +140,21 @@ export function DataTable({
           : collator.compare(String(left), String(right));
       return sort.direction === "asc" ? result : -result;
     });
-  }, [dataRows, sort, visibleColumns]);
+  }, [dataRows, sort, sortState, visibleColumns]);
   const actionColumn = (column) => ["action", "actions", "receipt"].includes(column.key);
   const canSortColumn = (column) =>
     column.sortable !== false && column.key !== "__select" && !actionColumn(column);
-  const sortNext = (column) =>
-    setSort((current) => ({
+  const sortNext = (column) => {
+    const next = {
       key: column.key,
       direction:
-        current.key === column.key && current.direction === "asc"
+        sort.key === column.key && sort.direction === "asc"
           ? "desc"
           : "asc",
-    }));
+    };
+    if (onSortChange) onSortChange(next);
+    else setInternalSort(next);
+  };
   return (
     <div
       className={`table-shell ${density === "compact" ? "table-compact" : ""}`}
@@ -159,18 +167,20 @@ export function DataTable({
                 <th
                   key={column.key}
                   className={`${column.className || ""} ${actionColumn(column) ? "sticky-action-col" : ""}`}
+                  aria-sort={
+                    canSortColumn(column) && sort.key === column.key
+                      ? sort.direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : canSortColumn(column)
+                        ? "none"
+                        : undefined
+                  }
                 >
                   {!canSortColumn(column) ? column.label : (
                     <button
                       type="button"
                       className="table-sort-button"
-                      aria-sort={
-                        sort.key === column.key
-                          ? sort.direction === "asc"
-                            ? "ascending"
-                            : "descending"
-                          : "none"
-                      }
                       onClick={() => sortNext(column)}
                     >
                       {column.label}
@@ -195,7 +205,7 @@ export function DataTable({
               : sortedRows.map((row) => (
                   <tr
                     key={row[rowKey]}
-                    className={`${onRowClick ? "clickable-row" : ""} ${selectedRowId === row[rowKey] ? "selected-row" : ""}`}
+                    className={`${onRowClick ? "clickable-row" : ""} ${selectedRowId === row[rowKey] ? "selected-row" : ""} ${rowClassName ? rowClassName(row) : ""}`}
                     tabIndex={onRowClick ? 0 : undefined}
                     onClick={() => onRowClick?.(row)}
                     onKeyDown={(event) => {

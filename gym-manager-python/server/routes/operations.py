@@ -24,9 +24,28 @@ def trainer_shift_report(
     range_type: str = Query("today", alias="rangeType"),
     day: str = "",
     week_start: str = Query("", alias="weekStart"),
+    q: str = "",
+    title: str = "all",
+    status: str = "all",
+    shift_kind: str = Query("all", alias="shiftKind"),
+    sort: str = "severity",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=10, le=1000, alias="pageSize"),
     db: Session = Depends(get_db),
 ):
-    return operations_controller.employee_shift_report(db, range_type=range_type, day=day, week_start=week_start)
+    return operations_controller.employee_shift_report(
+        db,
+        range_type=range_type,
+        day=day,
+        week_start=week_start,
+        q=q,
+        title=title,
+        status=status,
+        shift_kind=shift_kind,
+        sort=sort,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/trainer-shifts/{shift_id}/override", dependencies=[Depends(require_roles("admin", "manager"))])

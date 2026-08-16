@@ -413,7 +413,19 @@ def approve_employee_shift_override(db: Session, shift_id: int, payload: dict, a
     }
 
 
-def employee_shift_report(db: Session, range_type: str = "today", day: str = "", week_start: str = ""):
+def employee_shift_report(
+    db: Session,
+    range_type: str = "today",
+    day: str = "",
+    week_start: str = "",
+    q: str = "",
+    title: str = "all",
+    status: str = "all",
+    shift_kind: str = "all",
+    sort: str = "severity",
+    page: int = 1,
+    page_size: int = 30,
+):
     start_date, end_date = _attendance_report_range(range_type, day, week_start)
     start_at = datetime.combine(start_date, datetime.min.time())
     end_at = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
@@ -435,6 +447,15 @@ def employee_shift_report(db: Session, range_type: str = "today", day: str = "",
             "dateTo": end_date.isoformat(),
             "lateGraceMinutes": 10,
             "items": [],
+            "rows": [],
+            "summary": {
+                "employees": 0, "shifts": 0, "onTime": 0, "late": 0,
+                "earlyCheckout": 0, "absent": 0, "missingCheckout": 0,
+                "upcoming": 0, "pendingReview": 0, "attendanceRate": 0,
+                "onTimeRate": 0,
+            },
+            "filters": {"titles": []},
+            "pagination": pagination(page, page_size, 0),
         }
 
     schedule_ids = [row.id for row in schedules]
@@ -540,14 +561,14 @@ def employee_shift_report(db: Session, range_type: str = "today", day: str = "",
             else:
                 checkout_status = "missing_checkout"
                 checkout_status_label = "Thiếu check-out"
-        status = checkin_status
-        status_label = checkin_status_label
+        composite_status = checkin_status
+        composite_status_label = checkin_status_label
         if checkin_status == "late" and checkout_status == "early_checkout":
-            status = "late_early_checkout"
-            status_label = "Trễ · Checkout sớm"
+            composite_status = "late_early_checkout"
+            composite_status_label = "Trễ · Checkout sớm"
         elif checkout_status == "early_checkout":
-            status = "early_checkout"
-            status_label = "Checkout sớm"
+            composite_status = "early_checkout"
+            composite_status_label = "Checkout sớm"
         day_group["shifts"].append({
             "scheduleId": schedule.id,
             "overrideId": override.id if override else None,
@@ -564,8 +585,8 @@ def employee_shift_report(db: Session, range_type: str = "today", day: str = "",
             "overrideReason": override.reason if override else None,
             "checkedInAt": _attendance_iso(checked_in, "dah"),
             "checkedOutAt": _attendance_iso(checked_out, "dah"),
-            "status": status,
-            "statusLabel": status_label,
+            "status": composite_status,
+            "statusLabel": composite_status_label,
             "checkinStatus": checkin_status,
             "checkinStatusLabel": checkin_status_label,
             "checkoutStatus": checkout_status,
@@ -582,12 +603,132 @@ def employee_shift_report(db: Session, range_type: str = "today", day: str = "",
         employee["days"] = days
         items.append(employee)
     items.sort(key=lambda row: (row["employeeName"] or "", row["employeeId"]))
+    now = datetime.now()
+    all_rows = []
+    severity = {
+        "absent": 0,
+        "missing_checkout": 1,
+        "late_early_checkout": 2,
+        "late": 3,
+        "early_checkout": 3,
+        "awaiting_checkin": 4,
+        "in_progress": 5,
+        "upcoming": 6,
+        "on_time": 7,
+    }
+    summary = {
+        "employees": len(items),
+        "shifts": 0,
+        "onTime": 0,
+        "late": 0,
+        "earlyCheckout": 0,
+        "absent": 0,
+        "missingCheckout": 0,
+        "upcoming": 0,
+        "pendingReview": 0,
+        "attendanceRate": 0,
+        "onTimeRate": 0,
+    }
+    titles = sorted({employee["title"] for employee in items if employee.get("title")})
+    for employee in items:
+        for day_group in employee["days"]:
+            for shift in day_group["shifts"]:
+                effective_start = datetime.fromisoformat(shift["approvedStartAt"] or shift["scheduledStartAt"].replace("Z", "+00:00")).replace(tzinfo=None)
+                effective_end = datetime.fromisoformat(shift["approvedEndAt"] or shift["scheduledEndAt"].replace("Z", "+00:00")).replace(tzinfo=None)
+                display_status = shift["status"]
+                display_label = shift["statusLabel"]
+                if not shift["checkedInAt"]:
+                    if now < effective_start:
+                        display_status, display_label = "upcoming", "Chưa đến ca"
+                    elif now <= effective_end:
+                        display_status, display_label = "awaiting_checkin", "Đang chờ check-in"
+                    else:
+                        display_status, display_label = "absent", "Vắng mặt"
+                elif not shift["checkedOutAt"]:
+                    if now > effective_end:
+                        display_status, display_label = "missing_checkout", "Thiếu check-out"
+                    else:
+                        display_status, display_label = "in_progress", "Đang trong ca"
+                shift["displayStatus"] = display_status
+                shift["displayStatusLabel"] = display_label
+                shift["needsReview"] = display_status in {"absent", "missing_checkout", "late", "early_checkout", "late_early_checkout"}
+                shift["severityRank"] = severity.get(display_status, 9)
+                summary["shifts"] += 1
+                if display_status == "on_time":
+                    summary["onTime"] += 1
+                if shift["checkinStatus"] == "late":
+                    summary["late"] += 1
+                if shift["checkoutStatus"] == "early_checkout":
+                    summary["earlyCheckout"] += 1
+                if display_status == "absent":
+                    summary["absent"] += 1
+                if display_status == "missing_checkout":
+                    summary["missingCheckout"] += 1
+                if display_status == "upcoming":
+                    summary["upcoming"] += 1
+                if shift["needsReview"]:
+                    summary["pendingReview"] += 1
+                all_rows.append({
+                    "scheduleId": shift["scheduleId"],
+                    "employeeId": employee["employeeId"],
+                    "employeeCode": employee["employeeCode"],
+                    "employeeName": employee["employeeName"],
+                    "title": employee["title"],
+                    "workDate": day_group["workDate"],
+                    **shift,
+                    "dayEvents": day_group["events"],
+                })
+    completed = summary["shifts"] - summary["upcoming"] - sum(1 for row in all_rows if row["displayStatus"] == "awaiting_checkin")
+    attended = sum(1 for row in all_rows if row["checkedInAt"])
+    summary["attendanceRate"] = min(round((attended / completed) * 100, 1), 100) if completed > 0 else 0
+    summary["onTimeRate"] = round((summary["onTime"] / attended) * 100, 1) if attended else 0
+
+    normalized_q = str(q or "").strip().casefold()
+    filtered_rows = []
+    for row in all_rows:
+        if normalized_q and normalized_q not in f'{row["employeeName"] or ""} {row["employeeCode"] or ""}'.casefold():
+            continue
+        if title not in {"", "all"} and row["title"] != title:
+            continue
+        if status == "anomaly" and not row["needsReview"]:
+            continue
+        if status not in {"", "all", "anomaly"}:
+            if status == "late" and row["displayStatus"] not in {"late", "late_early_checkout"}:
+                continue
+            elif status == "early_checkout" and row["displayStatus"] not in {"early_checkout", "late_early_checkout"}:
+                continue
+            elif status not in {"late", "early_checkout"} and row["displayStatus"] != status:
+                continue
+        start_hour = int(row["startTime"].split(":", 1)[0])
+        row_shift_kind = "morning" if start_hour < 12 else "afternoon" if start_hour < 18 else "night"
+        row["shiftKind"] = row_shift_kind
+        if shift_kind not in {"", "all"} and row_shift_kind != shift_kind:
+            continue
+        filtered_rows.append(row)
+    if sort == "late_desc":
+        filtered_rows.sort(key=lambda row: (-row["lateMinutes"], row["workDate"], row["employeeName"] or ""))
+    elif sort == "early_desc":
+        filtered_rows.sort(key=lambda row: (-row["earlyCheckoutMinutes"], row["workDate"], row["employeeName"] or ""))
+    elif sort == "employee":
+        filtered_rows.sort(key=lambda row: (row["employeeName"] or "", row["workDate"], row["startTime"]))
+    elif sort == "date_desc":
+        filtered_rows.sort(key=lambda row: (row["workDate"], row["startTime"], row["employeeName"] or ""), reverse=True)
+    else:
+        filtered_rows.sort(key=lambda row: (row["severityRank"], row["workDate"], -(row["lateMinutes"] + row["earlyCheckoutMinutes"]), row["employeeName"] or ""))
+    total = len(filtered_rows)
+    page = max(page, 1)
+    page_size = min(max(page_size, 10), 1000)
+    page_rows = filtered_rows[(page - 1) * page_size:page * page_size]
     return {
         "rangeType": range_type or "today",
         "dateFrom": start_date.isoformat(),
         "dateTo": end_date.isoformat(),
         "lateGraceMinutes": 10,
         "items": items,
+        "rows": page_rows,
+        "summary": summary,
+        "filters": {"titles": titles},
+        "pagination": pagination(page, page_size, total),
     }
 
 

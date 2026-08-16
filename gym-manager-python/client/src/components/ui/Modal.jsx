@@ -1,7 +1,7 @@
 import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-7xl" };
+const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-7xl", full: "max-w-[calc(100vw-32px)]" };
 
 export function Modal({
   open,
@@ -11,6 +11,7 @@ export function Modal({
   children,
   size = "md",
   dirty = false,
+  className = "",
 }) {
   const panel = useRef(null);
   const returnFocus = useRef(null);
@@ -103,7 +104,7 @@ export function Modal({
     >
       <section
         ref={panel}
-        className={`modal ${modalSizes[size] || modalSizes.md}`}
+        className={`modal ${modalSizes[size] || modalSizes.md} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

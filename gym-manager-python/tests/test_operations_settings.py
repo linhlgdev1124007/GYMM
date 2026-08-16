@@ -419,6 +419,72 @@ def test_employee_shift_report_marks_late_and_not_checked(tmp_path):
         db.close()
 
 
+def test_employee_shift_report_normalizes_status_and_filters_flat_rows(tmp_path):
+    from server.models import Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import employee_shift_report
+
+    db = make_session(tmp_path)
+    try:
+        people = [
+            Person(display_name="Absent Sale", phone="0900000111", status="active"),
+            Person(display_name="Future Coach", phone="0900000112", status="active"),
+        ]
+        db.add_all(people)
+        db.flush()
+        employees = [
+            Employee(person_id=people[0].id, employee_code="EMP-00111", job_title="Sale", status="active"),
+            Employee(person_id=people[1].id, employee_code="EMP-00112", job_title="Coach", status="active"),
+        ]
+        db.add_all(employees)
+        db.flush()
+        db.add_all([
+            EmployeeShiftSchedule(
+                employee_id=employees[0].id,
+                work_date=date(2020, 1, 6),
+                starts_at=datetime(2020, 1, 6, 8, 0),
+                ends_at=datetime(2020, 1, 6, 12, 0),
+            ),
+            EmployeeShiftSchedule(
+                employee_id=employees[1].id,
+                work_date=date(2099, 1, 5),
+                starts_at=datetime(2099, 1, 5, 18, 0),
+                ends_at=datetime(2099, 1, 5, 22, 0),
+            ),
+        ])
+        db.commit()
+
+        absent = employee_shift_report(
+            db,
+            range_type="date",
+            day="2020-01-06",
+            status="anomaly",
+            title="Sale",
+            q="emp-00111",
+            page=1,
+            page_size=10,
+        )
+        future = employee_shift_report(
+            db,
+            range_type="date",
+            day="2099-01-05",
+            status="upcoming",
+            shift_kind="night",
+        )
+
+        assert absent["summary"]["absent"] == 1
+        assert absent["summary"]["pendingReview"] == 1
+        assert absent["rows"][0]["displayStatus"] == "absent"
+        assert absent["rows"][0]["needsReview"] is True
+        assert absent["pagination"]["total"] == 1
+        assert absent["filters"]["titles"] == ["Sale"]
+        assert future["summary"]["upcoming"] == 1
+        assert future["rows"][0]["displayStatus"] == "upcoming"
+        assert future["rows"][0]["shiftKind"] == "night"
+        assert future["rows"][0]["needsReview"] is False
+    finally:
+        db.close()
+
+
 def test_employee_shift_report_uses_approved_override(tmp_path):
     from server.models import AttendanceSession, Employee, EmployeeShiftSchedule, Person
     from server.services.operations_service import approve_employee_shift_override, employee_shift_report

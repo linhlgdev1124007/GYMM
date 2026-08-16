@@ -172,7 +172,14 @@ def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
         data = reports(db, vietnam_today().isoformat(), vietnam_today().isoformat())
 
         assert data["summary"]["revenue"] == 700000
+        assert data["summary"]["previousRevenue"] == 0
+        assert data["summary"]["collectionRate"] == 100
+        assert data["summary"]["previousCheckins"] == 0
+        assert data["daily"] == [{"date": vietnam_today().isoformat(), "amount": 700000.0, "payments": 1, "checkins": 0}]
+        assert data["comparisonPeriod"]["to"] < data["period"]["from"]
+        assert data["generatedAt"].endswith("Z")
         assert data["revenueBySale"] == [{"saleEmployeeId": sale.id, "saleName": "Sale Report", "saleTitle": "Sale", "amount": 700000.0, "payments": 1}]
+        assert data["revenueByMethod"] == [{"method": "cash", "amount": 700000.0, "share": 100.0}]
         assert data["revenueItems"][0]["paymentNo"] == "PAY-REPORT"
         assert data["revenueItems"][0]["saleName"] == "Sale Report"
         assert data["revenueItems"][0]["memberCode"] == "CUS-REPORT"

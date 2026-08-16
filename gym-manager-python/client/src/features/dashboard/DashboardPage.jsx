@@ -424,23 +424,6 @@ export function DashboardPage() {
         </div>
       </header>
 
-      {user.role === "admin" && (
-        <RecentAuditPanel
-          query={auditQuery}
-          scope={auditScope}
-          pageSize={auditPageSize}
-          onScope={(scope) => {
-            setAuditScope(scope);
-            setAuditPage(1);
-          }}
-          onPage={setAuditPage}
-          onPageSize={(value) => {
-            setAuditPageSize(value);
-            setAuditPage(1);
-          }}
-        />
-      )}
-
       <section className="command-metric-strip" aria-label="Chỉ số điều hành">
         {metrics.map((item) => <Metric item={item} key={item.label} />)}
       </section>
@@ -527,6 +510,23 @@ export function DashboardPage() {
           </div>
         </section>
       </div>
+
+      {user.role === "admin" && (
+        <RecentAuditPanel
+          query={auditQuery}
+          scope={auditScope}
+          pageSize={auditPageSize}
+          onScope={(scope) => {
+            setAuditScope(scope);
+            setAuditPage(1);
+          }}
+          onPage={setAuditPage}
+          onPageSize={(value) => {
+            setAuditPageSize(value);
+            setAuditPage(1);
+          }}
+        />
+      )}
     </div>
   );
 }

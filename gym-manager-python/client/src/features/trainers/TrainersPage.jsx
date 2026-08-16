@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Download, FileSpreadsheet, Link2, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock3, Download, Eye, FileSpreadsheet, Filter, LayoutGrid, Link2, LogOut, Pencil, Plus, Rows3, Save, Search, Trash2, UserX, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
@@ -135,6 +135,68 @@ function checkStatusClass(status) {
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
+const reportStatusMeta = {
+  on_time: { label: "Đúng giờ", tone: "positive", icon: CheckCircle2 },
+  late: { label: "Đi trễ", tone: "warning", icon: Clock3 },
+  early_checkout: { label: "Về sớm", tone: "warning", icon: LogOut },
+  late_early_checkout: { label: "Trễ · Về sớm", tone: "warning-strong", icon: AlertCircle },
+  absent: { label: "Vắng mặt", tone: "danger", icon: UserX },
+  missing_checkout: { label: "Thiếu check-out", tone: "danger", icon: AlertCircle },
+  awaiting_checkin: { label: "Chờ check-in", tone: "neutral", icon: Clock3 },
+  in_progress: { label: "Đang trong ca", tone: "info", icon: Clock3 },
+  upcoming: { label: "Chưa đến ca", tone: "neutral", icon: CalendarDays },
+};
+
+function ReportStatus({ row, compact = false }) {
+  const meta = reportStatusMeta[row.displayStatus] || reportStatusMeta.upcoming;
+  const Icon = meta.icon;
+  return (
+    <span className={`shift-status tone-${meta.tone} ${compact ? "compact" : ""}`}>
+      <Icon size={compact ? 11 : 13} />
+      <span>{row.displayStatusLabel || meta.label}</span>
+      {!compact && row.displayStatus === "late" && row.lateMinutes > 0 && <strong>+{row.lateMinutes}p</strong>}
+      {!compact && row.displayStatus === "early_checkout" && row.earlyCheckoutMinutes > 0 && <strong>-{row.earlyCheckoutMinutes}p</strong>}
+      {!compact && row.displayStatus === "late_early_checkout" && <strong>+{row.lateMinutes}p / -{row.earlyCheckoutMinutes}p</strong>}
+    </span>
+  );
+}
+
+function downloadAttendanceCsv(data) {
+  const rows = Array.isArray(data.rows)
+    ? data.rows
+    : (data.items || []).flatMap((employee) => employee.days.flatMap((day) => day.shifts.map((shift) => ({
+        ...shift,
+        workDate: day.workDate,
+        employeeCode: employee.employeeCode,
+        employeeName: employee.employeeName,
+        title: employee.title,
+        dayEvents: day.events,
+      }))));
+  const csv = [
+    "Ngày,Mã nhân viên,Họ tên,Chức vụ,Ca tính công,Ca gốc,Đã duyệt đổi ca,Lý do đổi ca,Check-in,Trạng thái check-in,Check-out,Trạng thái check-out,Trạng thái tổng,Trễ phút,Checkout sớm phút,Event rà soát",
+    ...rows.map((row) => {
+      const events = (row.events?.length ? row.events : row.dayEvents || []).map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`).join(" | ");
+      return [
+        row.workDate, row.employeeCode, row.employeeName, row.title,
+        `${row.startTime} - ${row.endTime}`,
+        `${row.originalStartTime || row.startTime} - ${row.originalEndTime || row.endTime}`,
+        row.hasOverride ? "Có" : "", row.overrideReason || "",
+        row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("vi-VN") : "",
+        row.checkinStatusLabel, row.checkedOutAt ? new Date(row.checkedOutAt).toLocaleString("vi-VN") : "",
+        row.checkoutStatusLabel, row.displayStatusLabel || row.statusLabel,
+        row.lateMinutes || "", row.earlyCheckoutMinutes || "", events,
+      ].map(csvValue).join(",");
+    }),
+  ].join("\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `pulsefit-shift-attendance-${data.dateFrom}-${data.dateTo}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  return rows.length;
+}
+
 
 export function TrainersPage() {
   const client = useQueryClient();
@@ -163,14 +225,20 @@ export function TrainersPage() {
   const [importDays, setImportDays] = useState([]);
   const [importRows, setImportRows] = useState([]);
   const [importError, setImportError] = useState("");
-  const [attendanceOpen, setAttendanceOpen] = useState(false);
-  const [attendancePreset, setAttendancePreset] = useState("today");
-  const [attendanceDate, setAttendanceDate] = useState(isoDay());
-  const [attendanceWeekStart, setAttendanceWeekStart] = useState(startOfWeek());
   const [reportOpen, setReportOpen] = useState(false);
   const [reportRange, setReportRange] = useState("today");
   const [reportDate, setReportDate] = useState(isoDay());
   const [reportWeekStart, setReportWeekStart] = useState(startOfWeek());
+  const [reportView, setReportView] = useState("exceptions");
+  const [reportStatus, setReportStatus] = useState("anomaly");
+  const [reportSearch, setReportSearch] = useState("");
+  const reportQ = useDebouncedValue(reportSearch);
+  const [reportTitle, setReportTitle] = useState("all");
+  const [reportShiftKind, setReportShiftKind] = useState("all");
+  const [reportSort, setReportSort] = useState("severity");
+  const [reportPage, setReportPage] = useState(1);
+  const [reportPageSize, setReportPageSize] = useState(30);
+  const [reportDetail, setReportDetail] = useState(null);
   const [overrideTarget, setOverrideTarget] = useState(null);
   const [overrideForm, setOverrideForm] = useState({ workDate: isoDay(), startTime: "08:00", endTime: "12:00", reason: "" });
   const [overrideError, setOverrideError] = useState("");
@@ -220,12 +288,19 @@ export function TrainersPage() {
     enabled: !!scheduleTarget?.id,
   });
   const shiftReport = useQuery({
-    queryKey: ["trainer-shift-report", reportRange, reportDate, reportWeekStart],
+    queryKey: ["trainer-shift-report", reportRange, reportDate, reportWeekStart, reportQ, reportTitle, reportStatus, reportShiftKind, reportSort, reportPage, reportPageSize],
     queryFn: () =>
       api(`/api/trainers/shift-report?${queryString({
         rangeType: reportRange,
         day: reportDate,
         weekStart: reportWeekStart,
+        q: reportQ,
+        title: reportTitle,
+        status: reportView === "matrix" ? "all" : reportStatus,
+        shiftKind: reportShiftKind,
+        sort: reportSort,
+        page: reportPage,
+        pageSize: reportPageSize,
       })}`),
     enabled: reportOpen,
   });
@@ -284,21 +359,32 @@ export function TrainersPage() {
       ),
     [scheduleDays, weeklyRows],
   );
-  const reportSummary = useMemo(() => {
-    const summary = { employees: 0, shifts: 0, late: 0, earlyCheckout: 0, notChecked: 0 };
-    (shiftReport.data?.items || []).forEach((employee) => {
-      summary.employees += 1;
-      employee.days.forEach((day) => {
-        day.shifts.forEach((shift) => {
-          summary.shifts += 1;
-          if (shift.status === "late" || shift.status === "late_early_checkout") summary.late += 1;
-          if (shift.status === "early_checkout" || shift.status === "late_early_checkout") summary.earlyCheckout += 1;
-          if (shift.status === "not_checked") summary.notChecked += 1;
-        });
-      });
-    });
-    return summary;
-  }, [shiftReport.data?.items]);
+  const reportSummary = shiftReport.data?.summary || { employees: 0, shifts: 0, onTime: 0, late: 0, earlyCheckout: 0, absent: 0, missingCheckout: 0, upcoming: 0, pendingReview: 0, attendanceRate: 0, onTimeRate: 0 };
+  const reportMatrixDays = useMemo(() => {
+    if (!shiftReport.data?.dateFrom || !shiftReport.data?.dateTo) return [];
+    const days = [];
+    for (let cursor = shiftReport.data.dateFrom; cursor <= shiftReport.data.dateTo && days.length < 7; cursor = addDays(cursor, 1)) days.push(cursor);
+    return days;
+  }, [shiftReport.data?.dateFrom, shiftReport.data?.dateTo]);
+  const reportMatrixEmployees = useMemo(() => {
+    const searchValue = normalizeText(reportQ);
+    return (shiftReport.data?.items || []).reduce((employees, employee) => {
+      if (reportTitle !== "all" && employee.title !== reportTitle) return employees;
+      if (searchValue && !normalizeText(`${employee.employeeName} ${employee.employeeCode}`).includes(searchValue)) return employees;
+      const days = employee.days.map((day) => ({
+        ...day,
+        shifts: day.shifts.filter((shift) => {
+          if (reportShiftKind === "all") return true;
+          const hour = Number(shift.startTime?.split(":", 1)[0]);
+          const kind = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "night";
+          return kind === reportShiftKind;
+        }),
+      }));
+      if (!days.some((day) => day.shifts.length)) return employees;
+      employees.push({ ...employee, days });
+      return employees;
+    }, []);
+  }, [reportQ, reportShiftKind, reportTitle, shiftReport.data?.items]);
   useEffect(() => {
     if (!scheduleOpen || allTrainers.isLoading || weeklyShifts.isLoading) return;
     const shiftsByEmployeeDay = new Map();
@@ -452,77 +538,21 @@ export function TrainersPage() {
     },
     onError: (error) => setOverrideError(error.message),
   });
-  const attendanceRangeType = attendancePreset === "custom" ? "date" : attendancePreset;
-  const exportAttendance = useMutation({
-    mutationFn: () =>
-      api(`/api/trainers/shift-report?${queryString({
-        rangeType: attendanceRangeType,
-        day: attendanceDate,
-        weekStart: attendanceWeekStart,
-      })}`),
-    onSuccess: (data) => {
-      const rows = [];
-      (data.items || []).forEach((employee) => {
-        employee.days.forEach((day) => {
-          day.shifts.forEach((shift) => {
-            const events = (shift.events.length ? shift.events : day.events)
-              .map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`)
-              .join(" | ");
-            rows.push({
-              workDate: day.workDate,
-              employeeCode: employee.employeeCode,
-              employeeName: employee.employeeName,
-              title: employee.title,
-              shiftTime: `${shift.startTime} - ${shift.endTime}`,
-              originalShiftTime: `${shift.originalStartTime || shift.startTime} - ${shift.originalEndTime || shift.endTime}`,
-              hasOverride: shift.hasOverride ? "Có" : "",
-              overrideReason: shift.overrideReason || "",
-              checkedInAt: shift.checkedInAt,
-              checkinStatusLabel: shift.checkinStatusLabel,
-              checkedOutAt: shift.checkedOutAt,
-              checkoutStatusLabel: shift.checkoutStatusLabel,
-              lateMinutes: shift.lateMinutes || "",
-              earlyCheckoutMinutes: shift.earlyCheckoutMinutes || "",
-              events,
-            });
-          });
-        });
-      });
-      const csv = [
-        "Ngày,Mã nhân viên,Họ tên,Chức vụ,Ca tính công,Ca gốc,Đã duyệt đổi ca,Lý do đổi ca,Check-in,Trạng thái check-in,Check-out,Trạng thái check-out,Trễ phút,Checkout sớm phút,Event rà soát",
-        ...rows.map((row) =>
-          [
-            row.workDate,
-            row.employeeCode,
-            row.employeeName,
-            row.title,
-            row.shiftTime,
-            row.originalShiftTime,
-            row.hasOverride,
-            row.overrideReason,
-            row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("vi-VN") : "",
-            row.checkinStatusLabel,
-            row.checkedOutAt ? new Date(row.checkedOutAt).toLocaleString("vi-VN") : "",
-            row.checkoutStatusLabel,
-            row.lateMinutes,
-            row.earlyCheckoutMinutes,
-            row.events,
-          ].map(csvValue).join(","),
-        ),
-      ].join("\n");
-      const url = URL.createObjectURL(
-        new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }),
-      );
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `pulsefit-shift-attendance-${data.dateFrom}-${data.dateTo}.csv`;
-      link.click();
-      URL.revokeObjectURL(url);
-      notify.success(`Đã tải ${rows.length} dòng chấm công theo ca.`);
-      setAttendanceOpen(false);
-    },
-    onError: (e) =>
-      notify.errorFrom(e, "Không thể tải chấm công nhân viên."),
+  const exportCurrentReport = useMutation({
+    mutationFn: () => api(`/api/trainers/shift-report?${queryString({
+      rangeType: reportRange,
+      day: reportDate,
+      weekStart: reportWeekStart,
+      q: reportQ,
+      title: reportTitle,
+      status: reportView === "matrix" ? "all" : reportStatus,
+      shiftKind: reportShiftKind,
+      sort: reportSort,
+      page: 1,
+      pageSize: 1000,
+    })}`),
+    onSuccess: (data) => notify.success(`Đã tải ${downloadAttendanceCsv(data)} dòng theo bộ lọc hiện tại.`),
+    onError: (error) => notify.errorFrom(error, "Không thể xuất report ca."),
   });
   const updateImportCell = (rowIndex, cellIndex, value) => {
     setImportRows((rows) =>
@@ -793,6 +823,14 @@ export function TrainersPage() {
                 setReportRange("today");
                 setReportDate(isoDay());
                 setReportWeekStart(startOfWeek());
+                setReportView("exceptions");
+                setReportStatus("anomaly");
+                setReportSearch("");
+                setReportTitle("all");
+                setReportShiftKind("all");
+                setReportSort("severity");
+                setReportPage(1);
+                setReportDetail(null);
                 setReportOpen(true);
               }}
             >
@@ -801,9 +839,20 @@ export function TrainersPage() {
             </Button>
             <Button
               variant="secondary"
-              onClick={() => setAttendanceOpen(true)}
-              loading={exportAttendance.isPending}
-              loadingText="Đang tải..."
+              onClick={() => {
+                setReportRange("today");
+                setReportDate(isoDay());
+                setReportWeekStart(startOfWeek());
+                setReportView("all");
+                setReportStatus("all");
+                setReportSearch("");
+                setReportTitle("all");
+                setReportShiftKind("all");
+                setReportSort("severity");
+                setReportPage(1);
+                setReportDetail(null);
+                setReportOpen(true);
+              }}
             >
               <Download size={16} />
               Tải chấm công
@@ -1562,186 +1611,119 @@ export function TrainersPage() {
       </Modal>
       <Modal
         open={reportOpen}
-        onClose={() => setReportOpen(false)}
-        size="xl"
-        title="Report ca làm việc"
+        onClose={() => { setReportOpen(false); setReportDetail(null); }}
+        size="full"
+        className="shift-report-modal"
+        title="Báo cáo ca & chấm công"
         description={
           shiftReport.data
-            ? `${dateLabel(shiftReport.data.dateFrom)} đến ${dateLabel(shiftReport.data.dateTo)} · Cho phép trễ ${shiftReport.data.lateGraceMinutes} phút`
-            : "Đối chiếu lịch ca với check-in/check-out thực tế."
+            ? `${dateLabel(shiftReport.data.dateFrom)} – ${dateLabel(shiftReport.data.dateTo)} · Cho phép check-in trễ ${shiftReport.data.lateGraceMinutes} phút`
+            : "Đối chiếu lịch được giao với thời gian check-in/check-out thực tế."
         }
       >
-        <div className="modal-body">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <Field label="Khoảng report">
-                <Select
-                  className="input min-w-48"
-                  value={reportRange}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setReportRange(value);
-                    if (value === "today") setReportDate(isoDay());
-                    if (value === "yesterday") setReportDate(isoDay(-1));
-                    if (value === "this_week") setReportWeekStart(startOfWeek());
-                    if (value === "last_week") setReportWeekStart(addDays(startOfWeek(), -7));
-                  }}
-                >
-                  <option value="today">Hôm nay</option>
-                  <option value="yesterday">Hôm qua</option>
-                  <option value="date">Ngày cụ thể</option>
-                  <option value="this_week">Tuần này</option>
-                  <option value="last_week">Tuần trước</option>
-                  <option value="week">Tuần cụ thể</option>
-                </Select>
-              </Field>
-              {reportRange === "date" && (
-                <Field label="Ngày">
-                  <DateInput value={reportDate} onChange={(value) => setReportDate(value || isoDay())} />
-                </Field>
-              )}
-              {reportRange === "week" && (
-                <Field label="Tuần bắt đầu">
-                  <DateInput value={reportWeekStart} onChange={(value) => setReportWeekStart(startOfWeek(value || isoDay()))} />
-                </Field>
-              )}
+        <div className="modal-body shift-report-workspace">
+          <div className="shift-report-scope">
+            <div className="shift-range-presets" role="group" aria-label="Khoảng báo cáo">
+              {[["today", "Hôm nay"], ["yesterday", "Hôm qua"], ["this_week", "Tuần này"], ["last_week", "Tuần trước"]].map(([value, label]) => (
+                <button type="button" key={value} className={reportRange === value ? "active" : ""} onClick={() => {
+                  setReportRange(value);
+                  if (value === "today") setReportDate(isoDay());
+                  if (value === "yesterday") setReportDate(isoDay(-1));
+                  if (value === "this_week") setReportWeekStart(startOfWeek());
+                  if (value === "last_week") setReportWeekStart(addDays(startOfWeek(), -7));
+                  setReportPage(1);
+                }}>{label}</button>
+              ))}
+              <button type="button" className={["date", "week"].includes(reportRange) ? "active" : ""} onClick={() => setReportRange("date")}>Tùy chỉnh</button>
             </div>
-            <Button
-              variant="secondary"
-              onClick={() => shiftReport.refetch()}
-              loading={shiftReport.isFetching}
-              loadingText="Đang tải..."
-            >
-              Làm mới
-            </Button>
-          </div>
-          <div className="mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[640px]:grid-cols-1">
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <span className="text-xs font-medium text-slate-500">Nhân viên có ca</span>
-              <strong className="mt-1 block text-xl text-slate-950">{reportSummary.employees}</strong>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <span className="text-xs font-medium text-slate-500">Tổng ca</span>
-              <strong className="mt-1 block text-xl text-slate-950">{reportSummary.shifts}</strong>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <span className="text-xs font-medium text-slate-500">Ca trễ</span>
-              <strong className="mt-1 block text-xl text-amber-700">{reportSummary.late}</strong>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <span className="text-xs font-medium text-slate-500">Checkout sớm</span>
-              <strong className="mt-1 block text-xl text-amber-700">{reportSummary.earlyCheckout}</strong>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-              <span className="text-xs font-medium text-slate-500">Chưa chấm công</span>
-              <strong className="mt-1 block text-xl text-slate-700">{reportSummary.notChecked}</strong>
+            {reportRange === "date" && <DateInput value={reportDate} onChange={(value) => { setReportDate(value || isoDay()); setReportPage(1); }} />}
+            {reportRange === "week" && <DateInput value={reportWeekStart} onChange={(value) => { setReportWeekStart(startOfWeek(value || isoDay())); setReportPage(1); }} />}
+            {reportRange === "date" && <button type="button" className="shift-week-toggle" onClick={() => setReportRange("week")}>Chọn cả tuần</button>}
+            <div className="shift-scope-actions">
+              <span>{shiftReport.data ? `${dateLabel(shiftReport.data.dateFrom)} – ${dateLabel(shiftReport.data.dateTo)}` : ""}</span>
+              <Button size="sm" variant="secondary" onClick={() => shiftReport.refetch()} loading={shiftReport.isFetching}>Làm mới</Button>
+              <Button size="sm" onClick={() => exportCurrentReport.mutate()} loading={exportCurrentReport.isPending}><Download size={14} />Xuất theo bộ lọc</Button>
             </div>
           </div>
-          {shiftReport.isLoading ? (
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
-              Đang tải report...
-            </div>
-          ) : shiftReport.error ? (
-            <div className="inline-error">{shiftReport.error.message}</div>
-          ) : !(shiftReport.data?.items || []).length ? (
-            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center">
-              <div className="text-sm font-semibold text-slate-950">Không có ca làm trong khoảng này</div>
-              <div className="mt-1 text-xs text-slate-500">Report chỉ hiển thị các ca đã được setup trong lịch ca.</div>
+
+          <div className="shift-summary-strip" aria-label="Tóm tắt chấm công">
+            <button type="button" onClick={() => { setReportView("all"); setReportStatus("all"); setReportPage(1); }}><span>Tổng ca</span><strong>{reportSummary.shifts}</strong><small>{reportSummary.employees} nhân viên</small></button>
+            <button type="button" className="positive" onClick={() => { setReportView("all"); setReportStatus("on_time"); setReportPage(1); }}><span>Đúng giờ</span><strong>{reportSummary.onTime}</strong><small>{reportSummary.onTimeRate}% ca đã chấm</small></button>
+            <button type="button" className="warning" onClick={() => { setReportView("exceptions"); setReportStatus("late"); setReportPage(1); }}><span>Đi trễ</span><strong>{reportSummary.late}</strong><small>Trên {shiftReport.data?.lateGraceMinutes || 10} phút</small></button>
+            <button type="button" className="warning" onClick={() => { setReportView("exceptions"); setReportStatus("early_checkout"); setReportPage(1); }}><span>Về sớm</span><strong>{reportSummary.earlyCheckout}</strong><small>Cần đối chiếu</small></button>
+            <button type="button" className="danger" onClick={() => { setReportView("exceptions"); setReportStatus("absent"); setReportPage(1); }}><span>Vắng mặt</span><strong>{reportSummary.absent}</strong><small>Ca đã kết thúc</small></button>
+            <button type="button" className="danger" onClick={() => { setReportView("exceptions"); setReportStatus("missing_checkout"); setReportPage(1); }}><span>Thiếu check-out</span><strong>{reportSummary.missingCheckout}</strong><small>Cần rà soát</small></button>
+            <div><span>Tỷ lệ đi làm</span><strong>{reportSummary.attendanceRate}%</strong><small>{reportSummary.pendingReview} ca chờ xử lý</small></div>
+          </div>
+
+          <div className="shift-report-tabs">
+            <button type="button" className={reportView === "exceptions" ? "active" : ""} onClick={() => { setReportView("exceptions"); setReportStatus("anomaly"); setReportPage(1); }}><AlertCircle size={14} />Bất thường <strong>{reportSummary.pendingReview}</strong></button>
+            <button type="button" className={reportView === "all" ? "active" : ""} onClick={() => { setReportView("all"); setReportStatus("all"); setReportPage(1); }}><Rows3 size={14} />Tất cả ca</button>
+            <button type="button" className={reportView === "matrix" ? "active" : ""} onClick={() => { setReportView("matrix"); setReportStatus("all"); setReportPage(1); }}><LayoutGrid size={14} />Ma trận tuần</button>
+          </div>
+
+          <div className="shift-report-filters">
+            <label className="shift-report-search"><Search size={15} /><input value={reportSearch} onChange={(event) => { setReportSearch(event.target.value); setReportPage(1); }} placeholder="Tìm tên hoặc mã nhân viên" />{reportSearch && <button type="button" onClick={() => setReportSearch("")} aria-label="Xóa tìm kiếm"><X size={13} /></button>}</label>
+            <Select value={reportTitle} aria-label="Lọc theo chức vụ" onChange={(event) => { setReportTitle(event.target.value); setReportPage(1); }}><option value="all">Mọi chức vụ</option>{(shiftReport.data?.filters?.titles || []).map((title) => <option key={title}>{title}</option>)}</Select>
+            <Select value={reportStatus} aria-label="Lọc theo trạng thái" onChange={(event) => { setReportStatus(event.target.value); setReportView(event.target.value === "all" ? "all" : "exceptions"); setReportPage(1); }}><option value="all">Mọi trạng thái</option><option value="anomaly">Chỉ bất thường</option><option value="late">Đi trễ</option><option value="early_checkout">Về sớm</option><option value="absent">Vắng mặt</option><option value="missing_checkout">Thiếu check-out</option><option value="on_time">Đúng giờ</option><option value="in_progress">Đang trong ca</option><option value="upcoming">Chưa đến ca</option></Select>
+            <Select value={reportShiftKind} aria-label="Lọc theo loại ca" onChange={(event) => { setReportShiftKind(event.target.value); setReportPage(1); }}><option value="all">Mọi khung ca</option><option value="morning">Ca sáng</option><option value="afternoon">Ca chiều</option><option value="night">Ca tối</option></Select>
+            <Select value={reportSort} aria-label="Sắp xếp" onChange={(event) => { setReportSort(event.target.value); setReportPage(1); }}><option value="severity">Nghiêm trọng trước</option><option value="late_desc">Trễ nhiều trước</option><option value="early_desc">Về sớm nhiều trước</option><option value="date_desc">Ngày mới trước</option><option value="employee">Tên A-Z</option></Select>
+            {(reportSearch || reportTitle !== "all" || reportStatus !== (reportView === "exceptions" ? "anomaly" : "all") || reportShiftKind !== "all" || reportSort !== "severity") && <button type="button" className="shift-filter-reset" onClick={() => { setReportSearch(""); setReportTitle("all"); setReportStatus(reportView === "exceptions" ? "anomaly" : "all"); setReportShiftKind("all"); setReportSort("severity"); setReportPage(1); }}><Filter size={13} />Xóa lọc</button>}
+          </div>
+
+          {shiftReport.error ? <div className="inline-error">{shiftReport.error.message}</div> : reportView === "matrix" ? (
+            <div className="shift-matrix-shell">
+              <div className="shift-matrix-grid" style={{ gridTemplateColumns: `220px repeat(${Math.max(reportMatrixDays.length, 1)}, minmax(145px, 1fr))` }}>
+                <div className="shift-matrix-head employee">Nhân viên</div>
+                {reportMatrixDays.map((day) => <div key={day} className="shift-matrix-head"><strong>{weekDays[(new Date(`${day}T00:00:00`).getDay() + 6) % 7]}</strong><span>{dateLabel(day)}</span></div>)}
+                {reportMatrixEmployees.map((employee) => <div className="contents" key={employee.employeeId}>
+                  <div className="shift-matrix-person"><strong>{employee.employeeName}</strong><span>{employee.title || "Chưa có chức vụ"}</span><small>{employee.employeeCode}</small></div>
+                  {reportMatrixDays.map((day) => {
+                    const dayData = employee.days.find((item) => item.workDate === day);
+                    return <div className="shift-matrix-cell" key={day}>{(dayData?.shifts || []).map((shift) => <button type="button" key={shift.scheduleId} className={`tone-${reportStatusMeta[shift.displayStatus]?.tone || "neutral"}`} onClick={() => setReportDetail({ ...shift, workDate: day, employeeId: employee.employeeId, employeeName: employee.employeeName, employeeCode: employee.employeeCode, title: employee.title, dayEvents: dayData.events })}><span>{shift.startTime}–{shift.endTime}</span><ReportStatus row={shift} compact /></button>)}{!dayData?.shifts?.length && <span className="shift-matrix-off">—</span>}</div>;
+                  })}
+                </div>)}
+              </div>
+              {!reportMatrixEmployees.length && <div className="shift-report-empty">Không có nhân viên phù hợp bộ lọc.</div>}
             </div>
           ) : (
-            <div className="space-y-4">
-              {(shiftReport.data?.items || []).map((employee) => (
-                <div key={employee.employeeId} className="rounded-lg border border-slate-200 bg-white">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-950">{employee.employeeName}</div>
-                      <div className="mt-0.5 text-xs text-slate-500">{employee.title || "Chưa có chức vụ"}</div>
-                    </div>
-                    <div className="text-xs font-medium text-slate-500">{employee.employeeCode}</div>
-                  </div>
-                  <div className="overflow-auto">
-                    <table className="min-w-[1040px] w-full border-collapse text-[12px]">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-600">
-                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Ngày</th>
-                          <th className="w-32 border-b border-slate-200 px-3 py-2 text-left font-semibold">Ca làm</th>
-                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Check-in</th>
-                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Check-out</th>
-                          <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">Trạng thái check-in</th>
-                          <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">Trạng thái check-out</th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold">Event rà soát</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {employee.days.flatMap((day) =>
-                          day.shifts.map((shift, shiftIndex) => (
-                            <tr key={`${day.workDate}-${shift.scheduleId}`} className="align-top">
-                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
-                                {shiftIndex === 0 ? dateLabel(day.workDate) : ""}
-                              </td>
-                              <td className="border-b border-slate-100 px-3 py-2 font-medium text-slate-950">
-                                {shift.startTime} - {shift.endTime}
-                                {shift.hasOverride && (
-                                  <div className="mt-1 text-[11px] font-medium text-blue-700">
-                                    Đã duyệt đổi ca · gốc {shift.originalStartTime} - {shift.originalEndTime}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">{timeOnly(shift.checkedInAt)}</td>
-                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">{timeOnly(shift.checkedOutAt)}</td>
-                              <td className="border-b border-slate-100 px-3 py-2">
-                                <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${checkStatusClass(shift.checkinStatus || shift.status)}`}>
-                                  {shift.checkinStatusLabel || shift.statusLabel}
-                                  {shift.checkinStatus === "late" && shift.lateMinutes ? ` ${shift.lateMinutes}p` : ""}
-                                </span>
-                              </td>
-                              <td className="border-b border-slate-100 px-3 py-2">
-                                <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${checkStatusClass(shift.checkoutStatus)}`}>
-                                  {shift.checkoutStatusLabel || "Chưa chấm công"}
-                                  {shift.checkoutStatus === "early_checkout" && shift.earlyCheckoutMinutes ? ` ${shift.earlyCheckoutMinutes}p` : ""}
-                                </span>
-                              </td>
-                              <td className="border-b border-slate-100 px-3 py-2">
-                                <div className="flex flex-col gap-2">
-                                  <Button size="sm" variant="secondary" onClick={() => openShiftOverride(employee, day, shift)}>
-                                    <Pencil size={13} />
-                                    Duyệt đổi ca
-                                  </Button>
-                                  <details>
-                                    <summary className="cursor-pointer text-xs font-medium text-blue-700">
-                                      {shift.events.length || day.events.length} event
-                                    </summary>
-                                    <div className="mt-2 space-y-1">
-                                      {(shift.events.length ? shift.events : day.events).map((event) => (
-                                        <div key={event.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
-                                          <span className="font-semibold text-slate-900">{timeOnly(event.eventTime)}</span>
-                                          <span> · {event.action || "event"}</span>
-                                          <span> · {event.status}</span>
-                                          {event.attendanceSessionId && <span> · session #{event.attendanceSessionId}</span>}
-                                        </div>
-                                      ))}
-                                      {!(shift.events.length || day.events.length) && (
-                                        <div className="text-[11px] text-slate-500">Không có event trong ngày.</div>
-                                      )}
-                                    </div>
-                                  </details>
-                                </div>
-                              </td>
-                            </tr>
-                          )),
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <>
+              <DataTable
+                loading={shiftReport.isLoading}
+                rows={shiftReport.data?.rows || []}
+                rowKey="scheduleId"
+                density="compact"
+                selectedRowId={reportDetail?.scheduleId}
+                onRowClick={setReportDetail}
+                rowClassName={(row) => `shift-row tone-${reportStatusMeta[row.displayStatus]?.tone || "neutral"}`}
+                columns={[
+                  { key: "employee", label: "Nhân viên", sortable: false, className: "shift-employee-col", render: (row) => <span className="shift-person-cell"><strong>{row.employeeName}</strong><small>{row.title || "Chưa có chức vụ"} · {row.employeeCode}</small></span> },
+                  { key: "workDate", label: "Ngày / ca", sortable: false, render: (row) => <span className="shift-date-cell"><strong>{dateLabel(row.workDate)}</strong><small>{row.shiftKind === "morning" ? "Ca sáng" : row.shiftKind === "afternoon" ? "Ca chiều" : "Ca tối"}</small></span> },
+                  { key: "planned", label: "Giờ kế hoạch", sortable: false, render: (row) => <span className="shift-time-cell"><strong>{row.startTime}–{row.endTime}</strong>{row.hasOverride && <small className="override">Đã đổi · gốc {row.originalStartTime}–{row.originalEndTime}</small>}</span> },
+                  { key: "actual", label: "Giờ thực tế", sortable: false, render: (row) => <span className="shift-actual-cell"><span><small>Vào</small><strong>{timeOnly(row.checkedInAt)}</strong></span><i /><span><small>Ra</small><strong>{timeOnly(row.checkedOutAt)}</strong></span></span> },
+                  { key: "variance", label: "Sai lệch", sortable: false, render: (row) => <span className="shift-variance">{row.lateMinutes > 0 ? <strong className={row.checkinStatus === "late" ? "warning" : "neutral"}>+{row.lateMinutes}p vào</strong> : <small>Đúng giờ vào</small>}{row.earlyCheckoutMinutes > 0 ? <strong className="warning">-{row.earlyCheckoutMinutes}p ra</strong> : row.checkedOutAt ? <small>Đúng giờ ra</small> : null}</span> },
+                  { key: "status", label: "Tình trạng", sortable: false, render: (row) => <ReportStatus row={row} /> },
+                  { key: "override", label: "Điều chỉnh", sortable: false, render: (row) => row.hasOverride ? <span className="shift-override-label"><CheckCircle2 size={12} />Đã duyệt</span> : <span className="text-xs text-slate-400">—</span> },
+                  { key: "action", label: "", sortable: false, className: "text-right", render: (row) => <button type="button" className="icon-button" onClick={(event) => { event.stopPropagation(); setReportDetail(row); }} title="Rà soát ca" aria-label={`Rà soát ca của ${row.employeeName}`}><Eye size={15} /></button> },
+                ]}
+                emptyTitle={reportStatus === "anomaly" ? "Không có ca bất thường" : "Không có ca làm"}
+                emptyDescription={reportStatus === "anomaly" ? "Các ca trong phạm vi hiện không cần rà soát." : "Không có ca phù hợp phạm vi và bộ lọc hiện tại."}
+              />
+              <Pagination data={shiftReport.data?.pagination} onPage={setReportPage} pageSize={reportPageSize} onPageSize={(value) => { setReportPageSize(value); setReportPage(1); }} pageSizeOptions={[20, 30, 50, 100]} />
+            </>
           )}
-        </div>
-        <div className="form-actions">
-          <Button variant="secondary" onClick={() => setReportOpen(false)}>
-            Đóng
-          </Button>
+
+          {reportDetail && (
+            <aside className="shift-review-drawer" aria-label="Chi tiết rà soát ca">
+              <header><div><span>Rà soát ca</span><h3>{reportDetail.employeeName}</h3><p>{reportDetail.title || "Chưa có chức vụ"} · {reportDetail.employeeCode} · {dateLabel(reportDetail.workDate)}</p></div><button type="button" className="icon-button" onClick={() => setReportDetail(null)} aria-label="Đóng chi tiết"><X size={17} /></button></header>
+              <div className="shift-review-body">
+                <section className="shift-review-result"><ReportStatus row={reportDetail} /><dl><div><dt>Lịch tính công</dt><dd>{reportDetail.startTime}–{reportDetail.endTime}</dd></div>{reportDetail.hasOverride && <div><dt>Lịch gốc</dt><dd>{reportDetail.originalStartTime}–{reportDetail.originalEndTime}</dd></div>}<div><dt>Check-in thực tế</dt><dd>{timeOnly(reportDetail.checkedInAt)}{reportDetail.lateMinutes > 0 && <small>+{reportDetail.lateMinutes} phút</small>}</dd></div><div><dt>Check-out thực tế</dt><dd>{timeOnly(reportDetail.checkedOutAt)}{reportDetail.earlyCheckoutMinutes > 0 && <small>-{reportDetail.earlyCheckoutMinutes} phút</small>}</dd></div></dl></section>
+                {reportDetail.hasOverride && <section className="shift-review-note"><strong>Ca đã điều chỉnh</strong><p>{reportDetail.overrideReason || "Không có lý do"}</p></section>}
+                <section className="shift-event-timeline"><div className="shift-review-section-title"><span>Event chấm công</span><strong>{(reportDetail.events?.length || reportDetail.dayEvents?.length || 0)} event</strong></div>{(reportDetail.events?.length ? reportDetail.events : reportDetail.dayEvents || []).map((event) => <div key={event.id}><i /><time>{timeOnly(event.eventTime)}</time><span><strong>{event.action || "DAH event"}</strong><small>{event.status}{event.attendanceSessionId ? ` · Session #${event.attendanceSessionId}` : ""}</small></span></div>)}{!(reportDetail.events?.length || reportDetail.dayEvents?.length) && <p>Không có event trong ngày để đối chiếu.</p>}</section>
+              </div>
+              <footer><Button variant="secondary" onClick={() => setReportDetail(null)}>Đóng</Button><Button onClick={() => { openShiftOverride({ employeeId: reportDetail.employeeId, employeeName: reportDetail.employeeName, title: reportDetail.title }, { workDate: reportDetail.workDate }, reportDetail); setReportDetail(null); }}><Pencil size={14} />Duyệt đổi ca</Button></footer>
+            </aside>
+          )}
         </div>
       </Modal>
       <Modal
@@ -1821,71 +1803,6 @@ export function TrainersPage() {
             </Button>
           </div>
         </form>
-      </Modal>
-      <Modal
-        open={attendanceOpen}
-        onClose={() => setAttendanceOpen(false)}
-        title="Tải chấm công nhân viên"
-        description="Xuất file chấm công theo lịch ca, check-in/check-out và trạng thái đúng giờ."
-      >
-        <div className="modal-body">
-          <div className="form-grid">
-            <Field className="form-span" label="Khoảng report">
-              <Select
-                value={attendancePreset}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setAttendancePreset(value);
-                  if (value === "today") setAttendanceDate(isoDay());
-                  if (value === "yesterday") setAttendanceDate(isoDay(-1));
-                  if (value === "this_week") setAttendanceWeekStart(startOfWeek());
-                  if (value === "last_week") setAttendanceWeekStart(addDays(startOfWeek(), -7));
-                }}
-              >
-                <option value="today">Hôm nay</option>
-                <option value="yesterday">Hôm qua</option>
-                <option value="custom">Ngày cụ thể</option>
-                <option value="this_week">Tuần này</option>
-                <option value="last_week">Tuần trước</option>
-                <option value="week">Tuần cụ thể</option>
-              </Select>
-            </Field>
-            {attendancePreset === "custom" && (
-              <Field className="form-span" label="Ngày cụ thể">
-                <DateInput
-                  value={attendanceDate}
-                  onChange={setAttendanceDate}
-                />
-              </Field>
-            )}
-            {attendancePreset === "week" && (
-              <Field className="form-span" label="Tuần bắt đầu">
-                <DateInput
-                  value={attendanceWeekStart}
-                  onChange={(value) => setAttendanceWeekStart(startOfWeek(value || isoDay()))}
-                />
-              </Field>
-            )}
-          </div>
-        </div>
-        <div className="form-actions">
-          <Button
-            data-modal-close
-            variant="secondary"
-            onClick={() => setAttendanceOpen(false)}
-          >
-            Hủy
-          </Button>
-          <Button
-            onClick={() => exportAttendance.mutate()}
-            loading={exportAttendance.isPending}
-            loadingText="Đang tải..."
-            disabled={(attendancePreset === "custom" && !attendanceDate) || (attendancePreset === "week" && !attendanceWeekStart)}
-          >
-            <Download size={16} />
-            Tải file
-          </Button>
-        </div>
       </Modal>
       <Modal
         open={!!confirm}

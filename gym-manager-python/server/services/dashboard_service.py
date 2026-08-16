@@ -266,7 +266,14 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
     today = vietnam_today()
     start=date.fromisoformat(date_from) if date_from else today.replace(day=1)
     end=date.fromisoformat(date_to) if date_to else today
+    if start > end:
+        start, end = end, start
     start_dt=datetime.combine(start,datetime.min.time());end_dt=datetime.combine(end,datetime.max.time())
+    period_days = (end - start).days + 1
+    previous_end = start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days - 1)
+    previous_start_dt = datetime.combine(previous_start, datetime.min.time())
+    previous_end_dt = datetime.combine(previous_end, datetime.max.time())
     payments=db.query(Payment).options(
         joinedload(Payment.customer).joinedload(Customer.person),
         joinedload(Payment.membership).joinedload(Membership.package),
@@ -275,6 +282,10 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         joinedload(Payment.membership).joinedload(Membership.sale_online_employee).joinedload(Employee.person),
     ).filter(Payment.paid_at>=start_dt,Payment.paid_at<=end_dt).order_by(Payment.paid_at.desc(), Payment.id.desc()).all()
     revenue=sum(row.amount or 0 for row in payments)
+    previous_revenue = _sum(db.query(func.sum(Payment.amount)).filter(
+        Payment.paid_at >= previous_start_dt,
+        Payment.paid_at <= previous_end_dt,
+    ))
     by_method={}
     for row in payments:by_method[row.method]=by_method.get(row.method,0)+(row.amount or 0)
     by_sale={}
@@ -311,7 +322,15 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "note": row.note,
         })
     revenue_by_sale = sorted(by_sale.values(), key=lambda item: (-item["amount"], item["saleName"] or ""))
-    checkins=db.query(AttendanceSession).filter(AttendanceSession.checked_in_at>=start_dt,AttendanceSession.checked_in_at<=end_dt).count()
+    attendance_rows = db.query(AttendanceSession.checked_in_at).filter(
+        AttendanceSession.checked_in_at>=start_dt,
+        AttendanceSession.checked_in_at<=end_dt,
+    ).all()
+    checkins=len(attendance_rows)
+    previous_checkins=db.query(AttendanceSession).filter(
+        AttendanceSession.checked_in_at>=previous_start_dt,
+        AttendanceSession.checked_in_at<=previous_end_dt,
+    ).count()
     active=active_membership_member_count(db)
     debts=db.query(Membership).options(
         joinedload(Membership.customer).joinedload(Customer.person),
@@ -342,4 +361,51 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "dueDate": row.debt_due_date.isoformat() if row.debt_due_date else None,
             "overdue": bool(row.debt_due_date and row.debt_due_date < today),
         })
-    return {"period":{"from":start.isoformat(),"to":end.isoformat()},"summary":{"revenue":revenue,"payments":len(payments),"activeMembers":active,"checkins":checkins,"debt":debt_total,"receivable":revenue+debt_total},"revenueByMethod":[{"method":key,"amount":value} for key,value in by_method.items()],"revenueBySale":revenue_by_sale,"revenueItems":revenue_items,"debts":debt_items}
+    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
+    for row in payments:
+        local_day = row.paid_at.date()
+        if local_day in revenue_daily:
+            revenue_daily[local_day]["amount"] += float(row.amount or 0)
+            revenue_daily[local_day]["payments"] += 1
+    for checked_in_at, in attendance_rows:
+        local_day = checked_in_at.date()
+        if local_day in revenue_daily:
+            revenue_daily[local_day]["checkins"] += 1
+    overdue_amount = sum(float(row["amount"] or 0) for row in debt_items if row["dueDate"] and row["dueDate"] < today.isoformat())
+    overdue_count = sum(1 for row in debt_items if row["dueDate"] and row["dueDate"] < today.isoformat())
+    due_soon_amount = sum(
+        float(row["amount"] or 0)
+        for row in debt_items
+        if row["dueDate"] and today.isoformat() <= row["dueDate"] <= (today + timedelta(days=7)).isoformat()
+    )
+    collection_base = revenue + debt_total
+    return {
+        "generatedAt": utc_iso(utc_now()),
+        "period": {"from": start.isoformat(), "to": end.isoformat()},
+        "comparisonPeriod": {"from": previous_start.isoformat(), "to": previous_end.isoformat()},
+        "summary": {
+            "revenue": revenue,
+            "previousRevenue": previous_revenue,
+            "payments": len(payments),
+            "activeMembers": active,
+            "checkins": checkins,
+            "previousCheckins": previous_checkins,
+            "debt": debt_total,
+            "overdueDebt": overdue_amount,
+            "overdueCount": overdue_count,
+            "dueSoonDebt": due_soon_amount,
+            "receivable": collection_base,
+            "collectionRate": round((revenue / collection_base) * 100, 1) if collection_base else 0,
+        },
+        "daily": [
+            {"date": day.isoformat(), **values}
+            for day, values in revenue_daily.items()
+        ],
+        "revenueByMethod": [
+            {"method": key, "amount": value, "share": round((value / revenue) * 100, 1) if revenue else 0}
+            for key, value in sorted(by_method.items(), key=lambda item: -item[1])
+        ],
+        "revenueBySale": revenue_by_sale,
+        "revenueItems": revenue_items,
+        "debts": debt_items,
+    }
