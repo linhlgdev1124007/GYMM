@@ -41,6 +41,11 @@ function durationText(start, end) {
   return `${hours} giờ ${rest ? `${rest} phút` : ""}`.trim();
 }
 
+function shiftWindowText(row) {
+  if (!row.scheduledStartAt || !row.scheduledEndAt) return "Không có lịch";
+  return `${format(parseISO(row.scheduledStartAt), "HH:mm")} - ${format(parseISO(row.scheduledEndAt), "HH:mm")}`;
+}
+
 function eventActionLabel(action) {
   const labels = {
     checkin: "Check-in",
@@ -125,7 +130,10 @@ function ActiveSessionRow({ row, checkout, mode }) {
           </p>
         </div>
       </div>
-      <span className="text-xs text-slate-500">Vào {dateTime(row.checkedInAt)}</span>
+      <span className="text-xs text-slate-500">
+        Vào {dateTime(row.checkedInAt)}
+        {mode === "employee" ? ` · Ca ${shiftWindowText(row)}` : ""}
+      </span>
       <span className="text-xs font-medium text-slate-700">
         {mode === "employee" ? durationText(row.checkedInAt, row.checkedOutAt) : "Đang trong phòng"}
       </span>
@@ -286,6 +294,10 @@ export function CheckinPage() {
     },
     ...(workspaceView === "employee"
       ? [{
+          key: "shift",
+          label: "Ca",
+          render: (row) => shiftWindowText(row),
+        }, {
           key: "duration",
           label: "Thời lượng",
           render: (row) => durationText(row.checkedInAt, row.checkedOutAt),

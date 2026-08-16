@@ -2,7 +2,9 @@ import os
 from pathlib import Path
 import tempfile
 from datetime import date, datetime, timedelta
+from io import BytesIO
 
+from openpyxl import Workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -200,6 +202,164 @@ def test_employee_attendance_returns_multiple_shifts_in_one_day(tmp_path):
         assert all(row["employeeId"] == employee.id for row in data["items"])
     finally:
         db.close()
+
+
+def test_bulk_employee_shifts_create_week_and_skip_overlaps(tmp_path):
+    from server.models import Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import create_employee_shifts_bulk
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Bulk Shift", phone="0900000011", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00011", job_title="Sale", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 18),
+            starts_at=datetime(2026, 8, 18, 8, 0),
+            ends_at=datetime(2026, 8, 18, 12, 0),
+        ))
+        db.commit()
+
+        result = create_employee_shifts_bulk(db, employee.id, {
+            "weekStart": "2026-08-17",
+            "weekdays": [0, 1, 2],
+            "startTime": "08:00",
+            "endTime": "12:00",
+            "note": "Ca sáng",
+        })
+
+        rows = (
+            db.query(EmployeeShiftSchedule)
+            .filter(EmployeeShiftSchedule.employee_id == employee.id, EmployeeShiftSchedule.status == "active")
+            .order_by(EmployeeShiftSchedule.work_date.asc())
+            .all()
+        )
+        assert result["created"] == 2
+        assert [row["workDate"] for row in result["skipped"]] == ["2026-08-18"]
+        assert [row.work_date.isoformat() for row in rows] == ["2026-08-17", "2026-08-18", "2026-08-19"]
+    finally:
+        db.close()
+
+
+def test_import_employee_shifts_matches_names_and_skips_overlaps(tmp_path):
+    from server.models import Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import import_employee_shifts
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Trần Nguyễn Khải Hoàn", phone="0900000012", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00012", job_title="Sale", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 5, 0),
+            ends_at=datetime(2026, 8, 17, 12, 0),
+        ))
+        db.commit()
+
+        result = import_employee_shifts(db, {
+            "sourceName": "lich.xlsx",
+            "rows": [{
+                "employeeName": "TRAN NGUYEN KHAI HOAN",
+                "position": "Lễ tân",
+                "shifts": [
+                    {"workDate": "2026-08-17", "startTime": "05:00", "endTime": "12:00"},
+                    {"workDate": "2026-08-17", "startTime": "17:00", "endTime": "22:00"},
+                    {"workDate": "2026-08-18", "startTime": "14:00", "endTime": "22:00"},
+                ],
+            }],
+        })
+
+        rows = (
+            db.query(EmployeeShiftSchedule)
+            .filter(EmployeeShiftSchedule.employee_id == employee.id, EmployeeShiftSchedule.status == "active")
+            .order_by(EmployeeShiftSchedule.starts_at.asc())
+            .all()
+        )
+        assert result["created"] == 2
+        assert len(result["skipped"]) == 1
+        assert result["unmatched"] == []
+        assert [(row.starts_at.hour, row.ends_at.hour) for row in rows] == [(5, 12), (17, 22), (14, 22)]
+    finally:
+        db.close()
+
+
+def test_replace_employee_shifts_week_rewrites_selected_week(tmp_path):
+    from server.models import Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import list_employee_shifts_week, replace_employee_shifts_week
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Weekly Shift", phone="0900000013", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00013", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 8, 0),
+            ends_at=datetime(2026, 8, 17, 12, 0),
+        ))
+        db.commit()
+
+        result = replace_employee_shifts_week(db, {
+            "weekStart": "2026-08-17",
+            "rows": [{
+                "employeeId": employee.id,
+                "employeeName": "Weekly Shift",
+                "shifts": [
+                    {"workDate": "2026-08-18", "startTime": "09:00", "endTime": "13:00"},
+                    {"workDate": "2026-08-19", "startTime": "15:00", "endTime": "19:00"},
+                ],
+            }],
+        })
+        week = list_employee_shifts_week(db, "2026-08-17", "2026-08-23")
+
+        assert result["created"] == 2
+        assert result["deleted"] == 1
+        assert [(row["workDate"], row["startTime"], row["endTime"]) for row in week["items"]] == [
+            ("2026-08-18", "09:00", "13:00"),
+            ("2026-08-19", "15:00", "19:00"),
+        ]
+    finally:
+        db.close()
+
+
+def test_preview_employee_shift_excel_reads_week_grid():
+    from server.services.operations_service import preview_employee_shift_excel
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "LỊCH LÀM - AM FITNESS & YOGA (17/08/2026 - 23/08/2026)"
+    sheet["A2"] = "HỌ VÀ TÊN"
+    sheet["B2"] = "VỊ TRÍ"
+    for index, label in enumerate(["T2", "T3", "T4", "T5", "T6", "T7", "CN"], start=3):
+        sheet.cell(row=2, column=index).value = label
+        sheet.cell(row=3, column=index).value = 14 + index
+    sheet["A4"] = "TRẦN NGUYỄN KHẢI HOÀN"
+    sheet["B4"] = "LỄ TÂN+SALE"
+    sheet["C4"] = "5H-12H\n17H-22H"
+    sheet["D4"] = "OFF"
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    preview = preview_employee_shift_excel(buffer.getvalue(), "lich.xlsx")
+
+    assert preview["weekStart"] == "2026-08-17"
+    assert preview["days"][0] == {"label": "T2", "workDate": "2026-08-17"}
+    assert preview["rows"][0]["employeeName"] == "TRẦN NGUYỄN KHẢI HOÀN"
+    assert preview["rows"][0]["position"] == "LỄ TÂN+SALE"
+    assert preview["rows"][0]["cells"][:2] == ["5H-12H\n17H-22H", "OFF"]
 
 
 def test_recent_checkins_filters_by_day_and_paginates(tmp_path):

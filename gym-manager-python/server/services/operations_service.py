@@ -12,6 +12,7 @@ from ..models import (
 )
 from .audit_service import record_audit
 from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
+from .employee_shift_attendance import create_employee_shift, create_employee_shifts_bulk, delete_employee_shift, import_employee_shifts, list_employee_shifts, list_employee_shifts_week, preview_employee_shift_excel, replace_employee_shifts_week, update_employee_shift
 from .membership_lifecycle import activate_customer_first_checkin
 from .serializers import employee_data, pagination, payment_data, pt_data
 from .training_schedule import normalize_schedule, schedule_storage
@@ -279,6 +280,8 @@ def employee_attendance(db: Session, day: str = ""):
             "phone": employee.person.phone if employee and employee.person else None,
             "title": employee.job_title if employee else None,
             "shiftNo": shift_numbers[row.employee_id],
+            "scheduledStartAt": _attendance_iso(row.scheduled_start_at, row.source),
+            "scheduledEndAt": _attendance_iso(row.scheduled_end_at, row.source),
             "checkedInAt": _attendance_iso(checked_in, row.source),
             "checkedOutAt": _attendance_iso(checked_out, row.source),
             "durationMinutes": duration_minutes,
@@ -495,6 +498,8 @@ def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: 
         "employeeId":row.employee_id,
         "employeeName":row.employee.person.display_name if row.employee else None,
         "employeeCode":row.employee.employee_code if row.employee else None,
+        "scheduledStartAt":_attendance_iso(row.scheduled_start_at, row.source),
+        "scheduledEndAt":_attendance_iso(row.scheduled_end_at, row.source),
         "checkedInAt":_attendance_iso(row.checked_in_at, row.source),
         "checkedOutAt":_attendance_iso(row.checked_out_at, row.source),
         "result":row.result,

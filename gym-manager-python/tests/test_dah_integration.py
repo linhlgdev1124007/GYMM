@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 import tempfile
@@ -503,6 +503,60 @@ def test_dah_identity_can_be_relinked_to_employee_and_toggles_attendance(tmp_pat
         assert checkout["action"] == "checkout"
         session = db.query(AttendanceSession).filter_by(employee_id=employee.id).one()
         assert session.status == "closed"
+    finally:
+        db.close()
+
+
+def test_employee_dah_attendance_uses_shift_cutoff_for_close_shifts(tmp_path):
+    from server.models import AttendanceSession, DahCustomerIdentity, Employee, EmployeeShiftSchedule, Person
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Close Shift Staff", phone="0900000090", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00090", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(DahCustomerIdentity(employee_id=employee.id, person_uuid="close-shift"))
+        work_date = date(2026, 8, 11)
+        db.add_all([
+            EmployeeShiftSchedule(
+                employee_id=employee.id,
+                work_date=work_date,
+                starts_at=datetime(2026, 8, 11, 12, 0),
+                ends_at=datetime(2026, 8, 11, 13, 0),
+            ),
+            EmployeeShiftSchedule(
+                employee_id=employee.id,
+                work_date=work_date,
+                starts_at=datetime(2026, 8, 11, 13, 15),
+                ends_at=datetime(2026, 8, 11, 14, 15),
+            ),
+        ])
+        db.commit()
+
+        for index, scanned_at in enumerate([
+            "2026-08-11T12:01:00",
+            "2026-08-11T13:10:00",
+            "2026-08-11T13:12:00",
+            "2026-08-11T14:20:00",
+        ], start=900):
+            result = dah_service.verify(db, verify_payload_for_uuid("close-shift", scanned_at, str(index)))
+            assert result["status"] == "processed"
+
+        rows = (
+            db.query(AttendanceSession)
+            .filter_by(employee_id=employee.id)
+            .order_by(AttendanceSession.checked_in_at.asc())
+            .all()
+        )
+        assert len(rows) == 2
+        assert rows[0].checked_in_at.isoformat() == "2026-08-11T12:01:00"
+        assert rows[0].checked_out_at.isoformat() == "2026-08-11T13:10:00"
+        assert rows[1].checked_in_at.isoformat() == "2026-08-11T13:12:00"
+        assert rows[1].checked_out_at.isoformat() == "2026-08-11T14:20:00"
     finally:
         db.close()
 

@@ -124,6 +124,22 @@ class EmployeeJobTitle(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
+class EmployeeShiftSchedule(Base):
+    __tablename__ = "employee_shift_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    employee: Mapped[Employee] = relationship()
+
+
 class ServicePackage(Base):
     __tablename__ = "service_packages"
 
@@ -387,6 +403,9 @@ class AttendanceSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    employee_shift_schedule_id: Mapped[int | None] = mapped_column(ForeignKey("employee_shift_schedules.id"))
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime)
+    scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime)
     checked_in_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime)
     source: Mapped[str] = mapped_column(String(30), default="manual")
@@ -396,6 +415,7 @@ class AttendanceSession(Base):
 
     customer: Mapped[Customer | None] = relationship()
     employee: Mapped[Employee | None] = relationship()
+    employee_shift_schedule: Mapped[EmployeeShiftSchedule | None] = relationship()
 
 
 class Device(Base):

@@ -1,7 +1,7 @@
 import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl" };
+const modalSizes = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-7xl" };
 
 export function Modal({
   open,

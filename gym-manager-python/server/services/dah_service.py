@@ -13,6 +13,7 @@ from ..models import (
 from ..timeutils import utc_iso, utc_now, vietnam_today
 from .membership_lifecycle import activate_customer_first_checkin
 from .audit_service import record_audit
+from .employee_shift_attendance import sync_employee_scan
 from .serializers import pagination
 
 HEARTBEAT_TIMEOUT_SECONDS = 90
@@ -245,30 +246,7 @@ def _recent_duplicate_scan(db: Session, identity_key: str | None, person_id: str
 
 
 def _toggle_employee_attendance(db: Session, employee: Employee, event_time: datetime, device: Device | None) -> dict:
-    if employee.status != "active":
-        return {"status": "denied", "action": "denied", "note": "Nhân viên không ở trạng thái hoạt động.", "session_id": None}
-    open_session = (
-        db.query(AttendanceSession)
-        .filter(AttendanceSession.employee_id == employee.id, AttendanceSession.status == "open")
-        .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
-        .first()
-    )
-    if open_session:
-        open_session.checked_out_at = event_time
-        open_session.status = "closed"
-        open_session.note = (open_session.note or "DAH employee auto")[:255]
-        return {"status": "processed", "action": "checkout", "note": "Check-out nhân viên.", "session_id": open_session.id}
-    session = AttendanceSession(
-        employee_id=employee.id,
-        checked_in_at=event_time,
-        source="dah",
-        result="allowed",
-        status="open",
-        note=f"DAH {device.code}" if device else "DAH",
-    )
-    db.add(session)
-    db.flush()
-    return {"status": "processed", "action": "checkin", "note": "Check-in nhân viên.", "session_id": session.id}
+    return sync_employee_scan(db, employee, event_time, device)
 
 
 def _toggle_customer_attendance(

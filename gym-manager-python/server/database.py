@@ -316,3 +316,28 @@ def migrate_membership_freeze_completion():
             f"SET {quote('completed_at')} = {quote('ends_at')} "
             f"WHERE {quote('compensated_days')} > 0"
         )
+
+
+def migrate_employee_shift_attendance():
+    inspector = inspect(engine)
+    if "attendance_sessions" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("attendance_sessions")}
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as connection:
+        if "employee_shift_schedule_id" not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('attendance_sessions')} ADD COLUMN {quote('employee_shift_schedule_id')} INTEGER"
+            )
+            connection.exec_driver_sql(
+                f"CREATE INDEX {quote('ix_attendance_sessions_employee_shift_schedule_id')} "
+                f"ON {quote('attendance_sessions')} ({quote('employee_shift_schedule_id')})"
+            )
+        if "scheduled_start_at" not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('attendance_sessions')} ADD COLUMN {quote('scheduled_start_at')} DATETIME"
+            )
+        if "scheduled_end_at" not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote('attendance_sessions')} ADD COLUMN {quote('scheduled_end_at')} DATETIME"
+            )

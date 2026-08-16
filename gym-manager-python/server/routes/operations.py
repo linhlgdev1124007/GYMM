@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ..controllers import operations_controller
@@ -32,6 +32,61 @@ def update_trainer(trainer_id: int, payload: dict, db: Session = Depends(get_db)
 @router.delete("/trainers/{trainer_id}", dependencies=[Depends(require_roles("admin", "manager"))])
 def delete_trainer(trainer_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return operations_controller.delete_trainer(db, trainer_id, user)
+
+
+@router.get("/trainers/{trainer_id}/shifts", dependencies=[Depends(require_roles("admin", "manager"))])
+def list_trainer_shifts(
+    trainer_id: int,
+    date_from: str = Query("", alias="dateFrom"),
+    date_to: str = Query("", alias="dateTo"),
+    db: Session = Depends(get_db),
+):
+    return operations_controller.list_employee_shifts(db, trainer_id, date_from=date_from, date_to=date_to)
+
+
+@router.get("/trainer-shifts", dependencies=[Depends(require_roles("admin", "manager"))])
+def list_trainer_shifts_week(
+    date_from: str = Query("", alias="dateFrom"),
+    date_to: str = Query("", alias="dateTo"),
+    db: Session = Depends(get_db),
+):
+    return operations_controller.list_employee_shifts_week(db, date_from=date_from, date_to=date_to)
+
+
+@router.post("/trainers/{trainer_id}/shifts", dependencies=[Depends(require_roles("admin", "manager"))])
+def create_trainer_shift(trainer_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.create_employee_shift(db, trainer_id, payload, user)
+
+
+@router.post("/trainers/{trainer_id}/shifts/bulk", dependencies=[Depends(require_roles("admin", "manager"))])
+def create_trainer_shifts_bulk(trainer_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.create_employee_shifts_bulk(db, trainer_id, payload, user)
+
+
+@router.post("/trainer-shifts/import", dependencies=[Depends(require_roles("admin", "manager"))])
+def import_trainer_shifts(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.import_employee_shifts(db, payload, user)
+
+
+@router.post("/trainer-shifts/import-preview", dependencies=[Depends(require_roles("admin", "manager"))])
+async def preview_trainer_shift_import(file: UploadFile = File(...)):
+    content = await file.read()
+    return operations_controller.preview_employee_shift_excel(content, file.filename or "")
+
+
+@router.put("/trainer-shifts/week", dependencies=[Depends(require_roles("admin", "manager"))])
+def replace_trainer_shifts_week(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.replace_employee_shifts_week(db, payload, user)
+
+
+@router.patch("/trainer-shifts/{shift_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def update_trainer_shift(shift_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.update_employee_shift(db, shift_id, payload, user)
+
+
+@router.delete("/trainer-shifts/{shift_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def delete_trainer_shift(shift_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.delete_employee_shift(db, shift_id, user)
 
 
 @router.get("/training")
