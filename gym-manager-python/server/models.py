@@ -140,6 +140,29 @@ class EmployeeShiftSchedule(Base):
     employee: Mapped[Employee] = relationship()
 
 
+class EmployeeShiftOverride(Base):
+    __tablename__ = "employee_shift_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    original_shift_schedule_id: Mapped[int | None] = mapped_column(ForeignKey("employee_shift_schedules.id"), index=True)
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    original_start_at: Mapped[datetime | None] = mapped_column(DateTime)
+    original_end_at: Mapped[datetime | None] = mapped_column(DateTime)
+    approved_start_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    approved_end_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="approved", index=True)
+    reason: Mapped[str | None] = mapped_column(String(255))
+    requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    employee: Mapped[Employee] = relationship()
+    original_shift_schedule: Mapped[EmployeeShiftSchedule | None] = relationship()
+
+
 class ServicePackage(Base):
     __tablename__ = "service_packages"
 

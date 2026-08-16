@@ -373,8 +373,8 @@ export function DashboardPage() {
 
   const metrics = isFinancialRole
     ? [
-        { label: "Doanh thu tháng", value: money(data.metrics.revenueMonth), to: "/payments", tone: "positive", delta: percentageDelta(data.metrics.revenueMonth, data.metrics.revenuePreviousMtd) },
-        { label: "Công nợ quá hạn", value: money(data.metrics.overdueDebt), to: "/members?view=debt", tone: data.metrics.overdueDebt ? "danger" : "positive", context: `${money(data.metrics.outstanding)} tổng công nợ` },
+        { label: "Đã thu tháng", value: money(data.metrics.revenueMonth), to: "/payments", tone: "positive", delta: percentageDelta(data.metrics.revenueMonth, data.metrics.revenuePreviousMtd) },
+        { label: "Công nợ quá hạn", value: money(data.metrics.overdueDebt), to: "/members?view=debt", tone: data.metrics.overdueDebt ? "danger" : "positive", context: `${money(data.metrics.outstanding)} tổng còn phải thu` },
         { label: "Hội viên hoạt động", value: data.metrics.activeMembers.toLocaleString("vi-VN"), to: "/members?view=active", context: `${data.metrics.activeRate}% trên ${data.metrics.totalMembers.toLocaleString("vi-VN")} hội viên` },
         { label: "Check-in hôm nay", value: data.metrics.checkinsToday.toLocaleString("vi-VN"), to: "/check-in", delta: numericDelta(data.metrics.checkinsToday, data.metrics.checkinsYesterday) },
         { label: "Đang trong phòng", value: data.metrics.openVisits.toLocaleString("vi-VN"), to: "/check-in", context: "Lượt chưa checkout" },
@@ -509,7 +509,7 @@ export function DashboardPage() {
               <div><h2>Chất lượng công nợ</h2><p>Aging theo hạn thanh toán hiện tại</p></div>
               <Link to="/reports">Mở báo cáo <ArrowRight size={13} /></Link>
             </div>
-            <div className="finance-summary"><span><WalletCards size={16} /><small>Doanh thu hôm nay</small><strong>{money(data.metrics.revenueToday)}</strong></span><span><CreditCard size={16} /><small>Tổng công nợ</small><strong>{money(data.metrics.outstanding)}</strong></span></div>
+            <div className="finance-summary"><span><WalletCards size={16} /><small>Đã thu hôm nay</small><strong>{money(data.metrics.revenueToday)}</strong></span><span><CreditCard size={16} /><small>Tổng còn phải thu</small><strong>{money(data.metrics.outstanding)}</strong></span></div>
             <div className="debt-aging-list">
               {debtRows.map(([label, bucket]) => <div key={label}><span>{label}<small>{bucket.count} hợp đồng</small></span><strong>{money(bucket.amount)}</strong></div>)}
             </div>

@@ -128,6 +128,7 @@ def test_dashboard_context_metrics_and_debt_aging(tmp_path):
         db.add_all([
             AttendanceSession(customer_id=customer.id, checked_in_at=datetime.combine(vietnam_today(), datetime.min.time()), status="open"),
             Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-CONTEXT", paid_at=datetime.combine(vietnam_today(), datetime.min.time()), amount=500000),
+            Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-FUTURE", paid_at=datetime.combine(vietnam_today() + timedelta(days=1), datetime.min.time()), amount=250000),
         ])
         db.commit()
 
@@ -136,10 +137,73 @@ def test_dashboard_context_metrics_and_debt_aging(tmp_path):
         assert data["metrics"]["checkinsToday"] == 1
         assert data["metrics"]["openVisits"] == 1
         assert data["metrics"]["revenueToday"] == 500000
+        assert data["metrics"]["revenueMonth"] == 500000
         assert data["metrics"]["overdueDebt"] == 350000
         assert data["financialHealth"]["debtAging"]["days8To30"] == {"count": 1, "amount": 350000.0}
         assert data["attention"][0]["issue"] == "Nợ quá hạn"
         assert data["attention"][0]["actionLabel"] == "Thu tiền"
         assert data["generatedAt"].endswith("Z")
+    finally:
+        db.close()
+
+
+def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
+    from datetime import datetime
+
+    from server.models import Employee, Membership, Payment, Person
+    from server.services.dashboard_service import reports
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        customer = seed_expired_member(db, code="CUS-REPORT")
+        membership = db.query(Membership).one()
+        person = Person(display_name="Sale Report", phone="0900002000", status="active")
+        db.add(person)
+        db.flush()
+        sale = Employee(person_id=person.id, employee_code="EMP-REPORT", job_title="Sale", status="active")
+        db.add(sale)
+        db.flush()
+        membership.direct_sales_employee_id = sale.id
+        paid_at = datetime.combine(vietnam_today(), datetime.min.time())
+        db.add(Payment(customer_id=customer.id, membership_id=membership.id, payment_no="PAY-REPORT", paid_at=paid_at, amount=700000, method="cash"))
+        db.commit()
+
+        data = reports(db, vietnam_today().isoformat(), vietnam_today().isoformat())
+
+        assert data["summary"]["revenue"] == 700000
+        assert data["revenueBySale"] == [{"saleEmployeeId": sale.id, "saleName": "Sale Report", "saleTitle": "Sale", "amount": 700000.0, "payments": 1}]
+        assert data["revenueItems"][0]["paymentNo"] == "PAY-REPORT"
+        assert data["revenueItems"][0]["saleName"] == "Sale Report"
+        assert data["revenueItems"][0]["memberCode"] == "CUS-REPORT"
+    finally:
+        db.close()
+
+
+def test_reports_filter_debts_by_due_date_period(tmp_path):
+    from server.models import Membership
+    from server.services.dashboard_service import reports
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        seed_expired_member(db, code="CUS-DEBT-PERIOD")
+        membership = db.query(Membership).one()
+        today = vietnam_today()
+        membership.debt_amount = 300000
+        membership.debt_due_date = today
+        db.commit()
+
+        current = reports(db, today.isoformat(), today.isoformat())
+        outside = reports(db, (today + timedelta(days=10)).isoformat(), (today + timedelta(days=10)).isoformat())
+
+        assert current["summary"]["debt"] == 300000
+        assert len(current["debts"]) == 1
+        assert current["debts"][0]["memberCode"] == "CUS-DEBT-PERIOD"
+        assert current["debts"][0]["membershipCode"] == membership.code
+        assert current["debts"][0]["saleName"] == "Chưa phân công"
+        assert "phone" in current["debts"][0]
+        assert outside["summary"]["debt"] == 0
+        assert outside["debts"] == []
     finally:
         db.close()

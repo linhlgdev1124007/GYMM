@@ -341,3 +341,39 @@ def migrate_employee_shift_attendance():
             connection.exec_driver_sql(
                 f"ALTER TABLE {quote('attendance_sessions')} ADD COLUMN {quote('scheduled_end_at')} DATETIME"
             )
+
+
+def migrate_employee_shift_overrides():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "employee_shift_overrides" in tables:
+        return
+    quote = engine.dialect.identifier_preparer.quote
+    id_definition = "INTEGER NOT NULL PRIMARY KEY" if IS_SQLITE else "INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY"
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"""
+            CREATE TABLE {quote('employee_shift_overrides')} (
+                {quote('id')} {id_definition},
+                {quote('employee_id')} INTEGER NOT NULL,
+                {quote('original_shift_schedule_id')} INTEGER NULL,
+                {quote('work_date')} DATE NOT NULL,
+                {quote('original_start_at')} DATETIME NULL,
+                {quote('original_end_at')} DATETIME NULL,
+                {quote('approved_start_at')} DATETIME NOT NULL,
+                {quote('approved_end_at')} DATETIME NOT NULL,
+                {quote('status')} VARCHAR(30) NOT NULL DEFAULT 'approved',
+                {quote('reason')} VARCHAR(255) NULL,
+                {quote('requested_by_user_id')} INTEGER NULL,
+                {quote('approved_by_user_id')} INTEGER NULL,
+                {quote('approved_at')} DATETIME NULL,
+                {quote('created_at')} DATETIME NOT NULL,
+                {quote('updated_at')} DATETIME NOT NULL
+            )
+            """
+        )
+        for column in ("employee_id", "original_shift_schedule_id", "work_date", "approved_start_at", "approved_end_at", "status"):
+            connection.exec_driver_sql(
+                f"CREATE INDEX {quote(f'ix_employee_shift_overrides_{column}')} "
+                f"ON {quote('employee_shift_overrides')} ({quote(column)})"
+            )

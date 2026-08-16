@@ -335,6 +335,145 @@ def test_replace_employee_shifts_week_rewrites_selected_week(tmp_path):
         db.close()
 
 
+def test_employee_shift_report_marks_late_and_not_checked(tmp_path):
+    from server.models import AttendanceSession, DahWebhookEvent, Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import employee_shift_report
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Report Shift", phone="0900000014", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00014", job_title="Sale", status="active")
+        db.add(employee)
+        db.flush()
+        first = EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 8, 0),
+            ends_at=datetime(2026, 8, 17, 12, 0),
+        )
+        second = EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 14, 0),
+            ends_at=datetime(2026, 8, 17, 18, 0),
+        )
+        third = EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 19, 0),
+            ends_at=datetime(2026, 8, 17, 22, 0),
+        )
+        db.add_all([first, second, third])
+        db.flush()
+        session = AttendanceSession(
+            employee_id=employee.id,
+            employee_shift_schedule_id=first.id,
+            scheduled_start_at=first.starts_at,
+            scheduled_end_at=first.ends_at,
+            checked_in_at=datetime(2026, 8, 17, 8, 12),
+            checked_out_at=datetime(2026, 8, 17, 12, 0),
+            source="dah",
+            status="closed",
+        )
+        early_session = AttendanceSession(
+            employee_id=employee.id,
+            employee_shift_schedule_id=third.id,
+            scheduled_start_at=third.starts_at,
+            scheduled_end_at=third.ends_at,
+            checked_in_at=datetime(2026, 8, 17, 19, 0),
+            checked_out_at=datetime(2026, 8, 17, 21, 30),
+            source="dah",
+            status="closed",
+        )
+        db.add_all([session, early_session])
+        db.flush()
+        db.add(DahWebhookEvent(
+            event_key="report-event-1",
+            operator="face",
+            employee_id=employee.id,
+            attendance_session_id=session.id,
+            event_time=datetime(2026, 8, 17, 8, 12),
+            verify_status=1,
+            status="processed",
+            action="employee_shift_sync",
+        ))
+        db.commit()
+
+        report = employee_shift_report(db, range_type="date", day="2026-08-17")
+        shifts = report["items"][0]["days"][0]["shifts"]
+
+        assert report["lateGraceMinutes"] == 10
+        assert [shift["status"] for shift in shifts] == ["late", "not_checked", "early_checkout"]
+        assert [shift["checkinStatus"] for shift in shifts] == ["late", "not_checked", "on_time"]
+        assert [shift["checkoutStatus"] for shift in shifts] == ["on_time", "not_checked", "early_checkout"]
+        assert shifts[0]["lateMinutes"] == 12
+        assert shifts[0]["events"][0]["attendanceSessionId"] == session.id
+        assert shifts[1]["statusLabel"] == "Chưa chấm công"
+        assert shifts[1]["checkinStatusLabel"] == "Chưa chấm công"
+        assert shifts[2]["checkinStatusLabel"] == "Check-in đúng giờ"
+        assert shifts[2]["checkoutStatusLabel"] == "Check-out sớm"
+        assert shifts[2]["earlyCheckoutMinutes"] == 30
+    finally:
+        db.close()
+
+
+def test_employee_shift_report_uses_approved_override(tmp_path):
+    from server.models import AttendanceSession, Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import approve_employee_shift_override, employee_shift_report
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Override Shift", phone="0900000015", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00015", job_title="Sale", status="active")
+        db.add(employee)
+        db.flush()
+        schedule = EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 17),
+            starts_at=datetime(2026, 8, 17, 8, 0),
+            ends_at=datetime(2026, 8, 17, 12, 0),
+        )
+        db.add(schedule)
+        db.flush()
+        db.add(AttendanceSession(
+            employee_id=employee.id,
+            employee_shift_schedule_id=schedule.id,
+            scheduled_start_at=schedule.starts_at,
+            scheduled_end_at=schedule.ends_at,
+            checked_in_at=datetime(2026, 8, 17, 14, 0),
+            checked_out_at=datetime(2026, 8, 17, 22, 0),
+            source="dah",
+            status="closed",
+        ))
+        db.commit()
+
+        before = employee_shift_report(db, range_type="date", day="2026-08-17")
+        assert before["items"][0]["days"][0]["shifts"][0]["checkinStatus"] == "late"
+
+        approve_employee_shift_override(db, schedule.id, {
+            "workDate": "2026-08-17",
+            "startTime": "14:00",
+            "endTime": "22:00",
+            "reason": "Đổi ca với team sale",
+        })
+        after = employee_shift_report(db, range_type="date", day="2026-08-17")
+        shift = after["items"][0]["days"][0]["shifts"][0]
+
+        assert shift["hasOverride"] is True
+        assert shift["startTime"] == "14:00"
+        assert shift["endTime"] == "22:00"
+        assert shift["originalStartTime"] == "08:00"
+        assert shift["checkinStatus"] == "on_time"
+        assert shift["checkoutStatus"] == "on_time"
+        assert shift["overrideReason"] == "Đổi ca với team sale"
+    finally:
+        db.close()
+
+
 def test_preview_employee_shift_excel_reads_week_grid():
     from server.services.operations_service import preview_employee_shift_excel
 

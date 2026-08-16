@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Link2, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Download, FileSpreadsheet, Link2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
@@ -55,13 +55,6 @@ const addDays = (isoDate, days) => {
 };
 
 const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-
-function minutesLabel(value) {
-  if (value == null) return "";
-  const hours = Math.floor(value / 60);
-  const minutes = value % 60;
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-}
 
 function normalizeJobTitle(value) {
   return String(value || "").trim().slice(0, 80);
@@ -121,6 +114,27 @@ function shiftCellText(shifts) {
     .join("\n");
 }
 
+function timeOnly(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(11, 16) || "—";
+  return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function dateLabel(value) {
+  if (!value) return "";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("vi-VN");
+}
+
+function checkStatusClass(status) {
+  if (status === "late" || status === "early_checkout") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "on_time") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "missing_checkout") return "border-slate-200 bg-slate-50 text-slate-600";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 
 export function TrainersPage() {
   const client = useQueryClient();
@@ -152,6 +166,14 @@ export function TrainersPage() {
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [attendancePreset, setAttendancePreset] = useState("today");
   const [attendanceDate, setAttendanceDate] = useState(isoDay());
+  const [attendanceWeekStart, setAttendanceWeekStart] = useState(startOfWeek());
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportRange, setReportRange] = useState("today");
+  const [reportDate, setReportDate] = useState(isoDay());
+  const [reportWeekStart, setReportWeekStart] = useState(startOfWeek());
+  const [overrideTarget, setOverrideTarget] = useState(null);
+  const [overrideForm, setOverrideForm] = useState({ workDate: isoDay(), startTime: "08:00", endTime: "12:00", reason: "" });
+  const [overrideError, setOverrideError] = useState("");
   const [confirm, setConfirm] = useState(null);
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
@@ -196,6 +218,16 @@ export function TrainersPage() {
     queryFn: () =>
       api(`/api/trainers/${scheduleTarget.id}/shifts?${queryString({ dateFrom: shiftRangeStart, dateTo: shiftRangeEnd })}`),
     enabled: !!scheduleTarget?.id,
+  });
+  const shiftReport = useQuery({
+    queryKey: ["trainer-shift-report", reportRange, reportDate, reportWeekStart],
+    queryFn: () =>
+      api(`/api/trainers/shift-report?${queryString({
+        rangeType: reportRange,
+        day: reportDate,
+        weekStart: reportWeekStart,
+      })}`),
+    enabled: reportOpen,
   });
   const jobTitles = useMemo(
     () =>
@@ -252,6 +284,21 @@ export function TrainersPage() {
       ),
     [scheduleDays, weeklyRows],
   );
+  const reportSummary = useMemo(() => {
+    const summary = { employees: 0, shifts: 0, late: 0, earlyCheckout: 0, notChecked: 0 };
+    (shiftReport.data?.items || []).forEach((employee) => {
+      summary.employees += 1;
+      employee.days.forEach((day) => {
+        day.shifts.forEach((shift) => {
+          summary.shifts += 1;
+          if (shift.status === "late" || shift.status === "late_early_checkout") summary.late += 1;
+          if (shift.status === "early_checkout" || shift.status === "late_early_checkout") summary.earlyCheckout += 1;
+          if (shift.status === "not_checked") summary.notChecked += 1;
+        });
+      });
+    });
+    return summary;
+  }, [shiftReport.data?.items]);
   useEffect(() => {
     if (!scheduleOpen || allTrainers.isLoading || weeklyShifts.isLoading) return;
     const shiftsByEmployeeDay = new Map();
@@ -390,32 +437,76 @@ export function TrainersPage() {
     },
     onError: (error) => setWeeklyError(error.message),
   });
-  const attendanceDay =
-    attendancePreset === "yesterday"
-      ? isoDay(-1)
-      : attendancePreset === "custom"
-        ? attendanceDate || isoDay()
-        : isoDay();
+  const approveShiftOverride = useMutation({
+    mutationFn: ({ shiftId, payload }) =>
+      api(`/api/trainer-shifts/${shiftId}/override`, {
+        method: "POST",
+        body: payload,
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["trainer-shift-report"] });
+      setOverrideTarget(null);
+      setOverrideError("");
+      shiftReport.refetch();
+      notify.success("Đã duyệt đổi ca.");
+    },
+    onError: (error) => setOverrideError(error.message),
+  });
+  const attendanceRangeType = attendancePreset === "custom" ? "date" : attendancePreset;
   const exportAttendance = useMutation({
     mutationFn: () =>
-      api(`/api/trainers/attendance?${queryString({ day: attendanceDay })}`),
+      api(`/api/trainers/shift-report?${queryString({
+        rangeType: attendanceRangeType,
+        day: attendanceDate,
+        weekStart: attendanceWeekStart,
+      })}`),
     onSuccess: (data) => {
-      const rows = data.items || [];
+      const rows = [];
+      (data.items || []).forEach((employee) => {
+        employee.days.forEach((day) => {
+          day.shifts.forEach((shift) => {
+            const events = (shift.events.length ? shift.events : day.events)
+              .map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`)
+              .join(" | ");
+            rows.push({
+              workDate: day.workDate,
+              employeeCode: employee.employeeCode,
+              employeeName: employee.employeeName,
+              title: employee.title,
+              shiftTime: `${shift.startTime} - ${shift.endTime}`,
+              originalShiftTime: `${shift.originalStartTime || shift.startTime} - ${shift.originalEndTime || shift.endTime}`,
+              hasOverride: shift.hasOverride ? "Có" : "",
+              overrideReason: shift.overrideReason || "",
+              checkedInAt: shift.checkedInAt,
+              checkinStatusLabel: shift.checkinStatusLabel,
+              checkedOutAt: shift.checkedOutAt,
+              checkoutStatusLabel: shift.checkoutStatusLabel,
+              lateMinutes: shift.lateMinutes || "",
+              earlyCheckoutMinutes: shift.earlyCheckoutMinutes || "",
+              events,
+            });
+          });
+        });
+      });
       const csv = [
-        "Ngày,Ca,Mã nhân viên,Họ tên,Điện thoại,Chức vụ,Check-in,Check-out,Tổng thời gian,Nguồn,Trạng thái",
+        "Ngày,Mã nhân viên,Họ tên,Chức vụ,Ca tính công,Ca gốc,Đã duyệt đổi ca,Lý do đổi ca,Check-in,Trạng thái check-in,Check-out,Trạng thái check-out,Trễ phút,Checkout sớm phút,Event rà soát",
         ...rows.map((row) =>
           [
-            data.date,
-            row.shiftNo,
+            row.workDate,
             row.employeeCode,
             row.employeeName,
-            row.phone,
             row.title,
+            row.shiftTime,
+            row.originalShiftTime,
+            row.hasOverride,
+            row.overrideReason,
             row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("vi-VN") : "",
+            row.checkinStatusLabel,
             row.checkedOutAt ? new Date(row.checkedOutAt).toLocaleString("vi-VN") : "",
-            minutesLabel(row.durationMinutes),
-            row.source,
-            row.status,
+            row.checkoutStatusLabel,
+            row.lateMinutes,
+            row.earlyCheckoutMinutes,
+            row.events,
           ].map(csvValue).join(","),
         ),
       ].join("\n");
@@ -424,10 +515,10 @@ export function TrainersPage() {
       );
       const link = document.createElement("a");
       link.href = url;
-      link.download = `pulsefit-employee-attendance-${data.date}.csv`;
+      link.download = `pulsefit-shift-attendance-${data.dateFrom}-${data.dateTo}.csv`;
       link.click();
       URL.revokeObjectURL(url);
-      notify.success(`Đã tải ${rows.length} dòng chấm công nhân viên.`);
+      notify.success(`Đã tải ${rows.length} dòng chấm công theo ca.`);
       setAttendanceOpen(false);
     },
     onError: (e) =>
@@ -545,6 +636,16 @@ export function TrainersPage() {
     const nextWeek = startOfWeek(weekStart || isoDay());
     setBulkShiftForm((current) => ({ ...current, weekStart: nextWeek }));
     setShiftForm((current) => ({ ...current, workDate: nextWeek }));
+  };
+  const openShiftOverride = (employee, day, shift) => {
+    setOverrideTarget({ employee, day, shift });
+    setOverrideError("");
+    setOverrideForm({
+      workDate: day.workDate,
+      startTime: shift.checkedInAt ? timeOnly(shift.checkedInAt) : shift.startTime,
+      endTime: shift.checkedOutAt ? timeOnly(shift.checkedOutAt) : shift.endTime,
+      reason: shift.overrideReason || "Đổi ca thực tế",
+    });
   };
   const columns = [
     {
@@ -685,6 +786,18 @@ export function TrainersPage() {
             >
               <CalendarDays size={16} />
               Lịch ca
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setReportRange("today");
+                setReportDate(isoDay());
+                setReportWeekStart(startOfWeek());
+                setReportOpen(true);
+              }}
+            >
+              <ClipboardList size={16} />
+              Report ca
             </Button>
             <Button
               variant="secondary"
@@ -991,7 +1104,7 @@ export function TrainersPage() {
         description={`${importFileName || "File Excel"} · ${scheduleWeekStart} đến ${scheduleWeekEnd}`}
       >
         <div className="modal-body">
-          <div className="mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[640px]:grid-cols-1">
+          <div className="mb-4 grid grid-cols-5 gap-3 max-[1100px]:grid-cols-3 max-[760px]:grid-cols-2 max-[520px]:grid-cols-1">
             <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
               <span className="text-xs font-medium text-slate-500">Dòng nhân viên</span>
               <strong className="mt-1 block text-xl text-slate-950">{importSummary.rows}</strong>
@@ -1448,14 +1561,276 @@ export function TrainersPage() {
         </form>
       </Modal>
       <Modal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        size="xl"
+        title="Report ca làm việc"
+        description={
+          shiftReport.data
+            ? `${dateLabel(shiftReport.data.dateFrom)} đến ${dateLabel(shiftReport.data.dateTo)} · Cho phép trễ ${shiftReport.data.lateGraceMinutes} phút`
+            : "Đối chiếu lịch ca với check-in/check-out thực tế."
+        }
+      >
+        <div className="modal-body">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Khoảng report">
+                <Select
+                  className="input min-w-48"
+                  value={reportRange}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setReportRange(value);
+                    if (value === "today") setReportDate(isoDay());
+                    if (value === "yesterday") setReportDate(isoDay(-1));
+                    if (value === "this_week") setReportWeekStart(startOfWeek());
+                    if (value === "last_week") setReportWeekStart(addDays(startOfWeek(), -7));
+                  }}
+                >
+                  <option value="today">Hôm nay</option>
+                  <option value="yesterday">Hôm qua</option>
+                  <option value="date">Ngày cụ thể</option>
+                  <option value="this_week">Tuần này</option>
+                  <option value="last_week">Tuần trước</option>
+                  <option value="week">Tuần cụ thể</option>
+                </Select>
+              </Field>
+              {reportRange === "date" && (
+                <Field label="Ngày">
+                  <DateInput value={reportDate} onChange={(value) => setReportDate(value || isoDay())} />
+                </Field>
+              )}
+              {reportRange === "week" && (
+                <Field label="Tuần bắt đầu">
+                  <DateInput value={reportWeekStart} onChange={(value) => setReportWeekStart(startOfWeek(value || isoDay()))} />
+                </Field>
+              )}
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => shiftReport.refetch()}
+              loading={shiftReport.isFetching}
+              loadingText="Đang tải..."
+            >
+              Làm mới
+            </Button>
+          </div>
+          <div className="mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[640px]:grid-cols-1">
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <span className="text-xs font-medium text-slate-500">Nhân viên có ca</span>
+              <strong className="mt-1 block text-xl text-slate-950">{reportSummary.employees}</strong>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <span className="text-xs font-medium text-slate-500">Tổng ca</span>
+              <strong className="mt-1 block text-xl text-slate-950">{reportSummary.shifts}</strong>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <span className="text-xs font-medium text-slate-500">Ca trễ</span>
+              <strong className="mt-1 block text-xl text-amber-700">{reportSummary.late}</strong>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <span className="text-xs font-medium text-slate-500">Checkout sớm</span>
+              <strong className="mt-1 block text-xl text-amber-700">{reportSummary.earlyCheckout}</strong>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <span className="text-xs font-medium text-slate-500">Chưa chấm công</span>
+              <strong className="mt-1 block text-xl text-slate-700">{reportSummary.notChecked}</strong>
+            </div>
+          </div>
+          {shiftReport.isLoading ? (
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
+              Đang tải report...
+            </div>
+          ) : shiftReport.error ? (
+            <div className="inline-error">{shiftReport.error.message}</div>
+          ) : !(shiftReport.data?.items || []).length ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center">
+              <div className="text-sm font-semibold text-slate-950">Không có ca làm trong khoảng này</div>
+              <div className="mt-1 text-xs text-slate-500">Report chỉ hiển thị các ca đã được setup trong lịch ca.</div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {(shiftReport.data?.items || []).map((employee) => (
+                <div key={employee.employeeId} className="rounded-lg border border-slate-200 bg-white">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-950">{employee.employeeName}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{employee.title || "Chưa có chức vụ"}</div>
+                    </div>
+                    <div className="text-xs font-medium text-slate-500">{employee.employeeCode}</div>
+                  </div>
+                  <div className="overflow-auto">
+                    <table className="min-w-[1040px] w-full border-collapse text-[12px]">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600">
+                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Ngày</th>
+                          <th className="w-32 border-b border-slate-200 px-3 py-2 text-left font-semibold">Ca làm</th>
+                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Check-in</th>
+                          <th className="w-28 border-b border-slate-200 px-3 py-2 text-left font-semibold">Check-out</th>
+                          <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">Trạng thái check-in</th>
+                          <th className="w-40 border-b border-slate-200 px-3 py-2 text-left font-semibold">Trạng thái check-out</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold">Event rà soát</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {employee.days.flatMap((day) =>
+                          day.shifts.map((shift, shiftIndex) => (
+                            <tr key={`${day.workDate}-${shift.scheduleId}`} className="align-top">
+                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
+                                {shiftIndex === 0 ? dateLabel(day.workDate) : ""}
+                              </td>
+                              <td className="border-b border-slate-100 px-3 py-2 font-medium text-slate-950">
+                                {shift.startTime} - {shift.endTime}
+                                {shift.hasOverride && (
+                                  <div className="mt-1 text-[11px] font-medium text-blue-700">
+                                    Đã duyệt đổi ca · gốc {shift.originalStartTime} - {shift.originalEndTime}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">{timeOnly(shift.checkedInAt)}</td>
+                              <td className="border-b border-slate-100 px-3 py-2 text-slate-700">{timeOnly(shift.checkedOutAt)}</td>
+                              <td className="border-b border-slate-100 px-3 py-2">
+                                <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${checkStatusClass(shift.checkinStatus || shift.status)}`}>
+                                  {shift.checkinStatusLabel || shift.statusLabel}
+                                  {shift.checkinStatus === "late" && shift.lateMinutes ? ` ${shift.lateMinutes}p` : ""}
+                                </span>
+                              </td>
+                              <td className="border-b border-slate-100 px-3 py-2">
+                                <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${checkStatusClass(shift.checkoutStatus)}`}>
+                                  {shift.checkoutStatusLabel || "Chưa chấm công"}
+                                  {shift.checkoutStatus === "early_checkout" && shift.earlyCheckoutMinutes ? ` ${shift.earlyCheckoutMinutes}p` : ""}
+                                </span>
+                              </td>
+                              <td className="border-b border-slate-100 px-3 py-2">
+                                <div className="flex flex-col gap-2">
+                                  <Button size="sm" variant="secondary" onClick={() => openShiftOverride(employee, day, shift)}>
+                                    <Pencil size={13} />
+                                    Duyệt đổi ca
+                                  </Button>
+                                  <details>
+                                    <summary className="cursor-pointer text-xs font-medium text-blue-700">
+                                      {shift.events.length || day.events.length} event
+                                    </summary>
+                                    <div className="mt-2 space-y-1">
+                                      {(shift.events.length ? shift.events : day.events).map((event) => (
+                                        <div key={event.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                                          <span className="font-semibold text-slate-900">{timeOnly(event.eventTime)}</span>
+                                          <span> · {event.action || "event"}</span>
+                                          <span> · {event.status}</span>
+                                          {event.attendanceSessionId && <span> · session #{event.attendanceSessionId}</span>}
+                                        </div>
+                                      ))}
+                                      {!(shift.events.length || day.events.length) && (
+                                        <div className="text-[11px] text-slate-500">Không có event trong ngày.</div>
+                                      )}
+                                    </div>
+                                  </details>
+                                </div>
+                              </td>
+                            </tr>
+                          )),
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="form-actions">
+          <Button variant="secondary" onClick={() => setReportOpen(false)}>
+            Đóng
+          </Button>
+        </div>
+      </Modal>
+      <Modal
+        open={!!overrideTarget}
+        onClose={() => setOverrideTarget(null)}
+        title="Duyệt đổi ca"
+        description={overrideTarget ? `${overrideTarget.employee.employeeName} · ${dateLabel(overrideTarget.day.workDate)}` : ""}
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            approveShiftOverride.mutate({
+              shiftId: overrideTarget.shift.scheduleId,
+              payload: overrideForm,
+            });
+          }}
+        >
+          <div className="modal-body space-y-4">
+            {overrideTarget && (
+              <div className="grid grid-cols-2 gap-3 max-[640px]:grid-cols-1">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                  <span className="text-xs font-medium text-slate-500">Ca gốc</span>
+                  <strong className="mt-1 block text-sm text-slate-950">
+                    {overrideTarget.shift.originalStartTime || overrideTarget.shift.startTime} - {overrideTarget.shift.originalEndTime || overrideTarget.shift.endTime}
+                  </strong>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                  <span className="text-xs font-medium text-slate-500">Chấm công thực tế</span>
+                  <strong className="mt-1 block text-sm text-slate-950">
+                    {timeOnly(overrideTarget.shift.checkedInAt)} - {timeOnly(overrideTarget.shift.checkedOutAt)}
+                  </strong>
+                </div>
+              </div>
+            )}
+            <div className="form-grid">
+              <Field label="Ngày làm">
+                <DateInput
+                  value={overrideForm.workDate}
+                  onChange={(value) => setOverrideForm({ ...overrideForm, workDate: value || isoDay() })}
+                />
+              </Field>
+              <Field label="Giờ bắt đầu duyệt">
+                <Input
+                  type="time"
+                  value={overrideForm.startTime}
+                  onChange={(event) => setOverrideForm({ ...overrideForm, startTime: event.target.value })}
+                />
+              </Field>
+              <Field label="Giờ kết thúc duyệt">
+                <Input
+                  type="time"
+                  value={overrideForm.endTime}
+                  onChange={(event) => setOverrideForm({ ...overrideForm, endTime: event.target.value })}
+                />
+              </Field>
+              <Field className="form-span" label="Lý do">
+                <Input
+                  value={overrideForm.reason}
+                  onChange={(event) => setOverrideForm({ ...overrideForm, reason: event.target.value })}
+                  placeholder="Ví dụ: Đổi ca với team sale"
+                />
+              </Field>
+            </div>
+            {overrideError && <div className="inline-error">{overrideError}</div>}
+          </div>
+          <div className="form-actions">
+            <Button variant="secondary" onClick={() => setOverrideTarget(null)}>
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              loading={approveShiftOverride.isPending}
+              loadingText="Đang duyệt..."
+              disabled={!overrideForm.workDate || !overrideForm.startTime || !overrideForm.endTime}
+            >
+              Duyệt đổi ca
+            </Button>
+          </div>
+        </form>
+      </Modal>
+      <Modal
         open={attendanceOpen}
         onClose={() => setAttendanceOpen(false)}
         title="Tải chấm công nhân viên"
-        description="Chọn ngày cần xuất dữ liệu check-in/check-out theo từng ca."
+        description="Xuất file chấm công theo lịch ca, check-in/check-out và trạng thái đúng giờ."
       >
         <div className="modal-body">
           <div className="form-grid">
-            <Field className="form-span" label="Khoảng ngày">
+            <Field className="form-span" label="Khoảng report">
               <Select
                 value={attendancePreset}
                 onChange={(event) => {
@@ -1463,11 +1838,16 @@ export function TrainersPage() {
                   setAttendancePreset(value);
                   if (value === "today") setAttendanceDate(isoDay());
                   if (value === "yesterday") setAttendanceDate(isoDay(-1));
+                  if (value === "this_week") setAttendanceWeekStart(startOfWeek());
+                  if (value === "last_week") setAttendanceWeekStart(addDays(startOfWeek(), -7));
                 }}
               >
                 <option value="today">Hôm nay</option>
                 <option value="yesterday">Hôm qua</option>
                 <option value="custom">Ngày cụ thể</option>
+                <option value="this_week">Tuần này</option>
+                <option value="last_week">Tuần trước</option>
+                <option value="week">Tuần cụ thể</option>
               </Select>
             </Field>
             {attendancePreset === "custom" && (
@@ -1475,6 +1855,14 @@ export function TrainersPage() {
                 <DateInput
                   value={attendanceDate}
                   onChange={setAttendanceDate}
+                />
+              </Field>
+            )}
+            {attendancePreset === "week" && (
+              <Field className="form-span" label="Tuần bắt đầu">
+                <DateInput
+                  value={attendanceWeekStart}
+                  onChange={(value) => setAttendanceWeekStart(startOfWeek(value || isoDay()))}
                 />
               </Field>
             )}
@@ -1492,7 +1880,7 @@ export function TrainersPage() {
             onClick={() => exportAttendance.mutate()}
             loading={exportAttendance.isPending}
             loadingText="Đang tải..."
-            disabled={attendancePreset === "custom" && !attendanceDate}
+            disabled={(attendancePreset === "custom" && !attendanceDate) || (attendancePreset === "week" && !attendanceWeekStart)}
           >
             <Download size={16} />
             Tải file

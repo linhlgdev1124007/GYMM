@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
@@ -29,6 +29,19 @@ def _sum(query):
 def _owner_name(row):
     employee = row.direct_sales_employee or row.sale_online_employee or row.customer.sales_employee
     return employee.person.display_name if employee and employee.person else "Chưa phân công"
+
+
+def _sale_owner(membership: Membership | None):
+    if not membership:
+        return None, "Chưa phân công", None
+    employee = (
+        membership.direct_sales_employee
+        or membership.sale_online_employee
+        or (membership.customer.sales_employee if membership.customer else None)
+    )
+    if not employee or not employee.person:
+        return None, "Chưa phân công", None
+    return employee.id, employee.person.display_name, employee.job_title
 
 
 def dashboard(db: Session):
@@ -101,8 +114,11 @@ def dashboard(db: Session):
     }
 
     expiring = health["expiring7"] + health["expiring8To14"]
-    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(func.date(Payment.paid_at) == today.isoformat()))
-    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= datetime.combine(month_start, datetime.min.time())))
+    today_start = datetime.combine(today, datetime.min.time())
+    today_end = datetime.combine(today, datetime.max.time())
+    month_start_dt = datetime.combine(month_start, datetime.min.time())
+    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at <= today_end))
+    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at <= today_end))
     revenue_previous_mtd = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= datetime.combine(previous_month_start, datetime.min.time()),
         Payment.paid_at < datetime.combine(previous_mtd_end, datetime.min.time()),
@@ -247,14 +263,83 @@ def dashboard(db: Session):
 
 
 def reports(db: Session, date_from: str | None, date_to: str | None):
-    start=date.fromisoformat(date_from) if date_from else date.today().replace(day=1)
-    end=date.fromisoformat(date_to) if date_to else date.today()
+    today = vietnam_today()
+    start=date.fromisoformat(date_from) if date_from else today.replace(day=1)
+    end=date.fromisoformat(date_to) if date_to else today
     start_dt=datetime.combine(start,datetime.min.time());end_dt=datetime.combine(end,datetime.max.time())
-    payments=db.query(Payment).filter(Payment.paid_at>=start_dt,Payment.paid_at<=end_dt).all()
+    payments=db.query(Payment).options(
+        joinedload(Payment.customer).joinedload(Customer.person),
+        joinedload(Payment.membership).joinedload(Membership.package),
+        joinedload(Payment.membership).joinedload(Membership.customer).joinedload(Customer.sales_employee).joinedload(Employee.person),
+        joinedload(Payment.membership).joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
+        joinedload(Payment.membership).joinedload(Membership.sale_online_employee).joinedload(Employee.person),
+    ).filter(Payment.paid_at>=start_dt,Payment.paid_at<=end_dt).order_by(Payment.paid_at.desc(), Payment.id.desc()).all()
     revenue=sum(row.amount or 0 for row in payments)
     by_method={}
     for row in payments:by_method[row.method]=by_method.get(row.method,0)+(row.amount or 0)
+    by_sale={}
+    revenue_items=[]
+    for row in payments:
+        sale_id, sale_name, sale_title = _sale_owner(row.membership)
+        key = sale_id or "unassigned"
+        if key not in by_sale:
+            by_sale[key] = {
+                "saleEmployeeId": sale_id,
+                "saleName": sale_name,
+                "saleTitle": sale_title,
+                "amount": 0,
+                "payments": 0,
+            }
+        by_sale[key]["amount"] += float(row.amount or 0)
+        by_sale[key]["payments"] += 1
+        revenue_items.append({
+            "paymentId": row.id,
+            "paymentNo": row.payment_no,
+            "paidAt": utc_iso(row.paid_at),
+            "memberId": row.customer_id,
+            "member": row.customer.person.display_name if row.customer and row.customer.person else None,
+            "memberCode": row.customer.customer_code if row.customer else None,
+            "membershipId": row.membership_id,
+            "membershipCode": row.membership.code if row.membership else None,
+            "package": row.membership.package.name if row.membership and row.membership.package else row.note,
+            "saleEmployeeId": sale_id,
+            "saleName": sale_name,
+            "saleTitle": sale_title,
+            "amount": row.amount or 0,
+            "method": row.method,
+            "channel": row.channel,
+            "note": row.note,
+        })
+    revenue_by_sale = sorted(by_sale.values(), key=lambda item: (-item["amount"], item["saleName"] or ""))
     checkins=db.query(AttendanceSession).filter(AttendanceSession.checked_in_at>=start_dt,AttendanceSession.checked_in_at<=end_dt).count()
     active=active_membership_member_count(db)
-    debts=db.query(Membership).options(joinedload(Membership.customer).joinedload(Customer.person),joinedload(Membership.package)).filter(Membership.debt_amount>0).order_by(Membership.debt_due_date).all()
-    return {"period":{"from":start.isoformat(),"to":end.isoformat()},"summary":{"revenue":revenue,"payments":len(payments),"activeMembers":active,"checkins":checkins},"revenueByMethod":[{"method":key,"amount":value} for key,value in by_method.items()],"debts":[{"membershipId":r.id,"memberId":r.customer_id,"member":r.customer.person.display_name,"memberCode":r.customer.customer_code,"package":r.package.name,"amount":r.debt_amount or 0,"dueDate":r.debt_due_date.isoformat() if r.debt_due_date else None,"overdue":bool(r.debt_due_date and r.debt_due_date<date.today())} for r in debts]}
+    debts=db.query(Membership).options(
+        joinedload(Membership.customer).joinedload(Customer.person),
+        joinedload(Membership.customer).joinedload(Customer.sales_employee).joinedload(Employee.person),
+        joinedload(Membership.package),
+        joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
+        joinedload(Membership.sale_online_employee).joinedload(Employee.person),
+    ).filter(
+        Membership.debt_amount>0,
+        or_(Membership.debt_due_date == None, and_(Membership.debt_due_date>=start, Membership.debt_due_date<=end)),
+    ).order_by(Membership.debt_due_date).all()
+    debt_total=sum(row.debt_amount or 0 for row in debts)
+    debt_items = []
+    for row in debts:
+        sale_id, sale_name, sale_title = _sale_owner(row)
+        debt_items.append({
+            "membershipId": row.id,
+            "membershipCode": row.code,
+            "memberId": row.customer_id,
+            "member": row.customer.person.display_name if row.customer and row.customer.person else None,
+            "memberCode": row.customer.customer_code if row.customer else None,
+            "phone": row.customer.person.phone if row.customer and row.customer.person else None,
+            "package": row.package.name if row.package else None,
+            "saleEmployeeId": sale_id,
+            "saleName": sale_name,
+            "saleTitle": sale_title,
+            "amount": row.debt_amount or 0,
+            "dueDate": row.debt_due_date.isoformat() if row.debt_due_date else None,
+            "overdue": bool(row.debt_due_date and row.debt_due_date < today),
+        })
+    return {"period":{"from":start.isoformat(),"to":end.isoformat()},"summary":{"revenue":revenue,"payments":len(payments),"activeMembers":active,"checkins":checkins,"debt":debt_total,"receivable":revenue+debt_total},"revenueByMethod":[{"method":key,"amount":value} for key,value in by_method.items()],"revenueBySale":revenue_by_sale,"revenueItems":revenue_items,"debts":debt_items}

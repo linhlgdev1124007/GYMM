@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
-    Customer, DahCustomerIdentity, Device, Employee, EmployeeJobTitle, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
+    Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, EmployeeJobTitle, EmployeeShiftOverride, EmployeeShiftSchedule, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
     ServicePackage, User,
 )
 from .audit_service import record_audit
@@ -42,6 +42,12 @@ def _as_int(value, default=None):
 
 def _as_date(value):
     return date.fromisoformat(value) if value else None
+
+
+def _as_time(value):
+    if not value:
+        return None
+    return datetime.strptime(str(value), "%H:%M").time()
 
 
 def _audit_value(value):
@@ -289,6 +295,300 @@ def employee_attendance(db: Session, day: str = ""):
             "status": row.status,
         })
     return {"date": target.isoformat(), "items": items}
+
+
+def _week_start(value: date):
+    return value - timedelta(days=value.weekday())
+
+
+def _attendance_report_range(range_type: str = "today", day: str = "", week_start: str = ""):
+    today = vietnam_today()
+    kind = (range_type or "today").strip()
+    if kind == "yesterday":
+        start = today - timedelta(days=1)
+        return start, start
+    if kind == "date":
+        start = _as_date(day) or today
+        return start, start
+    if kind == "this_week":
+        start = _week_start(today)
+        return start, start + timedelta(days=6)
+    if kind == "last_week":
+        start = _week_start(today) - timedelta(days=7)
+        return start, start + timedelta(days=6)
+    if kind == "week":
+        start = _week_start(_as_date(week_start) or today)
+        return start, start + timedelta(days=6)
+    return today, today
+
+
+def _event_data(row: DahWebhookEvent):
+    return {
+        "id": row.id,
+        "eventKey": row.event_key,
+        "eventTime": _attendance_iso(row.event_time, "dah"),
+        "action": row.action,
+        "status": row.status,
+        "verifyStatus": row.verify_status,
+        "similarity": row.similarity,
+        "attendanceSessionId": row.attendance_session_id,
+        "note": row.note,
+    }
+
+
+def approve_employee_shift_override(db: Session, shift_id: int, payload: dict, actor: User | None = None):
+    schedule = (
+        db.query(EmployeeShiftSchedule)
+        .options(joinedload(EmployeeShiftSchedule.employee).joinedload(Employee.person))
+        .filter(EmployeeShiftSchedule.id == shift_id, EmployeeShiftSchedule.status == "active")
+        .first()
+    )
+    if not schedule:
+        raise HTTPException(404, "Không tìm thấy ca làm.")
+    work_date = _as_date(payload.get("workDate")) or schedule.work_date
+    starts = _as_time(payload.get("startTime"))
+    ends = _as_time(payload.get("endTime"))
+    if not starts or not ends:
+        raise HTTPException(422, "Giờ bắt đầu và kết thúc ca đổi là bắt buộc.")
+    approved_start_at = datetime.combine(work_date, starts)
+    approved_end_at = datetime.combine(work_date, ends)
+    if approved_end_at <= approved_start_at:
+        raise HTTPException(422, "Giờ kết thúc phải sau giờ bắt đầu.")
+    reason = str(payload.get("reason") or "").strip()[:255] or None
+    now = utc_now()
+    (
+        db.query(EmployeeShiftOverride)
+        .filter(
+            EmployeeShiftOverride.original_shift_schedule_id == schedule.id,
+            EmployeeShiftOverride.status == "approved",
+        )
+        .update({"status": "superseded", "updated_at": now}, synchronize_session=False)
+    )
+    row = EmployeeShiftOverride(
+        employee_id=schedule.employee_id,
+        original_shift_schedule_id=schedule.id,
+        work_date=work_date,
+        original_start_at=schedule.starts_at,
+        original_end_at=schedule.ends_at,
+        approved_start_at=approved_start_at,
+        approved_end_at=approved_end_at,
+        status="approved",
+        reason=reason,
+        requested_by_user_id=actor.id if actor else None,
+        approved_by_user_id=actor.id if actor else None,
+        approved_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    employee_name = schedule.employee.person.display_name if schedule.employee and schedule.employee.person else schedule.employee_id
+    record_audit(
+        db,
+        actor,
+        "approve",
+        "employee_shift_override",
+        row.id,
+        f"Duyệt đổi ca {employee_name} {schedule.work_date.isoformat()}",
+        details={
+            "employeeId": schedule.employee_id,
+            "shiftId": schedule.id,
+            "original": [schedule.starts_at.isoformat(), schedule.ends_at.isoformat()],
+            "approved": [approved_start_at.isoformat(), approved_end_at.isoformat()],
+            "reason": reason,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "shiftId": schedule.id,
+        "workDate": row.work_date.isoformat(),
+        "approvedStartAt": _attendance_iso(row.approved_start_at, "dah"),
+        "approvedEndAt": _attendance_iso(row.approved_end_at, "dah"),
+        "startTime": row.approved_start_at.strftime("%H:%M"),
+        "endTime": row.approved_end_at.strftime("%H:%M"),
+        "reason": row.reason,
+        "status": row.status,
+    }
+
+
+def employee_shift_report(db: Session, range_type: str = "today", day: str = "", week_start: str = ""):
+    start_date, end_date = _attendance_report_range(range_type, day, week_start)
+    start_at = datetime.combine(start_date, datetime.min.time())
+    end_at = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    schedules = (
+        db.query(EmployeeShiftSchedule)
+        .options(joinedload(EmployeeShiftSchedule.employee).joinedload(Employee.person))
+        .filter(
+            EmployeeShiftSchedule.work_date >= start_date,
+            EmployeeShiftSchedule.work_date <= end_date,
+            EmployeeShiftSchedule.status == "active",
+        )
+        .order_by(EmployeeShiftSchedule.work_date.asc(), EmployeeShiftSchedule.starts_at.asc(), EmployeeShiftSchedule.id.asc())
+        .all()
+    )
+    if not schedules:
+        return {
+            "rangeType": range_type or "today",
+            "dateFrom": start_date.isoformat(),
+            "dateTo": end_date.isoformat(),
+            "lateGraceMinutes": 10,
+            "items": [],
+        }
+
+    schedule_ids = [row.id for row in schedules]
+    employee_ids = sorted({row.employee_id for row in schedules})
+    overrides = (
+        db.query(EmployeeShiftOverride)
+        .filter(
+            EmployeeShiftOverride.original_shift_schedule_id.in_(schedule_ids),
+            EmployeeShiftOverride.status == "approved",
+        )
+        .order_by(EmployeeShiftOverride.approved_at.desc(), EmployeeShiftOverride.id.desc())
+        .all()
+    )
+    override_by_schedule = {}
+    for override in overrides:
+        if override.original_shift_schedule_id not in override_by_schedule:
+            override_by_schedule[override.original_shift_schedule_id] = override
+    sessions = (
+        db.query(AttendanceSession)
+        .filter(
+            AttendanceSession.employee_id.in_(employee_ids),
+            or_(
+                AttendanceSession.employee_shift_schedule_id.in_(schedule_ids),
+                and_(AttendanceSession.checked_in_at >= start_at, AttendanceSession.checked_in_at < end_at),
+                and_(AttendanceSession.scheduled_start_at >= start_at, AttendanceSession.scheduled_start_at < end_at),
+            ),
+            AttendanceSession.source == "dah",
+        )
+        .order_by(AttendanceSession.checked_in_at.asc(), AttendanceSession.id.asc())
+        .all()
+    )
+    session_by_schedule = {}
+    for session in sessions:
+        if session.employee_shift_schedule_id and session.employee_shift_schedule_id not in session_by_schedule:
+            session_by_schedule[session.employee_shift_schedule_id] = session
+
+    events = (
+        db.query(DahWebhookEvent)
+        .filter(
+            DahWebhookEvent.employee_id.in_(employee_ids),
+            DahWebhookEvent.event_time >= start_at,
+            DahWebhookEvent.event_time < end_at,
+        )
+        .order_by(DahWebhookEvent.event_time.asc(), DahWebhookEvent.id.asc())
+        .all()
+    )
+    events_by_employee_day = {}
+    events_by_session = {}
+    for event in events:
+        if event.event_time:
+            key = (event.employee_id, event.event_time.date())
+            events_by_employee_day.setdefault(key, []).append(event)
+        if event.attendance_session_id:
+            events_by_session.setdefault(event.attendance_session_id, []).append(event)
+
+    employees = {}
+    for schedule in schedules:
+        employee = schedule.employee
+        override = override_by_schedule.get(schedule.id)
+        effective_starts_at = override.approved_start_at if override else schedule.starts_at
+        effective_ends_at = override.approved_end_at if override else schedule.ends_at
+        effective_work_date = override.work_date if override else schedule.work_date
+        if schedule.employee_id not in employees:
+            employees[schedule.employee_id] = {
+                "employeeId": schedule.employee_id,
+                "employeeCode": employee.employee_code if employee else None,
+                "employeeName": employee.person.display_name if employee and employee.person else None,
+                "title": employee.job_title if employee else None,
+                "days": {},
+            }
+        day_key = effective_work_date.isoformat()
+        day_group = employees[schedule.employee_id]["days"].setdefault(day_key, {
+            "workDate": day_key,
+            "shifts": [],
+            "events": [_event_data(event) for event in events_by_employee_day.get((schedule.employee_id, effective_work_date), [])],
+        })
+        session = session_by_schedule.get(schedule.id)
+        checked_in = session.checked_in_at if session else None
+        checked_out = session.checked_out_at if session else None
+        checkin_status = "not_checked"
+        checkin_status_label = "Chưa chấm công"
+        checkout_status = "not_checked"
+        checkout_status_label = "Chưa chấm công"
+        late_minutes = 0
+        early_checkout_minutes = 0
+        if checked_in:
+            late_minutes = max(int((checked_in - effective_starts_at).total_seconds() // 60), 0)
+            early_checkout_minutes = max(int((effective_ends_at - checked_out).total_seconds() // 60), 0) if checked_out else 0
+            is_late = checked_in > effective_starts_at + timedelta(minutes=10)
+            if is_late:
+                checkin_status = "late"
+                checkin_status_label = "Check-in trễ"
+            else:
+                checkin_status = "on_time"
+                checkin_status_label = "Check-in đúng giờ"
+            if checked_out:
+                if checked_out < effective_ends_at:
+                    checkout_status = "early_checkout"
+                    checkout_status_label = "Check-out sớm"
+                else:
+                    checkout_status = "on_time"
+                    checkout_status_label = "Check-out đúng giờ"
+            else:
+                checkout_status = "missing_checkout"
+                checkout_status_label = "Thiếu check-out"
+        status = checkin_status
+        status_label = checkin_status_label
+        if checkin_status == "late" and checkout_status == "early_checkout":
+            status = "late_early_checkout"
+            status_label = "Trễ · Checkout sớm"
+        elif checkout_status == "early_checkout":
+            status = "early_checkout"
+            status_label = "Checkout sớm"
+        day_group["shifts"].append({
+            "scheduleId": schedule.id,
+            "overrideId": override.id if override else None,
+            "sessionId": session.id if session else None,
+            "scheduledStartAt": _attendance_iso(schedule.starts_at, "dah"),
+            "scheduledEndAt": _attendance_iso(schedule.ends_at, "dah"),
+            "approvedStartAt": _attendance_iso(override.approved_start_at, "dah") if override else None,
+            "approvedEndAt": _attendance_iso(override.approved_end_at, "dah") if override else None,
+            "originalStartTime": schedule.starts_at.strftime("%H:%M"),
+            "originalEndTime": schedule.ends_at.strftime("%H:%M"),
+            "startTime": effective_starts_at.strftime("%H:%M"),
+            "endTime": effective_ends_at.strftime("%H:%M"),
+            "hasOverride": bool(override),
+            "overrideReason": override.reason if override else None,
+            "checkedInAt": _attendance_iso(checked_in, "dah"),
+            "checkedOutAt": _attendance_iso(checked_out, "dah"),
+            "status": status,
+            "statusLabel": status_label,
+            "checkinStatus": checkin_status,
+            "checkinStatusLabel": checkin_status_label,
+            "checkoutStatus": checkout_status,
+            "checkoutStatusLabel": checkout_status_label,
+            "lateMinutes": late_minutes,
+            "earlyCheckoutMinutes": early_checkout_minutes,
+            "events": [_event_data(event) for event in events_by_session.get(session.id if session else None, [])],
+        })
+
+    items = []
+    for employee in employees.values():
+        days = list(employee["days"].values())
+        days.sort(key=lambda row: row["workDate"])
+        employee["days"] = days
+        items.append(employee)
+    items.sort(key=lambda row: (row["employeeName"] or "", row["employeeId"]))
+    return {
+        "rangeType": range_type or "today",
+        "dateFrom": start_date.isoformat(),
+        "dateTo": end_date.isoformat(),
+        "lateGraceMinutes": 10,
+        "items": items,
+    }
 
 
 def create_trainer(db: Session, payload: dict, actor: User | None = None):

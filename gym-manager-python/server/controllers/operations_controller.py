@@ -3,6 +3,8 @@ from ..services import operations_service
 
 def list_trainers(db: Session, **params): return operations_service.list_trainers(db, **params)
 def employee_attendance(db: Session, day: str): return operations_service.employee_attendance(db, day)
+def employee_shift_report(db: Session, **params): return operations_service.employee_shift_report(db, **params)
+def approve_employee_shift_override(db: Session, shift_id: int, payload: dict, actor=None): return operations_service.approve_employee_shift_override(db, shift_id, payload, actor)
 def create_trainer(db: Session, payload: dict, actor=None): return operations_service.create_trainer(db, payload, actor)
 def update_trainer(db: Session, trainer_id: int, payload: dict, actor=None): return operations_service.update_trainer(db, trainer_id, payload, actor)
 def delete_trainer(db: Session, trainer_id: int, actor=None): return operations_service.delete_trainer(db, trainer_id, actor)

@@ -19,6 +19,21 @@ def trainer_attendance(day: str = "", db: Session = Depends(get_db)):
     return operations_controller.employee_attendance(db, day)
 
 
+@router.get("/trainers/shift-report", dependencies=[Depends(require_roles("admin", "manager"))])
+def trainer_shift_report(
+    range_type: str = Query("today", alias="rangeType"),
+    day: str = "",
+    week_start: str = Query("", alias="weekStart"),
+    db: Session = Depends(get_db),
+):
+    return operations_controller.employee_shift_report(db, range_type=range_type, day=day, week_start=week_start)
+
+
+@router.post("/trainer-shifts/{shift_id}/override", dependencies=[Depends(require_roles("admin", "manager"))])
+def approve_trainer_shift_override(shift_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+    return operations_controller.approve_employee_shift_override(db, shift_id, payload, user)
+
+
 @router.post("/trainers", dependencies=[Depends(require_roles("admin", "manager"))])
 def create_trainer(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return operations_controller.create_trainer(db, payload, user)
