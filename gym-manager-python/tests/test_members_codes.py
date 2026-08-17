@@ -73,6 +73,199 @@ def test_newest_sort_uses_customer_code_number(tmp_path):
         db.close()
 
 
+def test_debt_due_sort_orders_members_before_pagination(tmp_path):
+    from datetime import date
+
+    from server.models import Customer, Membership, ServicePackage
+    from server.services.members_service import list_members
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        set_test_today(date(2026, 8, 17))
+        plan = ServicePackage(
+            code="REGULAR",
+            name="Regular",
+            category="Gym",
+            duration_days=30,
+            price=1000,
+            is_pt=False,
+        )
+        db.add(plan)
+        db.commit()
+
+        seed_customer(db, "CUS0000001", "Far Due", "0900000001")
+        seed_customer(db, "CUS0000002", "No Debt", "0900000002")
+        seed_customer(db, "CUS0000003", "Near Due", "0900000003")
+        seed_customer(db, "CUS0000004", "Middle Due", "0900000004")
+        seed_customer(db, "CUS0000005", "Debt Without Due Date", "0900000005")
+        seed_customer(db, "CUS0000006", "Current Debt Older Than Frozen", "0900000006")
+
+        customers = {
+            row.customer_code: row
+            for row in db.query(Customer).all()
+        }
+        memberships = [
+            Membership(
+                customer_id=customers["CUS0000001"].id,
+                package_id=plan.id,
+                code="M-FAR",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=500,
+                debt_amount=500,
+                debt_due_date=date(2026, 8, 30),
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000002"].id,
+                package_id=plan.id,
+                code="M-NONE",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=1000,
+                debt_amount=0,
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000003"].id,
+                package_id=plan.id,
+                code="M-NEAR",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=500,
+                debt_amount=500,
+                debt_due_date=date(2026, 8, 18),
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000004"].id,
+                package_id=plan.id,
+                code="M-MIDDLE",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=500,
+                debt_amount=500,
+                debt_due_date=date(2026, 8, 25),
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000005"].id,
+                package_id=plan.id,
+                code="M-NO-DUE",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=500,
+                debt_amount=500,
+                debt_due_date=None,
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000006"].id,
+                package_id=plan.id,
+                code="M-CURRENT-DEBT",
+                registered_at=date(2026, 8, 1),
+                starts_at=date(2026, 8, 1),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=500,
+                debt_amount=500,
+                debt_due_date=date(2026, 8, 20),
+                status="active",
+            ),
+            Membership(
+                customer_id=customers["CUS0000006"].id,
+                package_id=plan.id,
+                code="M-NEWER-FROZEN-NO-DEBT",
+                registered_at=date(2026, 8, 2),
+                starts_at=date(2026, 8, 2),
+                expires_at=date(2026, 8, 31),
+                final_price=1000,
+                paid_amount=1000,
+                debt_amount=0,
+                debt_due_date=None,
+                status="frozen",
+            ),
+        ]
+        db.add_all(memberships)
+        db.commit()
+
+        first_page = list_members(
+            db,
+            q="",
+            member_status="all",
+            page=1,
+            page_size=4,
+            sort="debt_due_asc",
+        )
+        second_page = list_members(
+            db,
+            q="",
+            member_status="all",
+            page=2,
+            page_size=4,
+            sort="debt_due_asc",
+        )
+
+        assert [row["code"] for row in first_page["items"]] == [
+            "CUS0000003",
+            "CUS0000006",
+            "CUS0000004",
+            "CUS0000001",
+        ]
+        assert [row["code"] for row in second_page["items"]] == [
+            "CUS0000005",
+            "CUS0000002",
+        ]
+
+        debt_filter = list_members(
+            db,
+            q="",
+            member_status="all",
+            page=1,
+            page_size=10,
+            payment_status="debt",
+            sort="debt_due_asc",
+        )
+
+        assert [row["code"] for row in debt_filter["items"]] == [
+            "CUS0000003",
+            "CUS0000006",
+            "CUS0000004",
+            "CUS0000001",
+            "CUS0000005",
+        ]
+
+        due_soon = list_members(
+            db,
+            q="",
+            member_status="all",
+            page=1,
+            page_size=10,
+            payment_status="overdue",
+            overdue_days=3,
+            sort="debt_due_asc",
+        )
+
+        assert [row["code"] for row in due_soon["items"]] == [
+            "CUS0000003",
+            "CUS0000006",
+        ]
+    finally:
+        set_test_today(None)
+        db.close()
+
+
 def test_created_member_without_regular_membership_stays_lead(tmp_path):
     from server.models import Customer, Employee, Person
     from server.services.members_service import create_member

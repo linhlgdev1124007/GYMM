@@ -91,6 +91,11 @@ const statusFilters = {
   inactive: "Tạm ngừng",
   cancelled: "Đã hủy",
 };
+const paymentStatusFilters = {
+  all: "Mọi hạn thanh toán",
+  debt: "Có công nợ",
+  overdue: "Đến hạn/quá hạn thanh toán",
+};
 const planCollator = new Intl.Collator("vi", {
   numeric: true,
   sensitivity: "base",
@@ -573,7 +578,12 @@ export function MembersPage() {
     ],
     paymentStatus === "overdue" && [
       "Thanh toán",
-      `Quá hạn trong ${overdueDays} ngày`,
+      `Đến hạn/quá hạn trong ${overdueDays} ngày`,
+      "paymentStatus",
+    ],
+    paymentStatus === "debt" && [
+      "Thanh toán",
+      paymentStatusFilters[paymentStatus],
       "paymentStatus",
     ],
     packageId && [
@@ -839,7 +849,8 @@ export function MembersPage() {
               }
             >
               <option value="all">Mọi hạn thanh toán</option>
-              <option value="overdue">Quá hạn thanh toán trong X ngày</option>
+              <option value="debt">Có công nợ</option>
+              <option value="overdue">Đến hạn/quá hạn trong X ngày</option>
             </Select>
             {paymentStatus === "overdue" && (
               <label className="expiry-days-field">
@@ -903,6 +914,8 @@ export function MembersPage() {
               <option value="newest">Mới nhất</option>
               <option value="name">Tên A–Z</option>
               <option value="status">Trạng thái</option>
+              <option value="debt_due_asc">Hạn công nợ gần nhất</option>
+              <option value="debt_due_desc">Hạn công nợ xa nhất</option>
             </Select>
             <div className="table-options" ref={tableOptionsRef}>
               <button

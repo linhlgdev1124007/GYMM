@@ -225,8 +225,10 @@ def health():
         result["lastHeartbeat"] = utc_iso(device.last_heartbeat_at) if device else None
         result["heartbeatTimeoutSeconds"] = HEARTBEAT_TIMEOUT_SECONDS
         if not online:
-            result["status"] = "not_ready"
-            return JSONResponse(status_code=503, content=result)
+            result["dahRequired"] = settings.production
+            if settings.production:
+                result["status"] = "not_ready"
+                return JSONResponse(status_code=503, content=result)
         return result
     finally:
         db.close()

@@ -305,53 +305,96 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             Person.display_name.contains(term), Person.phone.contains(term),
             Person.email.contains(term), Customer.customer_code.contains(term), Customer.mbs_card_code.contains(term),
         ))
-    latest_regular_id = db.query(Membership.id).join(ServicePackage).filter(
+    current_membership_priority = case(
+        (
+            and_(
+                Membership.status == "active",
+                or_(Membership.expires_at == None, Membership.expires_at >= today),
+                or_(Membership.starts_at == None, Membership.starts_at <= today),
+            ),
+            0,
+        ),
+        (Membership.status.in_(("frozen", "suspended")), 1),
+        (Membership.status == "pending", 2),
+        else_=3,
+    )
+    current_regular_id = db.query(Membership.id).join(ServicePackage).filter(
         Membership.customer_id == Customer.id, ServicePackage.is_pt == False
-    ).order_by(Membership.registered_at.desc(), Membership.id.desc()).limit(1).correlate(Customer).scalar_subquery()
+    ).order_by(
+        current_membership_priority.asc(),
+        Membership.starts_at.desc(),
+        Membership.id.desc(),
+    ).limit(1).correlate(Customer).scalar_subquery()
     status_membership = aliased(Membership)
-    def latest_status_exists(*conditions):
-        return db.query(status_membership.id).filter(status_membership.id == latest_regular_id, *conditions).exists()
+    def current_status_exists(*conditions):
+        return db.query(status_membership.id).filter(status_membership.id == current_regular_id, *conditions).exists()
     cancelled_member = Customer.status == "cancelled"
     if view == "cancelled" or member_status == "cancelled":
         query = query.filter(cancelled_member)
     else:
         query = query.filter(Customer.status != "cancelled")
     if member_status == "active":
-        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
+        query = query.filter(current_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif member_status == "expired":
-        query = query.filter(latest_status_exists(status_membership.expires_at < today))
+        query = query.filter(current_status_exists(status_membership.expires_at < today))
     elif member_status == "expiring":
-        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=expiring_days)))
+        query = query.filter(current_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=expiring_days)))
     elif member_status == "pending":
-        query = query.filter(latest_status_exists(status_membership.status == "pending"))
+        query = query.filter(current_status_exists(status_membership.status == "pending"))
     elif member_status == "frozen":
-        query = query.filter(latest_status_exists(status_membership.status == "frozen"))
+        query = query.filter(current_status_exists(status_membership.status == "frozen"))
     elif member_status == "inactive":
         query = query.filter(Customer.status == "inactive")
     if payment_status == "overdue":
-        query = query.filter(latest_status_exists(
+        query = query.filter(current_status_exists(
             status_membership.debt_amount > 0,
             status_membership.debt_due_date != None,
-            status_membership.debt_due_date < today,
-            status_membership.debt_due_date >= today - timedelta(days=overdue_days),
+            status_membership.debt_due_date <= today + timedelta(days=overdue_days),
         ))
+    elif payment_status == "debt":
+        query = query.filter(current_status_exists(status_membership.debt_amount > 0))
     if view == "active":
-        query = query.filter(latest_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
+        query = query.filter(current_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif view == "expiring":
-        query = query.filter(latest_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=14)))
+        query = query.filter(current_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=14)))
     elif view == "debt":
-        query = query.filter(latest_status_exists(status_membership.debt_amount > 0))
+        query = query.filter(current_status_exists(status_membership.debt_amount > 0))
     elif view == "no_pt":
         query = query.filter(~db.query(PtEnrollment.id).filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.status == "active").exists())
     if package_id:
-        query = query.filter(latest_status_exists(status_membership.package_id == package_id))
+        query = query.filter(current_status_exists(status_membership.package_id == package_id))
     if trainer_id:
         query = query.filter(db.query(PtEnrollmentCoach.enrollment_id).join(PtEnrollment).filter(PtEnrollment.customer_id == Customer.id, PtEnrollmentCoach.coach_id == trainer_id).exists())
     total = query.count()
+    latest_debt_amount = db.query(Membership.debt_amount).filter(
+        Membership.id == current_regular_id
+    ).correlate(Customer).scalar_subquery()
+    latest_debt_due_date = db.query(Membership.debt_due_date).filter(
+        Membership.id == current_regular_id
+    ).correlate(Customer).scalar_subquery()
+    debt_due_group = case(
+        (and_(latest_debt_amount > 0, latest_debt_due_date != None), 0),
+        (latest_debt_amount > 0, 1),
+        else_=2,
+    )
     if sort == "name":
         orderings = [Person.display_name.asc(), Customer.id.desc()]
     elif sort == "status":
         orderings = [Customer.status.asc(), Customer.id.desc()]
+    elif sort == "debt_due_asc":
+        orderings = [
+            debt_due_group.asc(),
+            latest_debt_due_date.asc(),
+            _customer_code_sort_expression(db).desc(),
+            Customer.id.desc(),
+        ]
+    elif sort == "debt_due_desc":
+        orderings = [
+            debt_due_group.asc(),
+            latest_debt_due_date.desc(),
+            _customer_code_sort_expression(db).desc(),
+            Customer.id.desc(),
+        ]
     else:
         orderings = [_customer_code_sort_expression(db).desc(), Customer.id.desc()]
     rows = query.order_by(*orderings).offset((page - 1) * page_size).limit(page_size).all()
