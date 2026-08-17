@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { UserRoundCheck, UserRoundPlus } from "lucide-react";
+import { Minus, Plus, UserRoundCheck, UserRoundPlus } from "lucide-react";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -61,6 +61,20 @@ export function TrainingPage() {
       ));
     },
     onError: (error) => setFormError(error.message),
+  });
+  const adjustSessions = useMutation({
+    mutationFn: ({ row, action }) =>
+      api(`/api/training/${row.id}/sessions`, {
+        method: "POST",
+        body: { action, amount: 1, note: action === "add" ? "Cộng nhanh từ màn Khách PT" : "Trừ nhanh từ màn Khách PT" },
+      }),
+    onSuccess: (_data, variables) => {
+      client.invalidateQueries({ queryKey: ["training"] });
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["member", variables.row.memberId] });
+      notify.success(variables.action === "add" ? "Đã cộng 1 buổi PT." : "Đã trừ 1 buổi PT.");
+    },
+    onError: (error) => notify.errorFrom(error, "Không thể cập nhật số buổi PT."),
   });
   const edit = (row) => {
     setFormError("");
@@ -150,14 +164,41 @@ export function TrainingPage() {
       render: (row) => {
         const isAssignedCoach = row.coaches?.some((coach) => coach.id === user.employee?.id);
         if (coachMode && !isAssignedCoach) return null;
-        return <Button size="sm" variant="ghost" onClick={() => edit(row)}>
-          {row.coaches?.length ? (
-            <UserRoundCheck size={14} />
-          ) : (
-            <UserRoundPlus size={14} />
-          )}
-          {coachMode ? "Cập nhật" : row.coaches?.length ? "Sửa phân công" : "Phân công"}
-        </Button>;
+        const pendingKey = adjustSessions.isPending
+          ? `${adjustSessions.variables.row.id}:${adjustSessions.variables.action}`
+          : null;
+        return (
+          <div className="flex justify-end gap-1.5">
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={pendingKey === `${row.id}:subtract`}
+              loadingText="Trừ..."
+              disabled={row.remainingSessions <= 0 || pendingKey === `${row.id}:add`}
+              onClick={() => adjustSessions.mutate({ row, action: "subtract" })}
+            >
+              <Minus size={14} /> 1
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={pendingKey === `${row.id}:add`}
+              loadingText="Cộng..."
+              disabled={pendingKey === `${row.id}:subtract`}
+              onClick={() => adjustSessions.mutate({ row, action: "add" })}
+            >
+              <Plus size={14} /> 1
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => edit(row)}>
+              {row.coaches?.length ? (
+                <UserRoundCheck size={14} />
+              ) : (
+                <UserRoundPlus size={14} />
+              )}
+              {coachMode ? "Cập nhật" : row.coaches?.length ? "Sửa" : "Phân công"}
+            </Button>
+          </div>
+        );
       },
     },
   ];

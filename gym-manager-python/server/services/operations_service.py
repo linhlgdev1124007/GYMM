@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
-    Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, EmployeeJobTitle, EmployeeShiftOverride, EmployeeShiftSchedule, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup,
+    Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, EmployeeJobTitle, EmployeeShiftOverride, EmployeeShiftSchedule, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup, PtSessionLog,
     ServicePackage, User,
 )
 from .audit_service import record_audit
@@ -15,8 +15,8 @@ from .checkin_speech_service import queue_checkin_speech, speech_settings_data
 from .dah_service import DAH_MODEL, HEARTBEAT_TIMEOUT_SECONDS
 from .employee_shift_attendance import create_employee_shift, create_employee_shifts_bulk, delete_employee_shift, import_employee_shifts, list_employee_shifts, list_employee_shifts_week, preview_employee_shift_excel, replace_employee_shifts_week, update_employee_shift
 from .membership_lifecycle import activate_customer_first_checkin
-from .serializers import employee_data, pagination, payment_data, pt_data
-from .training_schedule import normalize_schedule, schedule_storage
+from .serializers import employee_data, membership_data, pagination, payment_data, pt_data
+from .training_schedule import WEEKDAYS, normalize_schedule, schedule_data, schedule_storage
 from ..timeutils import utc_iso, utc_now, vietnam_day_utc_bounds, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
@@ -908,6 +908,313 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
     db.commit();db.refresh(row);return pt_data(row)
 
 
+def _pt_log_data(row: PtSessionLog):
+    return {
+        "id": row.id,
+        "enrollmentId": row.enrollment_id,
+        "attendanceSessionId": row.attendance_session_id,
+        "action": row.action,
+        "deltaSessions": row.delta_sessions,
+        "remainingBefore": row.remaining_before,
+        "remainingAfter": row.remaining_after,
+        "note": row.note,
+        "createdAt": utc_iso(row.created_at),
+        "createdBy": row.created_by.display_name if row.created_by else "Hệ thống",
+    }
+
+
+def _record_pt_session_log(
+    db: Session,
+    enrollment: PtEnrollment,
+    action: str,
+    delta_sessions: int,
+    before: int,
+    after: int,
+    actor: User | None,
+    attendance_session_id: int | None = None,
+    note: str | None = None,
+):
+    row = PtSessionLog(
+        enrollment_id=enrollment.id,
+        attendance_session_id=attendance_session_id,
+        action=action,
+        delta_sessions=delta_sessions,
+        remaining_before=before,
+        remaining_after=after,
+        note=(note or "")[:255] or None,
+        created_by_user_id=actor.id if actor else None,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def adjust_pt_sessions(db: Session, enrollment_id: int, payload: dict, actor: User | None = None):
+    row = (
+        db.query(PtEnrollment)
+        .options(
+            joinedload(PtEnrollment.customer).joinedload(Customer.person),
+            joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        )
+        .filter(PtEnrollment.id == enrollment_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Không tìm thấy đăng ký PT.")
+    if actor and actor.role == "coach":
+        assigned_coach_ids = {assignment.coach_id for assignment in row.coach_assignments}
+        if not actor.employee_id or actor.employee_id not in assigned_coach_ids:
+            raise HTTPException(403, "Coach chỉ được cập nhật khách PT do mình phụ trách.")
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in {"add", "subtract"}:
+        raise HTTPException(422, "Hành động phải là add hoặc subtract.")
+    amount = max(_as_int(payload.get("amount"), 1), 1)
+    before = int(row.remaining_sessions or 0)
+    if action == "add":
+        row.remaining_sessions = before + amount
+        row.total_sessions = max(int(row.total_sessions or 0), row.remaining_sessions)
+        audit_action = "pt_sessions_add"
+        delta = amount
+        summary = f"Cộng {amount} buổi PT cho {row.customer.person.display_name}"
+    else:
+        if before < amount:
+            raise HTTPException(422, "Số buổi PT còn lại không đủ để trừ.")
+        row.remaining_sessions = before - amount
+        audit_action = "pt_sessions_subtract"
+        delta = -amount
+        summary = f"Trừ {amount} buổi PT của {row.customer.person.display_name}"
+    note = str(payload.get("note") or "").strip()[:255] or None
+    log = _record_pt_session_log(db, row, audit_action, delta, before, row.remaining_sessions, actor, note=note)
+    record_audit(
+        db,
+        actor,
+        audit_action,
+        "pt_enrollment",
+        row.id,
+        summary,
+        customer_id=row.customer_id,
+        details={
+            "amount": amount,
+            "deltaSessions": delta,
+            "remainingBefore": before,
+            "remainingAfter": row.remaining_sessions,
+            "note": note,
+            "ptSessionLogId": log.id,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    return {"enrollment": pt_data(row), "log": _pt_log_data(log)}
+
+
+def _today_pt_slots(enrollment: PtEnrollment, target: date):
+    weekday = WEEKDAYS[target.weekday()]
+    return [slot for slot in schedule_data(enrollment) if slot.get("day") == weekday]
+
+
+def _active_regular_membership_for_processing(db: Session, customer_id: int):
+    return (
+        db.query(Membership)
+        .options(joinedload(Membership.package), joinedload(Membership.freezes))
+        .join(ServicePackage)
+        .filter(Membership.customer_id == customer_id, ServicePackage.is_pt == False)
+        .order_by(Membership.registered_at.desc(), Membership.id.desc())
+        .first()
+    )
+
+
+def _membership_danger(summary: dict | None):
+    if not summary:
+        return True, "Chưa có gói gym."
+    status = summary.get("status")
+    if status in {"expired", "frozen", "suspended", "cancelled", "inactive", "blocked"}:
+        return True, {
+            "expired": "Gói đã hết hạn.",
+            "frozen": "Gói đang bảo lưu.",
+            "suspended": "Gói đang tạm dừng.",
+            "cancelled": "Gói đã hủy.",
+            "inactive": "Gói tạm ngừng.",
+            "blocked": "Hội viên bị khóa.",
+        }.get(status, "Gói cần kiểm tra.")
+    return False, None
+
+
+def _member_processing_item(db: Session, session: AttendanceSession, target: date, enrollments: list[PtEnrollment]):
+    member = session.customer
+    membership = _active_regular_membership_for_processing(db, member.id)
+    membership_summary = membership_data(membership) if membership else None
+    danger, danger_reason = _membership_danger(membership_summary)
+    pt_items = []
+    for enrollment in enrollments:
+        slots = _today_pt_slots(enrollment, target)
+        if not slots:
+            continue
+        data = pt_data(enrollment)
+        data["todaySlots"] = slots
+        pt_items.append(data)
+    return {
+        "sessionId": session.id,
+        "checkedInAt": _attendance_iso(session.checked_in_at, session.source),
+        "source": session.source,
+        "status": session.status,
+        "member": {
+            "id": member.id,
+            "code": member.customer_code,
+            "name": member.person.display_name,
+            "phone": member.person.phone,
+            "status": member.status,
+            "avatarImageData": member.avatar_image_data,
+        },
+        "gymMembership": membership_summary,
+        "gymDanger": danger,
+        "gymDangerReason": danger_reason,
+        "ptToday": pt_items,
+        "decision": session.workout_type or "undecided",
+    }
+
+
+def member_processing_queue(db: Session, day: str = "", page: int = 1, page_size: int = 50):
+    target = _as_date(day) or vietnam_today()
+    start = datetime.combine(target, datetime.min.time())
+    end = start + timedelta(days=1)
+    utc_start, utc_end = vietnam_day_utc_bounds(target)
+    is_non_dah = or_(AttendanceSession.source != "dah", AttendanceSession.source == None)
+    sessions = (
+        db.query(AttendanceSession)
+        .options(joinedload(AttendanceSession.customer).joinedload(Customer.person))
+        .filter(
+            AttendanceSession.customer_id.is_not(None),
+            AttendanceSession.processed_at.is_(None),
+            or_(
+                and_(AttendanceSession.source == "dah", AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
+                and_(is_non_dah, AttendanceSession.checked_in_at >= utc_start, AttendanceSession.checked_in_at < utc_end),
+            ),
+        )
+        .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+        .all()
+    )
+    customer_ids = sorted({row.customer_id for row in sessions if row.customer_id})
+    enrollments = (
+        db.query(PtEnrollment)
+        .options(
+            joinedload(PtEnrollment.customer).joinedload(Customer.person),
+            joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        )
+        .filter(
+            PtEnrollment.customer_id.in_(customer_ids),
+            PtEnrollment.status == "active",
+            PtEnrollment.remaining_sessions > 0,
+            or_(PtEnrollment.starts_at == None, PtEnrollment.starts_at <= target),
+            or_(PtEnrollment.expires_at == None, PtEnrollment.expires_at >= target),
+        )
+        .all()
+    ) if customer_ids else []
+    by_customer = {}
+    for enrollment in enrollments:
+        if _today_pt_slots(enrollment, target):
+            by_customer.setdefault(enrollment.customer_id, []).append(enrollment)
+    filtered = [row for row in sessions if by_customer.get(row.customer_id)]
+    total = len(filtered)
+    start_index = (page - 1) * page_size
+    rows = filtered[start_index:start_index + page_size]
+    return {
+        "date": target.isoformat(),
+        "items": [_member_processing_item(db, row, target, by_customer[row.customer_id]) for row in rows],
+        "pagination": pagination(page, page_size, total),
+    }
+
+
+def process_member_checkin(db: Session, session_id: int, payload: dict, actor: User | None = None):
+    session = (
+        db.query(AttendanceSession)
+        .options(joinedload(AttendanceSession.customer).joinedload(Customer.person))
+        .filter(AttendanceSession.id == session_id, AttendanceSession.customer_id.is_not(None))
+        .first()
+    )
+    if not session:
+        raise HTTPException(404, "Không tìm thấy lượt check-in hội viên.")
+    if session.processed_at:
+        raise HTTPException(409, "Lượt check-in này đã được xử lý.")
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"pt", "regular"}:
+        raise HTTPException(422, "Vui lòng chọn Tập PT hoặc Tập Thường.")
+    target = session.checked_in_at.date() if session.source == "dah" else vietnam_today()
+    note = str(payload.get("note") or "").strip()[:255] or None
+    pt_log = None
+    enrollment = None
+    before = None
+    after = None
+    if decision == "pt":
+        enrollment_id = _as_int(payload.get("ptEnrollmentId"))
+        enrollment = (
+            db.query(PtEnrollment)
+            .options(
+                joinedload(PtEnrollment.customer).joinedload(Customer.person),
+                joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+            )
+            .filter(PtEnrollment.id == enrollment_id, PtEnrollment.customer_id == session.customer_id)
+            .first()
+        )
+        if not enrollment:
+            raise HTTPException(422, "Gói PT không hợp lệ cho hội viên này.")
+        if enrollment.status != "active":
+            raise HTTPException(422, "Gói PT không hoạt động.")
+        if enrollment.expires_at and enrollment.expires_at < target:
+            raise HTTPException(422, "Gói PT đã hết hạn.")
+        if not _today_pt_slots(enrollment, target):
+            raise HTTPException(422, "Hôm nay hội viên không có lịch PT của gói này.")
+        before = int(enrollment.remaining_sessions or 0)
+        if before <= 0:
+            raise HTTPException(422, "Gói PT đã hết số buổi.")
+        enrollment.remaining_sessions = before - 1
+        after = enrollment.remaining_sessions
+        session.pt_enrollment_id = enrollment.id
+        pt_log = _record_pt_session_log(
+            db,
+            enrollment,
+            "pt_checkin",
+            -1,
+            before,
+            after,
+            actor,
+            attendance_session_id=session.id,
+            note=note or "Xử lý check-in: Tập PT",
+        )
+    session.workout_type = decision
+    session.processed_at = utc_now()
+    session.processed_by_user_id = actor.id if actor else None
+    summary = (
+        f"Xử lý check-in PT: {session.customer.person.display_name}"
+        if decision == "pt"
+        else f"Xử lý check-in tập thường: {session.customer.person.display_name}"
+    )
+    record_audit(
+        db,
+        actor,
+        "member_processing",
+        "attendance",
+        session.id,
+        summary,
+        customer_id=session.customer_id,
+        details={
+            "decision": decision,
+            "ptEnrollmentId": enrollment.id if enrollment else None,
+            "ptSessionLogId": pt_log.id if pt_log else None,
+            "remainingBefore": before,
+            "remainingAfter": after,
+            "note": note,
+        },
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "sessionId": session.id,
+        "decision": decision,
+        "ptEnrollment": pt_data(enrollment) if enrollment else None,
+        "ptLog": _pt_log_data(pt_log) if pt_log else None,
+    }
+
+
 def checkin_candidates(db: Session, q: str):
     if not q.strip(): return []
     rows=db.query(Customer).options(joinedload(Customer.person),joinedload(Customer.memberships).joinedload(Membership.package)).join(Customer.person).filter(or_(Person.display_name.contains(q),Person.phone.contains(q),Customer.customer_code.contains(q),Customer.mbs_card_code.contains(q))).limit(12).all()
@@ -997,8 +1304,18 @@ def create_checkin(db: Session, payload: dict, actor: User | None = None):
     current=db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(Membership.customer_id==member_id,Membership.status=="active",ServicePackage.is_pt==False,or_(Membership.expires_at==None,Membership.expires_at>=vietnam_today())).first()
     if not current:
         current = activate_customer_first_checkin(db, member_id, vietnam_today())
-    if member.status != "lead" and (member.status!="active" or not current): raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
-    row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="allowed",status="open",note=payload.get("note") or None);db.add(row);db.flush()
+    warning = None
+    if member.status != "lead" and member.status != "active":
+        raise HTTPException(422,"Hội viên không ở trạng thái hoạt động.")
+    if member.status != "lead" and not current:
+        warning = _member_access_warning(db, member)
+        if not warning:
+            raise HTTPException(422,"Hội viên không có gói tập còn hiệu lực.")
+    raw_note = str(payload.get("note") or "").strip()
+    note = raw_note or None
+    if warning:
+        note = f"Cảnh báo: {warning}" + (f" · {raw_note}" if raw_note else "")
+    row=AttendanceSession(customer_id=member_id,checked_in_at=utc_now(),source="manual",result="warning" if warning else "allowed",status="open",note=note);db.add(row);db.flush()
     record_audit(db, actor, "checkin", "attendance", row.id, f"Check-in {member.person.display_name}", customer_id=member_id)
     queue_checkin_speech(db, row.id, "member", member.person.display_name)
     db.commit();return {"id":row.id,"checkedInAt":utc_iso(row.checked_in_at)}

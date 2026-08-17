@@ -470,3 +470,52 @@ def migrate_checkin_speech_event_reference():
         raise
     finally:
         raw.close()
+
+
+def migrate_member_processing():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    quote = engine.dialect.identifier_preparer.quote
+    if "attendance_sessions" in tables:
+        columns = {column["name"] for column in inspector.get_columns("attendance_sessions")}
+        definitions = {
+            "workout_type": "VARCHAR(30)",
+            "pt_enrollment_id": "INTEGER",
+            "processed_at": "DATETIME",
+            "processed_by_user_id": "INTEGER",
+        }
+        with engine.begin() as connection:
+            for column, definition in definitions.items():
+                if column not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {quote('attendance_sessions')} ADD COLUMN {quote(column)} {definition}"
+                    )
+                    if column in {"workout_type", "pt_enrollment_id", "processed_at"}:
+                        connection.exec_driver_sql(
+                            f"CREATE INDEX {quote(f'ix_attendance_sessions_{column}')} "
+                            f"ON {quote('attendance_sessions')} ({quote(column)})"
+                        )
+    if "pt_session_logs" not in tables:
+        id_definition = "INTEGER NOT NULL PRIMARY KEY" if IS_SQLITE else "INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY"
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"""
+                CREATE TABLE {quote('pt_session_logs')} (
+                    {quote('id')} {id_definition},
+                    {quote('enrollment_id')} INTEGER NOT NULL,
+                    {quote('attendance_session_id')} INTEGER NULL,
+                    {quote('action')} VARCHAR(40) NOT NULL,
+                    {quote('delta_sessions')} INTEGER NOT NULL DEFAULT 0,
+                    {quote('remaining_before')} INTEGER NOT NULL,
+                    {quote('remaining_after')} INTEGER NOT NULL,
+                    {quote('note')} VARCHAR(255) NULL,
+                    {quote('created_by_user_id')} INTEGER NULL,
+                    {quote('created_at')} DATETIME NOT NULL
+                )
+                """
+            )
+            for column in ("enrollment_id", "attendance_session_id", "action", "created_at"):
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote(f'ix_pt_session_logs_{column}')} "
+                    f"ON {quote('pt_session_logs')} ({quote(column)})"
+                )

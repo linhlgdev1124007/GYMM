@@ -176,6 +176,33 @@ def _active_regular_membership(db: Session, customer_id: int):
     )
 
 
+def _latest_regular_membership(db: Session, customer_id: int):
+    return (
+        db.query(Membership)
+        .options(joinedload(Membership.package))
+        .join(ServicePackage)
+        .filter(
+            Membership.customer_id == customer_id,
+            ServicePackage.is_pt == False,
+        )
+        .order_by(Membership.registered_at.desc(), Membership.id.desc())
+        .first()
+    )
+
+
+def _membership_warning(membership: Membership | None) -> str | None:
+    if not membership:
+        return None
+    today = vietnam_today()
+    if membership.status == "suspended":
+        return "Gói gym đang tạm dừng."
+    if membership.status == "frozen":
+        return "Gói gym đang bảo lưu."
+    if membership.expires_at and membership.expires_at < today:
+        return "Gói gym đã hết hạn."
+    return None
+
+
 def _identity_for_dah_key(db: Session, device: Device | None, info: dict, event_time: datetime | None):
     person_uuid = _clean(info.get("PersonUUID"))
     person_id = _clean(info.get("PersonID"))
@@ -289,20 +316,25 @@ def _toggle_customer_attendance(
         if activated:
             membership = activated
     if not membership:
-        return {"status": "denied", "action": "denied", "note": "Hội viên không có gói tập còn hiệu lực.", "session_id": None}
+        latest_membership = _latest_regular_membership(db, customer.id)
+        warning = _membership_warning(latest_membership)
+        if not warning:
+            return {"status": "denied", "action": "denied", "note": "Hội viên không có gói tập còn hiệu lực.", "session_id": None}
+        membership = latest_membership
     if customer.status != "active":
         return {"status": "denied", "action": "denied", "note": "Hội viên không ở trạng thái hoạt động.", "session_id": None}
+    warning = _membership_warning(membership)
     session = AttendanceSession(
         customer_id=customer.id,
         checked_in_at=event_time,
         source="dah",
-        result="allowed",
+        result="warning" if warning else "allowed",
         status="open",
-        note=f"DAH {device.code}" if device else "DAH",
+        note=(f"DAH {device.code} · Cảnh báo: {warning}" if device and warning else f"DAH · Cảnh báo: {warning}" if warning else f"DAH {device.code}" if device else "DAH"),
     )
     db.add(session)
     db.flush()
-    return {"status": "processed", "action": "checkin", "note": "Check-in hội viên.", "session_id": session.id}
+    return {"status": "processed", "action": "checkin", "note": warning or "Check-in hội viên.", "session_id": session.id}
 
 
 def _record_dah_customer_audit(

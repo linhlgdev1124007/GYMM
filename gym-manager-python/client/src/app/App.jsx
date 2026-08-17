@@ -44,6 +44,11 @@ const CheckinPage = lazy(() =>
     default: module.CheckinPage,
   })),
 );
+const MemberProcessingPage = lazy(() =>
+  import("../features/memberProcessing/MemberProcessingPage").then((module) => ({
+    default: module.MemberProcessingPage,
+  })),
+);
 const DayPassesPage = lazy(() =>
   import("../features/dayPasses/DayPassesPage").then((module) => ({
     default: module.DayPassesPage,
@@ -121,6 +126,7 @@ export function App() {
           />
           <Route path="training" element={<TrainingPage />} />
           <Route path="check-in" element={allowed(["admin", "manager", "receptionist"], <CheckinPage />)} />
+          <Route path="member-processing" element={allowed(["admin", "manager", "receptionist"], <MemberProcessingPage />)} />
           <Route path="day-passes" element={allowed(["admin", "manager", "receptionist"], <DayPassesPage />)} />
           <Route path="payments" element={allowed(["admin", "manager", "receptionist"], <PaymentsPage />)} />
           <Route path="inventory" element={allowed(["admin"], <InventoryPage />)} />

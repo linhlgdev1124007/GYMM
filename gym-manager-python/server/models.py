@@ -493,6 +493,25 @@ class PtEnrollment(Base):
     coach_assignments: Mapped[list["PtEnrollmentCoach"]] = relationship(back_populates="enrollment", cascade="all, delete-orphan")
 
 
+class PtSessionLog(Base):
+    __tablename__ = "pt_session_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enrollment_id: Mapped[int] = mapped_column(ForeignKey("pt_enrollments.id"), index=True)
+    attendance_session_id: Mapped[int | None] = mapped_column(ForeignKey("attendance_sessions.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    delta_sessions: Mapped[int] = mapped_column(Integer, default=0)
+    remaining_before: Mapped[int] = mapped_column(Integer)
+    remaining_after: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+
+    enrollment: Mapped[PtEnrollment] = relationship()
+    attendance_session: Mapped["AttendanceSession | None"] = relationship()
+    created_by: Mapped["User | None"] = relationship()
+
+
 class PtEnrollmentCoach(Base):
     __tablename__ = "pt_enrollment_coaches"
 
@@ -552,11 +571,17 @@ class AttendanceSession(Base):
     source: Mapped[str] = mapped_column(String(30), default="manual")
     result: Mapped[str] = mapped_column(String(50), default="allowed")
     status: Mapped[str] = mapped_column(String(30), default="open")
+    workout_type: Mapped[str | None] = mapped_column(String(30), index=True)
+    pt_enrollment_id: Mapped[int | None] = mapped_column(ForeignKey("pt_enrollments.id"), index=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    processed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     note: Mapped[str | None] = mapped_column(Text)
 
     customer: Mapped[Customer | None] = relationship()
     employee: Mapped[Employee | None] = relationship()
     employee_shift_schedule: Mapped[EmployeeShiftSchedule | None] = relationship()
+    pt_enrollment: Mapped[PtEnrollment | None] = relationship()
+    processed_by: Mapped["User | None"] = relationship()
 
 
 class Device(Base):

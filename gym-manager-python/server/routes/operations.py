@@ -138,6 +138,11 @@ def update_training(enrollment_id: int, payload: dict, db: Session = Depends(get
     return operations_controller.update_pt(db, enrollment_id, payload, user)
 
 
+@router.post("/training/{enrollment_id}/sessions", dependencies=[Depends(require_roles("admin", "manager", "receptionist", "coach"))])
+def adjust_training_sessions(enrollment_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist", "coach"))):
+    return operations_controller.adjust_pt_sessions(db, enrollment_id, payload, user)
+
+
 @router.get("/checkins/candidates", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def candidates(q: str = "", db: Session = Depends(get_db)):
     return operations_controller.checkin_candidates(db, q)
@@ -156,6 +161,16 @@ def checkin(payload: dict, db: Session = Depends(get_db), user: User = Depends(r
 @router.patch("/checkins/{session_id}/checkout", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def checkout(session_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
     return operations_controller.checkout(db, session_id, user)
+
+
+@router.get("/member-processing", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def member_processing(day: str = "", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
+    return operations_controller.member_processing_queue(db, day=day, page=page, page_size=page_size)
+
+
+@router.post("/member-processing/{session_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def process_member(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    return operations_controller.process_member_checkin(db, session_id, payload, user)
 
 
 @router.get("/payments", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
