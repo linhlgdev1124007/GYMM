@@ -185,6 +185,40 @@ class Customer(Base):
     memberships: Mapped[list["Membership"]] = relationship(back_populates="customer")
 
 
+class DayPassVisit(Base):
+    __tablename__ = "day_pass_visits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_name: Mapped[str] = mapped_column(String(160), index=True)
+    guest_phone: Mapped[str | None] = mapped_column(String(40), index=True)
+    guest_gender: Mapped[str | None] = mapped_column(String(20))
+    guest_note: Mapped[str | None] = mapped_column(Text)
+    visit_date: Mapped[date] = mapped_column(Date, index=True)
+    default_price: Mapped[float] = mapped_column(Float, default=79000)
+    charged_amount: Mapped[float] = mapped_column(Float, default=79000)
+    paid_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
+    payment_method: Mapped[str] = mapped_column(String(40), default="cash", index=True)
+    bank_account_id: Mapped[int | None] = mapped_column(ForeignKey("bank_accounts.id"))
+    sales_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
+    owner_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    conversion_policy: Mapped[str | None] = mapped_column(String(30))
+    conversion_amount: Mapped[float] = mapped_column(Float, default=0)
+    converted_customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    converted_membership_id: Mapped[int | None] = mapped_column(ForeignKey("memberships.id"), index=True)
+    converted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    bank_account: Mapped["BankAccount | None"] = relationship()
+    sales_employee: Mapped["Employee | None"] = relationship(foreign_keys=[sales_employee_id])
+    owner_employee: Mapped["Employee | None"] = relationship(foreign_keys=[owner_employee_id])
+    converted_customer: Mapped["Customer | None"] = relationship(foreign_keys=[converted_customer_id])
+    converted_membership: Mapped["Membership | None"] = relationship(foreign_keys=[converted_membership_id])
+    created_by: Mapped["User | None"] = relationship()
+
+
 class Employee(Base):
     __tablename__ = "employees"
 

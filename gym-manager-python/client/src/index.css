@@ -1863,7 +1863,7 @@
 .report-tabs button:hover { color: #0f172a; }
 .report-tabs button.active { color: #0b1f3a; }
 .report-tabs button.active::after { background: #0b1f3a; }
-.report-metric-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); overflow: hidden; margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+.report-metric-grid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); overflow: hidden; margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
 .report-metric { position: relative; display: flex; min-width: 0; min-height: 112px; flex-direction: column; justify-content: center; padding: 16px; border-right: 1px solid #e2e8f0; text-align: left; }
 button.report-metric:hover { background: #f8fafc; }
 .report-metric:last-child { border-right: 0; }
@@ -1933,12 +1933,14 @@ button.report-metric:hover { background: #f8fafc; }
 .report-status.tone-positive i { background: #059669; }
 .report-empty-compact { display: flex !important; min-height: 180px !important; align-items: center !important; justify-content: center !important; color: #64748b; font-size: 12px; }
 .method-breakdown { padding: 5px 16px; }
-.method-breakdown > div { display: grid; min-height: 66px; grid-template-columns: minmax(110px,.8fr) minmax(70px,1fr) 112px; align-items: center; gap: 12px; border-bottom: 1px solid #f1f5f9; }
-.method-breakdown > div:last-child { border-bottom: 0; }
-.method-breakdown > div > span:first-child strong, .method-breakdown > div > span:first-child small { display: block; }
-.method-breakdown > div > span:first-child strong { color: #0f172a; font-size: 12px; }
-.method-breakdown > div > span:first-child small { margin-top: 2px; color: #64748b; font-size: 11px; }
-.method-breakdown > div > strong { text-align: right; color: #0f172a; font-size: 12px; font-variant-numeric: tabular-nums; }
+.method-breakdown > div, .method-breakdown > button { display: grid; min-height: 66px; width: 100%; grid-template-columns: minmax(110px,.8fr) minmax(70px,1fr) 112px; align-items: center; gap: 12px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+.method-breakdown > button { cursor: pointer; border-left: 0; border-right: 0; border-top: 0; background: transparent; padding: 0; }
+.method-breakdown > button:hover { background: #f8fafc; }
+.method-breakdown > div:last-child, .method-breakdown > button:last-child { border-bottom: 0; }
+.method-breakdown > div > span:first-child strong, .method-breakdown > div > span:first-child small, .method-breakdown > button > span:first-child strong, .method-breakdown > button > span:first-child small { display: block; }
+.method-breakdown > div > span:first-child strong, .method-breakdown > button > span:first-child strong { color: #0f172a; font-size: 12px; }
+.method-breakdown > div > span:first-child small, .method-breakdown > button > span:first-child small { margin-top: 2px; color: #64748b; font-size: 11px; }
+.method-breakdown > div > strong, .method-breakdown > button > strong { text-align: right; color: #0f172a; font-size: 12px; font-variant-numeric: tabular-nums; }
 .report-sale-chart { height: min(440px, calc(80px + 42px * 8)); padding: 12px 16px 8px 0; }
 .report-table-header { min-height: 64px; }
 .report-table-tools, .report-filter-bar { display: flex; align-items: center; gap: 8px; }
@@ -2039,7 +2041,7 @@ button.report-metric:hover { background: #f8fafc; }
   .report-attendance-chart { height: 290px; }
   .sale-ranking > div { grid-template-columns: 26px minmax(0,1fr) 105px; }
   .sale-bar { display: none; }
-  .method-breakdown > div { grid-template-columns: minmax(100px,1fr) 100px; }
+  .method-breakdown > div, .method-breakdown > button { grid-template-columns: minmax(100px,1fr) 100px; }
   .method-track { display: none; }
   .report-table-tools > .input { flex: 1 0 100%; }
   .report-menu { flex: 1; }

@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import AttendanceSession, Customer, Employee, Membership, Payment, ServicePackage
+from ..models import AttendanceSession, Customer, DayPassVisit, Employee, Membership, Payment, ServicePackage
 from ..timeutils import attendance_vietnam_datetime, utc_iso, utc_now, utc_vietnam_date, vietnam_day_utc_bounds, vietnam_today
 
 
@@ -27,6 +27,21 @@ def _sum(query):
     return float(query.scalar() or 0)
 
 
+def _net_day_pass_revenue_filter():
+    return or_(
+        DayPassVisit.status == "active",
+        and_(DayPassVisit.status == "converted", DayPassVisit.conversion_policy == "deducted"),
+    )
+
+
+def _day_pass_sum(db: Session, start_dt: datetime, end_dt: datetime):
+    return _sum(db.query(func.sum(DayPassVisit.charged_amount)).filter(
+        DayPassVisit.paid_at >= start_dt,
+        DayPassVisit.paid_at < end_dt,
+        _net_day_pass_revenue_filter(),
+    ))
+
+
 def _owner_name(row):
     employee = row.direct_sales_employee or row.sale_online_employee or row.customer.sales_employee
     return employee.person.display_name if employee and employee.person else "Chưa phân công"
@@ -40,6 +55,13 @@ def _sale_owner(membership: Membership | None):
         or membership.sale_online_employee
         or (membership.customer.sales_employee if membership.customer else None)
     )
+    if not employee or not employee.person:
+        return None, "Chưa phân công", None
+    return employee.id, employee.person.display_name, employee.job_title
+
+
+def _day_pass_sale_owner(row: DayPassVisit):
+    employee = row.sales_employee or row.owner_employee
     if not employee or not employee.person:
         return None, "Chưa phân công", None
     return employee.id, employee.person.display_name, employee.job_title
@@ -128,13 +150,13 @@ def dashboard(db: Session, include_financial: bool = True):
     expiring = health["expiring7"] + health["expiring8To14"]
     today_start, today_end = vietnam_day_utc_bounds(today)
     month_start_dt, month_end_dt = vietnam_day_utc_bounds(month_start, today)
-    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at < today_end))
-    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at < month_end_dt))
+    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at < today_end)) + _day_pass_sum(db, today_start, today_end)
+    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at < month_end_dt)) + _day_pass_sum(db, month_start_dt, month_end_dt)
     previous_start_dt, previous_end_dt = vietnam_day_utc_bounds(previous_month_start, previous_mtd_end - timedelta(days=1))
     revenue_previous_mtd = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= previous_start_dt,
         Payment.paid_at < previous_end_dt,
-    ))
+    )) + _day_pass_sum(db, previous_start_dt, previous_end_dt)
     debt = _sum(db.query(func.sum(Membership.debt_amount)))
     overdue_debt = _sum(db.query(func.sum(Membership.debt_amount)).filter(
         Membership.debt_amount > 0,
@@ -301,13 +323,24 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         joinedload(Payment.membership).joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
         joinedload(Payment.membership).joinedload(Membership.sale_online_employee).joinedload(Employee.person),
     ).filter(Payment.paid_at>=start_dt,Payment.paid_at<end_dt).order_by(Payment.paid_at.desc(), Payment.id.desc()).all()
-    revenue=sum(row.amount or 0 for row in payments)
+    day_passes = db.query(DayPassVisit).options(
+        joinedload(DayPassVisit.sales_employee).joinedload(Employee.person),
+        joinedload(DayPassVisit.owner_employee).joinedload(Employee.person),
+    ).filter(
+        DayPassVisit.paid_at >= start_dt,
+        DayPassVisit.paid_at < end_dt,
+        _net_day_pass_revenue_filter(),
+    ).order_by(DayPassVisit.paid_at.desc(), DayPassVisit.id.desc()).all()
+    membership_revenue = sum(row.amount or 0 for row in payments)
+    day_pass_revenue = sum(row.charged_amount or 0 for row in day_passes)
+    revenue = membership_revenue + day_pass_revenue
     previous_revenue = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= previous_start_dt,
         Payment.paid_at < previous_end_dt,
-    ))
+    )) + _day_pass_sum(db, previous_start_dt, previous_end_dt)
     by_method={}
     for row in payments:by_method[row.method]=by_method.get(row.method,0)+(row.amount or 0)
+    for row in day_passes:by_method[row.payment_method]=by_method.get(row.payment_method,0)+(row.charged_amount or 0)
     by_sale={}
     revenue_items=[]
     for row in payments:
@@ -324,6 +357,8 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         by_sale[key]["amount"] += float(row.amount or 0)
         by_sale[key]["payments"] += 1
         revenue_items.append({
+            "type": "membership",
+            "revenueType": "Gói hội viên",
             "paymentId": row.id,
             "paymentNo": row.payment_no,
             "paidAt": utc_iso(row.paid_at),
@@ -341,6 +376,40 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "channel": row.channel,
             "note": row.note,
         })
+    for row in day_passes:
+        sale_id, sale_name, sale_title = _day_pass_sale_owner(row)
+        key = sale_id or "unassigned"
+        if key not in by_sale:
+            by_sale[key] = {
+                "saleEmployeeId": sale_id,
+                "saleName": sale_name,
+                "saleTitle": sale_title,
+                "amount": 0,
+                "payments": 0,
+            }
+        by_sale[key]["amount"] += float(row.charged_amount or 0)
+        by_sale[key]["payments"] += 1
+        revenue_items.append({
+            "type": "day_pass",
+            "revenueType": "Khách tập ngày",
+            "paymentId": f"DP-{row.id}",
+            "paymentNo": f"DAY-{row.id:06d}",
+            "paidAt": utc_iso(row.paid_at),
+            "memberId": None,
+            "member": row.guest_name,
+            "memberCode": None,
+            "membershipId": None,
+            "membershipCode": None,
+            "package": "Khách tập ngày",
+            "saleEmployeeId": sale_id,
+            "saleName": sale_name,
+            "saleTitle": sale_title,
+            "amount": row.charged_amount or 0,
+            "method": row.payment_method,
+            "channel": "counter",
+            "note": row.guest_note,
+        })
+    revenue_items.sort(key=lambda item: (item["paidAt"] or "", str(item["paymentId"])), reverse=True)
     revenue_by_sale = sorted(by_sale.values(), key=lambda item: (-item["amount"], item["saleName"] or ""))
     attendance_rows = db.query(AttendanceSession.checked_in_at, AttendanceSession.source).filter(
         _attendance_range_filter(start, end),
@@ -377,11 +446,18 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "dueDate": row.debt_due_date.isoformat() if row.debt_due_date else None,
             "overdue": bool(row.debt_due_date and row.debt_due_date < today),
         })
-    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
+    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "membershipAmount": 0, "dayPassAmount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
     for row in payments:
         local_day = utc_vietnam_date(row.paid_at)
         if local_day in revenue_daily:
             revenue_daily[local_day]["amount"] += float(row.amount or 0)
+            revenue_daily[local_day]["membershipAmount"] += float(row.amount or 0)
+            revenue_daily[local_day]["payments"] += 1
+    for row in day_passes:
+        local_day = utc_vietnam_date(row.paid_at)
+        if local_day in revenue_daily:
+            revenue_daily[local_day]["amount"] += float(row.charged_amount or 0)
+            revenue_daily[local_day]["dayPassAmount"] += float(row.charged_amount or 0)
             revenue_daily[local_day]["payments"] += 1
     for checked_in_at, source in attendance_rows:
         local_day = attendance_vietnam_datetime(checked_in_at, source).date()
@@ -401,8 +477,10 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         "comparisonPeriod": {"from": previous_start.isoformat(), "to": previous_end.isoformat()},
         "summary": {
             "revenue": revenue,
+            "membershipRevenue": membership_revenue,
+            "dayPassRevenue": day_pass_revenue,
             "previousRevenue": previous_revenue,
-            "payments": len(payments),
+            "payments": len(revenue_items),
             "activeMembers": active,
             "checkins": checkins,
             "previousCheckins": previous_checkins,
@@ -420,6 +498,22 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         "revenueByMethod": [
             {"method": key, "amount": value, "share": round((value / revenue) * 100, 1) if revenue else 0}
             for key, value in sorted(by_method.items(), key=lambda item: -item[1])
+        ],
+        "revenueByType": [
+            {
+                "type": "membership",
+                "label": "Gói hội viên",
+                "amount": float(membership_revenue or 0),
+                "payments": len(payments),
+                "share": round((membership_revenue / revenue) * 100, 1) if revenue else 0,
+            },
+            {
+                "type": "day_pass",
+                "label": "Khách tập ngày",
+                "amount": float(day_pass_revenue or 0),
+                "payments": len(day_passes),
+                "share": round((day_pass_revenue / revenue) * 100, 1) if revenue else 0,
+            },
         ],
         "revenueBySale": revenue_by_sale,
         "revenueItems": revenue_items,

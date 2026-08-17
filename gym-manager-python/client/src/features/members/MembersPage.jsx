@@ -55,6 +55,9 @@ const createInitialForm = () => ({
   dahIdentityTime: "",
   salesEmployeeId: "",
   notes: "",
+  sourceDayPassId: "",
+  sourceDayPassConversionPolicy: "refunded",
+  sourceDayPassAmount: 0,
   status: "lead",
   registerMembership: false,
   membership: {
@@ -95,6 +98,10 @@ const paymentStatusFilters = {
   all: "Mọi hạn thanh toán",
   debt: "Có công nợ",
   overdue: "Đến hạn/quá hạn thanh toán",
+};
+const dayPassConversionPolicyLabels = {
+  refunded: "Hoàn tiền",
+  deducted: "Khấu trừ vào gói",
 };
 const planCollator = new Intl.Collator("vi", {
   numeric: true,
@@ -179,6 +186,9 @@ export function MembersPage() {
   const memberId = params.get("member");
   const action = params.get("action");
   const createRequested = params.get("create") === "1";
+  const dayPassId = params.get("dayPassId") || "";
+  const conversionPolicy = params.get("conversionPolicy") || "refunded";
+  const [loadedDayPassId, setLoadedDayPassId] = useState("");
   const updateParams = useCallback(
     (changes, options = {}) =>
       setParams((current) => {
@@ -216,6 +226,12 @@ export function MembersPage() {
     queryKey: ["member-options"],
     queryFn: () => api("/api/members/options"),
     staleTime: 5 * 60_000,
+  });
+  const dayPassQuery = useQuery({
+    queryKey: ["day-pass-draft", dayPassId],
+    queryFn: () => api(`/api/day-passes/${dayPassId}`),
+    enabled: Boolean(dayPassId) && canOperate,
+    retry: false,
   });
   const planOptions = useMemo(
     () => groupedPlanOptions(options.data?.plans || []),
@@ -265,6 +281,25 @@ export function MembersPage() {
     setCreateOpen(true);
     updateParams({ create: "" }, { replace: true });
   }, [canOperate, createRequested, updateParams]);
+  useEffect(() => {
+    const row = dayPassQuery.data;
+    if (!row || loadedDayPassId === String(row.id)) return;
+    setCreateOpen(true);
+    setLoadedDayPassId(String(row.id));
+    setForm((current) => ({
+      ...current,
+      name: row.guestName || "",
+      phone: row.guestPhone || "",
+      gender: row.guestGender || "",
+      salesEmployeeId: row.salesEmployee?.id || current.salesEmployeeId,
+      notes: row.guestNote ? `Chuyển đổi từ khách tập ngày #${row.id}: ${row.guestNote}` : `Chuyển đổi từ khách tập ngày #${row.id}`,
+      source: "Khách tập ngày",
+      sourceDayPassId: row.id,
+      sourceDayPassConversionPolicy: conversionPolicy,
+      sourceDayPassAmount: row.chargedAmount || 0,
+      registerMembership: true,
+    }));
+  }, [conversionPolicy, dayPassQuery.data, loadedDayPassId]);
   useEffect(() => {
     const focus = (event) => {
       if (
@@ -635,6 +670,7 @@ export function MembersPage() {
     setCreateOpen(false);
     setForm(createInitialForm());
     setError("");
+    updateParams({ dayPassId: "", conversionPolicy: "" }, { replace: true });
   };
   const updateMembershipDraft = (changes) =>
     setForm((current) => ({
@@ -656,6 +692,16 @@ export function MembersPage() {
         : "",
     });
   };
+  const sourceDayPassCredit =
+    form.sourceDayPassId && form.sourceDayPassConversionPolicy === "deducted"
+      ? Number(form.sourceDayPassAmount || 0)
+      : 0;
+  const membershipDebtAfterCredit = Math.max(
+    Number(form.membership.finalPrice || 0) -
+      Number(form.membership.paidAmount || 0) -
+      sourceDayPassCredit,
+    0,
+  );
   const savedViewMatches = useCallback(
     (saved) =>
       Object.entries(saved.filters).every(
@@ -1139,9 +1185,7 @@ export function MembersPage() {
               return;
             }
             if (form.registerMembership) {
-              const debt =
-                Number(form.membership.finalPrice || 0) -
-                Number(form.membership.paidAmount || 0);
+              const debt = membershipDebtAfterCredit;
               if (!form.membership.planId) {
                 setError("Vui lòng chọn gói tập.");
                 return;
@@ -1181,6 +1225,13 @@ export function MembersPage() {
           }}
         >
           <div className="modal-body space-y-5">
+            {form.sourceDayPassId && (
+              <section className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">
+                <strong className="block text-sm text-sky-950">Chuyển đổi từ khách tập ngày #{form.sourceDayPassId}</strong>
+                Chính sách xử lý tiền tập ngày: {dayPassConversionPolicyLabels[form.sourceDayPassConversionPolicy] || "Hoàn tiền"} {money(form.sourceDayPassAmount)}.
+                {form.sourceDayPassConversionPolicy === "deducted" && " Thanh toán lần này là phần thu thêm sau khi trừ khoản này."}
+              </section>
+            )}
             <section className="form-section">
               <h3 className="form-section-title">Thông tin cá nhân</h3>
               <div className="form-grid">
@@ -1421,11 +1472,17 @@ export function MembersPage() {
                     <Field label="Thanh toán lần này">
                       <MoneyInput
                         value={form.membership.paidAmount}
-                        max={Number(form.membership.finalPrice) || 0}
+                        max={Math.max(Number(form.membership.finalPrice || 0) - sourceDayPassCredit, 0)}
                         onChange={(paidAmount) => updateMembershipDraft({ paidAmount })}
                       />
                     </Field>
-                    {Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0) > 0 && (
+                    {sourceDayPassCredit > 0 && (
+                      <div className="flex flex-col justify-center rounded-md bg-sky-50 px-3 py-2">
+                        <span className="text-[11px] text-sky-600">Khấu trừ tập ngày</span>
+                        <strong className="mt-0.5 text-sm text-sky-800">{money(sourceDayPassCredit)}</strong>
+                      </div>
+                    )}
+                    {membershipDebtAfterCredit > 0 && (
                       <Field label="Hạn công nợ">
                         <DateInput
                           value={form.membership.debtDueDate}
@@ -1471,8 +1528,8 @@ export function MembersPage() {
                   </div>
                   <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
                     <span className="text-slate-500">Công nợ sau khi tạo</span>
-                    <strong className={`ml-2 ${Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0) > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                      {money(Math.max(Number(form.membership.finalPrice || 0) - Number(form.membership.paidAmount || 0), 0))}
+                    <strong className={`ml-2 ${membershipDebtAfterCredit > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                      {money(membershipDebtAfterCredit)}
                     </strong>
                   </div>
                 </div>

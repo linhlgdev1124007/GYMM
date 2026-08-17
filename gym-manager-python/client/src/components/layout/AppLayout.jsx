@@ -19,6 +19,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  TicketCheck,
   UserRoundCog,
   Users,
   X,
@@ -60,6 +61,7 @@ const groups = [
     label: "Vận hành",
     items: [
       { to: "/check-in", label: "Điểm danh", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"] },
+      { to: "/day-passes", label: "Khách tập ngày", icon: TicketCheck, roles: ["admin", "manager", "receptionist"] },
       { to: "/payments", label: "Thanh toán", icon: CreditCard, roles: ["admin", "manager", "receptionist"] },
       { to: "/inventory", label: "Kho nội bộ", icon: Warehouse, roles: ["admin"] },
     ],
