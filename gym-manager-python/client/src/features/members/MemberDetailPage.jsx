@@ -51,7 +51,7 @@ import {
 const tabGroups = [
   { key: "overview", label: "Tổng quan", tabs: [["overview", "Tổng quan"]] },
   { key: "membership", label: "Gói & tài chính", tabs: [["memberships", "Lịch sử gói"], ["payments", "Thanh toán"]] },
-  { key: "operations", label: "Check-in & PT", tabs: [["checkins", "Lịch sử check-in"], ["training", "PT & lịch tập"]] },
+  { key: "operations", label: "Check-in & PT", tabs: [["checkins", "Lịch sử check-in"], ["training", "PT & lịch tập"], ["pt-sessions", "Buổi PT đã tập"]] },
   { key: "profile", label: "Hồ sơ & nhật ký", tabs: [["notes", "Ghi chú"], ["activity", "Nhật ký thao tác"]] },
 ];
 const allTabs = tabGroups.flatMap((group) => group.tabs);
@@ -838,6 +838,53 @@ export function MemberDetailPage() {
       ),
     },
   ];
+  const ptSessionColumns = [
+    {
+      key: "createdAt",
+      label: "Thời điểm ghi nhận",
+      render: (r) => dateTime(r.checkedInAt || r.createdAt),
+    },
+    {
+      key: "action",
+      label: "Nghiệp vụ",
+      render: (r) =>
+        r.action === "pt_checkin"
+          ? "Tập PT"
+          : r.action === "pt_sessions_add"
+            ? "Cộng buổi"
+            : r.action === "pt_sessions_subtract"
+              ? "Trừ buổi"
+              : r.action,
+    },
+    { key: "ptType", label: "Nhóm PT" },
+    {
+      key: "coaches",
+      label: "Coach",
+      render: (r) => r.coaches?.map((coach) => coach.name).join(", ") || "—",
+    },
+    {
+      key: "deltaSessions",
+      label: "Buổi",
+      className: "text-right",
+      render: (r) => (
+        <strong className={r.deltaSessions < 0 ? "text-red-700" : "text-emerald-700"}>
+          {r.deltaSessions > 0 ? "+" : ""}
+          {r.deltaSessions}
+        </strong>
+      ),
+    },
+    {
+      key: "remaining",
+      label: "Còn lại",
+      render: (r) => `${r.remainingBefore} → ${r.remainingAfter}`,
+    },
+    { key: "createdBy", label: "Người ghi nhận" },
+    {
+      key: "note",
+      label: "Ghi chú",
+      render: (r) => r.note || "—",
+    },
+  ];
   return (
     <>
       <div className="member-breadcrumb">
@@ -1284,6 +1331,22 @@ export function MemberDetailPage() {
             columns={trainingColumns}
             emptyTitle="Chưa đăng ký PT"
             emptyDescription="Đăng ký PT để thiết lập coach, số buổi và lịch tập."
+          />
+        </section>
+      )}
+      {tab === "pt-sessions" && (
+        <section className="mt-5">
+          <div className="section-header">
+            <div>
+              <h2>Buổi PT đã tập</h2>
+              <p>Nhật ký các lần ghi nhận tập PT, cộng buổi và trừ buổi</p>
+            </div>
+          </div>
+          <DataTable
+            rows={member.ptSessionLogs}
+            columns={ptSessionColumns}
+            emptyTitle="Chưa có buổi PT đã ghi nhận"
+            emptyDescription="Khi xử lý hội viên bằng nút Tập PT, buổi tập sẽ xuất hiện tại đây."
           />
         </section>
       )}

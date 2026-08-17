@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, aliased, joinedload
 from ..database import ROOT_DIR
 from ..models import (
     AttendanceSession, BankAccount, Customer, DahCustomerIdentity, DahWebhookEvent, Employee, EmployeeJobTitle, Membership,
-    MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, ServicePackage, User, DayPassVisit,
+    MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtSessionLog, ServicePackage, User, DayPassVisit,
 )
 from .audit_service import member_audit_logs, record_audit
 from .day_passes_service import mark_converted_day_pass
@@ -503,6 +503,11 @@ def get_member(db: Session, member_id: int, include_audit: bool = False):
         joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
     ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
     pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
+    pt_session_logs = db.query(PtSessionLog).options(
+        joinedload(PtSessionLog.enrollment).joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        joinedload(PtSessionLog.attendance_session),
+        joinedload(PtSessionLog.created_by),
+    ).join(PtSessionLog.enrollment).filter(PtEnrollment.customer_id == member_id).order_by(PtSessionLog.created_at.desc(), PtSessionLog.id.desc()).limit(100).all()
     checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id == member_id).order_by(AttendanceSession.checked_in_at.desc()).limit(100).all()
     payments = db.query(Payment).options(joinedload(Payment.customer).joinedload(Customer.person), joinedload(Payment.membership).joinedload(Membership.package), joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by)).filter(Payment.customer_id == member_id).order_by(Payment.paid_at.desc()).all()
     membership_events = db.query(MembershipEvent).options(
@@ -522,6 +527,22 @@ def get_member(db: Session, member_id: int, include_audit: bool = False):
         "memberships": [membership_data(row, include_payments=True, include_history=include_audit) for row in sorted([row for row in memberships if not row.package.is_pt], key=_membership_sort_key)],
         "membershipEvents": [membership_event_data(row) for row in membership_events] if include_audit else [],
         "training": [pt_data(row) for row in pt_rows],
+        "ptSessionLogs": [{
+            "id": row.id,
+            "enrollmentId": row.enrollment_id,
+            "attendanceSessionId": row.attendance_session_id,
+            "action": row.action,
+            "deltaSessions": row.delta_sessions,
+            "remainingBefore": row.remaining_before,
+            "remainingAfter": row.remaining_after,
+            "note": row.note,
+            "createdAt": utc_iso(row.created_at),
+            "createdBy": row.created_by.display_name if row.created_by else "Hệ thống",
+            "checkedInAt": _attendance_iso(row.attendance_session.checked_in_at, row.attendance_session.source) if row.attendance_session else None,
+            "checkedOutAt": _attendance_iso(row.attendance_session.checked_out_at, row.attendance_session.source) if row.attendance_session else None,
+            "ptType": row.enrollment.group_type if row.enrollment else None,
+            "coaches": [employee_data(assignment.coach) for assignment in row.enrollment.coach_assignments] if row.enrollment else [],
+        } for row in pt_session_logs],
         "checkins": [{"id": row.id, "checkedInAt": _attendance_iso(row.checked_in_at, row.source), "checkedOutAt": _attendance_iso(row.checked_out_at, row.source), "result": row.result, "status": row.status, "source": row.source} for row in checkins],
         "payments": [payment_data(row) for row in payments],
         "auditLogs": member_audit_logs(db, member_id) if include_audit else [],
