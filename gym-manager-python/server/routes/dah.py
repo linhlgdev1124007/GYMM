@@ -64,6 +64,16 @@ def assign_identity(member_id: int, payload: dict, db: Session = Depends(get_db)
     )
 
 
+@router.delete("/api/members/{member_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def delete_identity(member_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    return dah_service.delete_customer_identity(
+        db,
+        member_id,
+        confirmation_text=payload.get("confirmationText"),
+        actor=user,
+    )
+
+
 @router.post("/api/employees/{employee_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager"))])
 def assign_employee_identity(employee_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return dah_service.assign_identity_to_employee(db, employee_id, payload.get("eventId"), actor=user)

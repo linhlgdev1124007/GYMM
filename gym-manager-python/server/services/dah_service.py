@@ -844,6 +844,52 @@ def assign_identity_to_customer(
     }
 
 
+def delete_customer_identity(db: Session, customer_id: int, confirmation_text: str | None = None, actor=None):
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(404, "Không tìm thấy hội viên.")
+    if str(confirmation_text or "").strip() != "Tôi xác nhận xóa":
+        raise HTTPException(422, "Nhập đúng câu 'Tôi xác nhận xóa' để xóa FaceID.")
+    identity_key = customer.person_uuid
+    if not identity_key:
+        raise HTTPException(422, "Hội viên chưa liên kết FaceID.")
+    identities = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.customer_id == customer.id).all()
+    old_avatar = customer.avatar_image_data
+    for identity in identities:
+        if identity.employee_id:
+            identity.customer_id = None
+        else:
+            db.delete(identity)
+    customer.person_uuid = None
+    customer.avatar_image_data = None
+    record_audit(
+        db,
+        actor,
+        "identity_delete",
+        "dah_identity",
+        identities[0].id if identities else None,
+        f"Xóa FaceID của {customer.person.display_name}",
+        customer_id=customer.id,
+        details={
+            "oldPersonUuid": _display_value(identity_key),
+            "newPersonUuid": "—",
+            "changes": [{
+                "field": "personUuid",
+                "label": "FaceID",
+                "old": _display_value(identity_key),
+                "new": "—",
+            }],
+            "avatarCleared": bool(old_avatar),
+        },
+    )
+    db.commit()
+    return {
+        "memberId": customer.id,
+        "personUuid": None,
+        "avatarImageData": None,
+    }
+
+
 def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, actor=None):
     employee = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.id == employee_id).first()
     if not employee:

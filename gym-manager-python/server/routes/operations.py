@@ -163,13 +163,13 @@ def checkout(session_id: int, db: Session = Depends(get_db), user: User = Depend
     return operations_controller.checkout(db, session_id, user)
 
 
-@router.get("/member-processing", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+@router.get("/member-processing", dependencies=[Depends(require_roles("admin", "manager", "receptionist", "coach"))])
 def member_processing(day: str = "", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=100, alias="pageSize"), db: Session = Depends(get_db)):
     return operations_controller.member_processing_queue(db, day=day, page=page, page_size=page_size)
 
 
-@router.post("/member-processing/{session_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
-def process_member(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+@router.post("/member-processing/{session_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist", "coach"))])
+def process_member(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist", "coach"))):
     return operations_controller.process_member_checkin(db, session_id, payload, user)
 
 

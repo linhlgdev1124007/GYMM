@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
   CheckCircle2,
+  ClipboardCheck,
   CreditCard,
   LayoutDashboard,
   Package,
@@ -31,6 +32,7 @@ const commands = [
   { id: "staff", label: "Mở Nhân viên", description: "Nhân sự và tải PT", path: "/trainers", icon: UserRoundCog, roles: ["admin", "manager"], keywords: "coach pt staff" },
   { id: "training", label: "Mở Khách PT", description: "Lịch tập và phân công Coach", path: "/training", icon: UserRound, keywords: "coach lich tap" },
   { id: "checkin", label: "Giám sát điểm danh", description: "Dữ liệu check-in tự động từ DAH", path: "/check-in", icon: CheckCircle2, roles: ["admin", "manager", "receptionist"], keywords: "attendance dah vao phong" },
+  { id: "member-processing", label: "Mở Xử lý hội viên", description: "Phân loại check-in PT hoặc tập thường", path: "/member-processing", icon: ClipboardCheck, roles: ["admin", "manager", "receptionist", "coach"], keywords: "xu ly hoi vien pt checkin" },
   { id: "payments", label: "Mở Thanh toán", description: "Đối soát phiếu thu và chứng từ", path: "/payments", icon: CreditCard, roles: ["admin", "manager", "receptionist"], keywords: "payment doanh thu bill" },
   { id: "reports", label: "Mở Báo cáo", description: "Doanh thu, attendance và công nợ", path: "/reports", icon: BarChart3, roles: ["admin", "manager"], keywords: "report phan tich" },
   { id: "accounts", label: "Mở Tài khoản & quyền", description: "Người dùng và phân quyền", path: "/accounts", icon: ShieldCheck, roles: ["admin"], keywords: "user role permission" },

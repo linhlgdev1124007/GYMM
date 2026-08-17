@@ -89,6 +89,7 @@ const auditActionLabels = {
   logout: "Đăng xuất",
   login_failed: "Đăng nhập lỗi",
   identity_link: "Gán FaceID",
+  identity_delete: "Xóa FaceID",
   dah_checkin: "DAH check-in",
   dah_checkout: "DAH check-out",
   dah_denied: "DAH từ chối",

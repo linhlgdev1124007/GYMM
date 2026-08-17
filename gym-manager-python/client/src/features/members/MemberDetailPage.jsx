@@ -37,6 +37,7 @@ import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
 import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
 import { MembershipFreezeForm } from "../../components/forms/MembershipFreezeForm";
+import { DahIdentityDeleteModal } from "./DahIdentityDeleteModal";
 import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
 import {
@@ -339,6 +340,7 @@ export function MemberDetailPage() {
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [formError, setFormError] = useState("");
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
+  const [identityDeleteOpen, setIdentityDeleteOpen] = useState(false);
   const [activityFilter, setActivityFilter] = useState("all");
   const workspaceHeaderRef = useRef(null);
   const [showStickyHeader, setShowStickyHeader] = useState(false);
@@ -845,6 +847,19 @@ export function MemberDetailPage() {
       render: (r) => dateTime(r.checkedInAt || r.createdAt),
     },
     {
+      key: "trainingDate",
+      label: "Ngày tập",
+      render: (r) => shortDate(r.trainingDate),
+    },
+    {
+      key: "timeRange",
+      label: "Ca PT",
+      render: (r) =>
+        r.startedAt && r.endedAt
+          ? `${dateTime(r.startedAt).split(" · ")[0]} - ${dateTime(r.endedAt).split(" · ")[0]}`
+          : "—",
+    },
+    {
       key: "action",
       label: "Nghiệp vụ",
       render: (r) =>
@@ -1165,12 +1180,20 @@ export function MemberDetailPage() {
                         </span>
                         <CopyValueButton value={member.personUuid} label="mã DAH" />
                         {canFinancial && (
-                          <button
-                            className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
-                            onClick={() => setIdentityLinkOpen(true)}
-                          >
-                            <ScanFace size={14} /> Gán lại
-                          </button>
+                          <>
+                            <button
+                              className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
+                              onClick={() => setIdentityLinkOpen(true)}
+                            >
+                              <ScanFace size={14} /> Gán lại
+                            </button>
+                            <button
+                              className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline"
+                              onClick={() => setIdentityDeleteOpen(true)}
+                            >
+                              Xóa
+                            </button>
+                          </>
                         )}
                       </span>
                     ) : canFinancial ? (
@@ -1547,6 +1570,17 @@ export function MemberDetailPage() {
         onLinked={() => {
           refresh();
           notify.success(`Đã cập nhật định danh DAH cho ${member.name}.`);
+        }}
+      />
+      <DahIdentityDeleteModal
+        open={identityDeleteOpen}
+        onClose={() => setIdentityDeleteOpen(false)}
+        memberId={member.id}
+        memberName={member.name}
+        personUuid={member.personUuid}
+        onDeleted={() => {
+          refresh();
+          notify.success(`Đã xóa FaceID của ${member.name}.`);
         }}
       />
     </>

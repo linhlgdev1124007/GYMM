@@ -61,6 +61,17 @@ def _as_time(value):
         raise HTTPException(422, "Giờ không hợp lệ. Vui lòng dùng định dạng HH:MM.") from exc
 
 
+def _as_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Thời điểm không hợp lệ. Vui lòng dùng định dạng ISO.") from exc
+
+
 def _audit_value(value):
     if value in (None, ""):
         return "—"
@@ -917,6 +928,9 @@ def _pt_log_data(row: PtSessionLog):
         "deltaSessions": row.delta_sessions,
         "remainingBefore": row.remaining_before,
         "remainingAfter": row.remaining_after,
+        "trainingDate": row.training_date.isoformat() if row.training_date else None,
+        "startedAt": utc_iso(row.started_at) if row.started_at else None,
+        "endedAt": utc_iso(row.ended_at) if row.ended_at else None,
         "note": row.note,
         "createdAt": utc_iso(row.created_at),
         "createdBy": row.created_by.display_name if row.created_by else "Hệ thống",
@@ -933,6 +947,9 @@ def _record_pt_session_log(
     actor: User | None,
     attendance_session_id: int | None = None,
     note: str | None = None,
+    training_date: date | None = None,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
 ):
     row = PtSessionLog(
         enrollment_id=enrollment.id,
@@ -941,6 +958,9 @@ def _record_pt_session_log(
         delta_sessions=delta_sessions,
         remaining_before=before,
         remaining_after=after,
+        training_date=training_date,
+        started_at=started_at,
+        ended_at=ended_at,
         note=(note or "")[:255] or None,
         created_by_user_id=actor.id if actor else None,
     )
@@ -1046,11 +1066,8 @@ def _member_processing_item(db: Session, session: AttendanceSession, target: dat
     danger, danger_reason = _membership_danger(membership_summary)
     pt_items = []
     for enrollment in enrollments:
-        slots = _today_pt_slots(enrollment, target)
-        if not slots:
-            continue
         data = pt_data(enrollment)
-        data["todaySlots"] = slots
+        data["todaySlots"] = _today_pt_slots(enrollment, target)
         pt_items.append(data)
     return {
         "sessionId": session.id,
@@ -1068,6 +1085,7 @@ def _member_processing_item(db: Session, session: AttendanceSession, target: dat
         "gymMembership": membership_summary,
         "gymDanger": danger,
         "gymDangerReason": danger_reason,
+        "ptEnrollments": pt_items,
         "ptToday": pt_items,
         "decision": session.workout_type or "undecided",
     }
@@ -1111,8 +1129,7 @@ def member_processing_queue(db: Session, day: str = "", page: int = 1, page_size
     ) if customer_ids else []
     by_customer = {}
     for enrollment in enrollments:
-        if _today_pt_slots(enrollment, target):
-            by_customer.setdefault(enrollment.customer_id, []).append(enrollment)
+        by_customer.setdefault(enrollment.customer_id, []).append(enrollment)
     filtered = [row for row in sessions if by_customer.get(row.customer_id)]
     total = len(filtered)
     start_index = (page - 1) * page_size
@@ -1161,11 +1178,14 @@ def process_member_checkin(db: Session, session_id: int, payload: dict, actor: U
             raise HTTPException(422, "Gói PT không hoạt động.")
         if enrollment.expires_at and enrollment.expires_at < target:
             raise HTTPException(422, "Gói PT đã hết hạn.")
-        if not _today_pt_slots(enrollment, target):
-            raise HTTPException(422, "Hôm nay hội viên không có lịch PT của gói này.")
         before = int(enrollment.remaining_sessions or 0)
         if before <= 0:
             raise HTTPException(422, "Gói PT đã hết số buổi.")
+        training_date = _as_date(payload.get("trainingDate")) or target
+        started_at = _as_datetime(payload.get("startedAt")) or session.checked_in_at
+        ended_at = _as_datetime(payload.get("endedAt")) or utc_now()
+        if ended_at <= started_at:
+            raise HTTPException(422, "Giờ kết thúc buổi PT phải sau giờ bắt đầu.")
         enrollment.remaining_sessions = before - 1
         after = enrollment.remaining_sessions
         session.pt_enrollment_id = enrollment.id
@@ -1179,6 +1199,9 @@ def process_member_checkin(db: Session, session_id: int, payload: dict, actor: U
             actor,
             attendance_session_id=session.id,
             note=note or "Xử lý check-in: Tập PT",
+            training_date=training_date,
+            started_at=started_at,
+            ended_at=ended_at,
         )
     session.workout_type = decision
     session.processed_at = utc_now()
@@ -1202,6 +1225,9 @@ def process_member_checkin(db: Session, session_id: int, payload: dict, actor: U
             "ptSessionLogId": pt_log.id if pt_log else None,
             "remainingBefore": before,
             "remainingAfter": after,
+            "trainingDate": training_date if decision == "pt" else None,
+            "startedAt": started_at if decision == "pt" else None,
+            "endedAt": ended_at if decision == "pt" else None,
             "note": note,
         },
     )

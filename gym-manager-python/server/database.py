@@ -508,14 +508,35 @@ def migrate_member_processing():
                     {quote('delta_sessions')} INTEGER NOT NULL DEFAULT 0,
                     {quote('remaining_before')} INTEGER NOT NULL,
                     {quote('remaining_after')} INTEGER NOT NULL,
+                    {quote('training_date')} DATE NULL,
+                    {quote('started_at')} DATETIME NULL,
+                    {quote('ended_at')} DATETIME NULL,
                     {quote('note')} VARCHAR(255) NULL,
                     {quote('created_by_user_id')} INTEGER NULL,
                     {quote('created_at')} DATETIME NOT NULL
                 )
                 """
             )
-            for column in ("enrollment_id", "attendance_session_id", "action", "created_at"):
+            for column in ("enrollment_id", "attendance_session_id", "action", "training_date", "created_at"):
                 connection.exec_driver_sql(
                     f"CREATE INDEX {quote(f'ix_pt_session_logs_{column}')} "
                     f"ON {quote('pt_session_logs')} ({quote(column)})"
                 )
+    else:
+        columns = {column["name"] for column in inspector.get_columns("pt_session_logs")}
+        definitions = {
+            "training_date": "DATE",
+            "started_at": "DATETIME",
+            "ended_at": "DATETIME",
+        }
+        with engine.begin() as connection:
+            for column, definition in definitions.items():
+                if column not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {quote('pt_session_logs')} ADD COLUMN {quote(column)} {definition}"
+                    )
+                    if column == "training_date":
+                        connection.exec_driver_sql(
+                            f"CREATE INDEX {quote('ix_pt_session_logs_training_date')} "
+                            f"ON {quote('pt_session_logs')} ({quote(column)})"
+                        )

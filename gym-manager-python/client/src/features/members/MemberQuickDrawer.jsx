@@ -34,6 +34,7 @@ import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { useAuth } from "../../app/AuthContext";
+import { DahIdentityDeleteModal } from "./DahIdentityDeleteModal";
 import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 
 export function MemberQuickDrawer({
@@ -52,6 +53,7 @@ export function MemberQuickDrawer({
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedFreeze, setSelectedFreeze] = useState(null);
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
+  const [identityDeleteOpen, setIdentityDeleteOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const memberQuery = useQuery({
     queryKey: ["member", memberId],
@@ -512,6 +514,9 @@ export function MemberQuickDrawer({
                               <button className="inline-flex items-center gap-1 text-xs font-medium text-blue-700" onClick={() => setIdentityLinkOpen(true)}>
                                 <ScanFace size={13} /> Gán lại
                               </button>
+                              <button className="inline-flex items-center gap-1 text-xs font-medium text-red-700" onClick={() => setIdentityDeleteOpen(true)}>
+                                Xóa
+                              </button>
                             </span>
                           ) : (
                           <button className="inline-flex items-center gap-1 text-xs font-medium text-blue-700" onClick={() => setIdentityLinkOpen(true)}>
@@ -646,6 +651,17 @@ export function MemberQuickDrawer({
                 notify.success(`Đã cập nhật định danh DAH cho ${member.name}.`);
               }}
             />
+          <DahIdentityDeleteModal
+            open={identityDeleteOpen}
+            onClose={() => setIdentityDeleteOpen(false)}
+            memberId={member.id}
+            memberName={member.name}
+            personUuid={member.personUuid}
+            onDeleted={() => {
+              refresh();
+              notify.success(`Đã xóa FaceID của ${member.name}.`);
+            }}
+          />
         </>
       )}
     </>

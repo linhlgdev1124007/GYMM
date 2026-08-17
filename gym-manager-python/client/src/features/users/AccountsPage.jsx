@@ -28,6 +28,7 @@ const rolePermissionRows = [
   ["Nhân viên", { admin: true, manager: true, receptionist: false, coach: false }],
   ["Khách PT / Training", { admin: true, manager: true, receptionist: true, coach: true }],
   ["Điểm danh", { admin: true, manager: true, receptionist: true, coach: false }],
+  ["Xử lý hội viên", { admin: true, manager: true, receptionist: true, coach: true }],
   ["Thanh toán", { admin: true, manager: true, receptionist: true, coach: false }],
   ["Báo cáo", { admin: true, manager: true, receptionist: false, coach: false }],
   ["Settings", { admin: true, manager: false, receptionist: false, coach: false }],
