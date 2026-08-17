@@ -22,6 +22,7 @@ const actionLabels = {
   upload_receipt: "Thêm chứng từ",
   checkin: "Check-in",
   checkout: "Check-out",
+  employee_attendance_adjust: "Chỉnh chấm công",
   freeze: "Bảo lưu",
   transfer: "Chuyển nhượng",
   upgrade: "Nâng cấp gói",

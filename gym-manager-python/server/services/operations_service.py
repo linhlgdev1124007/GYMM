@@ -435,6 +435,104 @@ def approve_employee_shift_override(db: Session, shift_id: int, payload: dict, a
     }
 
 
+def update_employee_shift_attendance_events(db: Session, shift_id: int, payload: dict, actor: User | None = None):
+    schedule = (
+        db.query(EmployeeShiftSchedule)
+        .options(joinedload(EmployeeShiftSchedule.employee).joinedload(Employee.person))
+        .filter(EmployeeShiftSchedule.id == shift_id, EmployeeShiftSchedule.status == "active")
+        .first()
+    )
+    if not schedule:
+        raise HTTPException(404, "Không tìm thấy ca làm.")
+    checkin_event_id = _as_int(payload.get("checkinEventId"))
+    checkout_event_id = _as_int(payload.get("checkoutEventId"))
+    if not checkin_event_id:
+        raise HTTPException(422, "Vui lòng chọn event check-in.")
+    if checkout_event_id and checkout_event_id == checkin_event_id:
+        raise HTTPException(422, "Event check-out phải khác event check-in.")
+    day_start = datetime.combine(schedule.work_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    event_ids = [checkin_event_id] + ([checkout_event_id] if checkout_event_id else [])
+    events = (
+        db.query(DahWebhookEvent)
+        .filter(
+            DahWebhookEvent.id.in_(event_ids),
+            DahWebhookEvent.employee_id == schedule.employee_id,
+            DahWebhookEvent.event_time >= day_start,
+            DahWebhookEvent.event_time < day_end,
+        )
+        .all()
+    )
+    by_id = {event.id: event for event in events}
+    checkin_event = by_id.get(checkin_event_id)
+    checkout_event = by_id.get(checkout_event_id) if checkout_event_id else None
+    if not checkin_event or (checkout_event_id and not checkout_event):
+        raise HTTPException(422, "Event webhook không hợp lệ cho nhân viên/ ngày làm này.")
+    if checkout_event and checkout_event.event_time <= checkin_event.event_time:
+        raise HTTPException(422, "Event check-out phải sau event check-in.")
+    session = (
+        db.query(AttendanceSession)
+        .filter(
+            AttendanceSession.employee_shift_schedule_id == schedule.id,
+            AttendanceSession.employee_id == schedule.employee_id,
+            AttendanceSession.source == "dah",
+        )
+        .order_by(AttendanceSession.id.desc())
+        .first()
+    )
+    old_checked_in_at = session.checked_in_at if session else None
+    old_checked_out_at = session.checked_out_at if session else None
+    if not session:
+        session = AttendanceSession(
+            employee_id=schedule.employee_id,
+            employee_shift_schedule_id=schedule.id,
+            source="dah",
+            result="allowed",
+        )
+        db.add(session)
+        db.flush()
+    db.query(DahWebhookEvent).filter(DahWebhookEvent.attendance_session_id == session.id).update(
+        {DahWebhookEvent.attendance_session_id: None},
+        synchronize_session=False,
+    )
+    session.scheduled_start_at = schedule.starts_at
+    session.scheduled_end_at = schedule.ends_at
+    session.checked_in_at = checkin_event.event_time
+    session.checked_out_at = checkout_event.event_time if checkout_event else None
+    session.status = "closed" if checkout_event else "open"
+    session.note = f"Admin chỉnh từ webhook · ca {schedule.starts_at.strftime('%H:%M')}-{schedule.ends_at.strftime('%H:%M')}"
+    checkin_event.attendance_session_id = session.id
+    if checkout_event:
+        checkout_event.attendance_session_id = session.id
+    employee_name = schedule.employee.person.display_name if schedule.employee and schedule.employee.person else schedule.employee_id
+    record_audit(
+        db,
+        actor,
+        "employee_attendance_adjust",
+        "attendance",
+        session.id,
+        f"Chỉnh chấm công ca {employee_name} {schedule.work_date.isoformat()}",
+        details={
+            "employeeId": schedule.employee_id,
+            "shiftId": schedule.id,
+            "checkinEventId": checkin_event.id,
+            "checkoutEventId": checkout_event.id if checkout_event else None,
+            "oldCheckedInAt": old_checked_in_at,
+            "oldCheckedOutAt": old_checked_out_at,
+            "newCheckedInAt": session.checked_in_at,
+            "newCheckedOutAt": session.checked_out_at,
+        },
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "sessionId": session.id,
+        "checkedInAt": _attendance_iso(session.checked_in_at, session.source),
+        "checkedOutAt": _attendance_iso(session.checked_out_at, session.source),
+        "status": session.status,
+    }
+
+
 def employee_shift_report(
     db: Session,
     range_type: str = "today",

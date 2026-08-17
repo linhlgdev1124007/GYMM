@@ -53,6 +53,11 @@ def approve_trainer_shift_override(shift_id: int, payload: dict, db: Session = D
     return operations_controller.approve_employee_shift_override(db, shift_id, payload, user)
 
 
+@router.patch("/trainer-shifts/{shift_id}/attendance-events", dependencies=[Depends(require_roles("admin"))])
+def update_trainer_shift_attendance_events(shift_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return operations_controller.update_employee_shift_attendance_events(db, shift_id, payload, user)
+
+
 @router.post("/trainers", dependencies=[Depends(require_roles("admin", "manager"))])
 def create_trainer(payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
     return operations_controller.create_trainer(db, payload, user)

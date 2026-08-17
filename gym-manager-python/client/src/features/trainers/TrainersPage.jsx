@@ -15,6 +15,7 @@ import { DateInput, PhoneInput } from "../../components/ui/SmartInputs";
 import { Pagination } from "../../components/ui/Pagination";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { formatPhone, initials, normalizePhone } from "../../utils/format";
+import { useAuth } from "../../app/AuthContext";
 import { DahIdentityLinkModal } from "../members/DahIdentityLinkModal";
 
 const defaultJobTitles = ["Sale", "Coach", "Marketing"];
@@ -128,6 +129,30 @@ function dateLabel(value) {
   return date.toLocaleDateString("vi-VN");
 }
 
+function sameMinute(a, b) {
+  if (!a || !b) return false;
+  const left = new Date(a);
+  const right = new Date(b);
+  if (Number.isNaN(left.getTime()) || Number.isNaN(right.getTime())) return false;
+  return Math.abs(left.getTime() - right.getTime()) < 60000;
+}
+
+function shiftEventOptions(row) {
+  const map = new Map();
+  [...(row?.events || []), ...(row?.dayEvents || [])].forEach((event) => {
+    if (event?.id && !map.has(event.id)) map.set(event.id, event);
+  });
+  return Array.from(map.values()).sort((a, b) => {
+    const left = new Date(a.eventTime || 0).getTime();
+    const right = new Date(b.eventTime || 0).getTime();
+    return left - right || a.id - b.id;
+  });
+}
+
+function shiftEventLabel(event) {
+  return `${timeOnly(event.eventTime)} · #${event.id} · ${event.action || "DAH event"} · ${event.status || "received"}`;
+}
+
 function checkStatusClass(status) {
   if (status === "late" || status === "early_checkout") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "on_time") return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -200,6 +225,7 @@ function downloadAttendanceCsv(data) {
 
 export function TrainersPage() {
   const client = useQueryClient();
+  const { user } = useAuth();
   const importInputRef = useRef(null);
   const [search, setSearch] = useState("");
   const q = useDebouncedValue(search);
@@ -239,12 +265,14 @@ export function TrainersPage() {
   const [reportPage, setReportPage] = useState(1);
   const [reportPageSize, setReportPageSize] = useState(30);
   const [reportDetail, setReportDetail] = useState(null);
+  const [attendanceEventForm, setAttendanceEventForm] = useState({ checkinEventId: "", checkoutEventId: "" });
   const [overrideTarget, setOverrideTarget] = useState(null);
   const [overrideForm, setOverrideForm] = useState({ workDate: isoDay(), startTime: "08:00", endTime: "12:00", reason: "" });
   const [overrideError, setOverrideError] = useState("");
   const [confirm, setConfirm] = useState(null);
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
+  const canAdjustShiftAttendance = user?.role === "admin";
   useEffect(
     () =>
       setForm(
@@ -385,6 +413,24 @@ export function TrainersPage() {
       return employees;
     }, []);
   }, [reportQ, reportShiftKind, reportTitle, shiftReport.data?.items]);
+  useEffect(() => {
+    if (!reportDetail) {
+      setAttendanceEventForm({ checkinEventId: "", checkoutEventId: "" });
+      return;
+    }
+    const options = shiftEventOptions(reportDetail);
+    const sessionEvents = reportDetail.events || [];
+    const checkinEvent =
+      sessionEvents[0] ||
+      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedInAt));
+    const checkoutEvent =
+      (sessionEvents.length > 1 ? sessionEvents[sessionEvents.length - 1] : null) ||
+      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedOutAt));
+    setAttendanceEventForm({
+      checkinEventId: checkinEvent?.id ? String(checkinEvent.id) : "",
+      checkoutEventId: checkoutEvent?.id ? String(checkoutEvent.id) : "",
+    });
+  }, [reportDetail]);
   useEffect(() => {
     if (!scheduleOpen || allTrainers.isLoading || weeklyShifts.isLoading) return;
     const shiftsByEmployeeDay = new Map();
@@ -537,6 +583,20 @@ export function TrainersPage() {
       notify.success("Đã duyệt đổi ca.");
     },
     onError: (error) => setOverrideError(error.message),
+  });
+  const saveShiftAttendanceEvents = useMutation({
+    mutationFn: ({ shiftId, payload }) =>
+      api(`/api/trainer-shifts/${shiftId}/attendance-events`, {
+        method: "PATCH",
+        body: payload,
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["trainer-shift-report"] });
+      client.invalidateQueries({ queryKey: ["checkins"] });
+      shiftReport.refetch();
+      notify.success("Đã cập nhật giờ chấm công từ webhook.");
+    },
+    onError: (error) => notify.errorFrom(error, "Không thể cập nhật giờ chấm công."),
   });
   const exportCurrentReport = useMutation({
     mutationFn: () => api(`/api/trainers/shift-report?${queryString({
@@ -1719,6 +1779,64 @@ export function TrainersPage() {
               <div className="shift-review-body">
                 <section className="shift-review-result"><ReportStatus row={reportDetail} /><dl><div><dt>Lịch tính công</dt><dd>{reportDetail.startTime}–{reportDetail.endTime}</dd></div>{reportDetail.hasOverride && <div><dt>Lịch gốc</dt><dd>{reportDetail.originalStartTime}–{reportDetail.originalEndTime}</dd></div>}<div><dt>Check-in thực tế</dt><dd>{timeOnly(reportDetail.checkedInAt)}{reportDetail.lateMinutes > 0 && <small>+{reportDetail.lateMinutes} phút</small>}</dd></div><div><dt>Check-out thực tế</dt><dd>{timeOnly(reportDetail.checkedOutAt)}{reportDetail.earlyCheckoutMinutes > 0 && <small>-{reportDetail.earlyCheckoutMinutes} phút</small>}</dd></div></dl></section>
                 {reportDetail.hasOverride && <section className="shift-review-note"><strong>Ca đã điều chỉnh</strong><p>{reportDetail.overrideReason || "Không có lý do"}</p></section>}
+                {canAdjustShiftAttendance && (() => {
+                  const options = shiftEventOptions(reportDetail);
+                  const selectedCheckin = options.find((event) => String(event.id) === String(attendanceEventForm.checkinEventId));
+                  const checkoutOptions = selectedCheckin
+                    ? options.filter((event) => new Date(event.eventTime).getTime() > new Date(selectedCheckin.eventTime).getTime())
+                    : options;
+                  return (
+                    <section className="shift-review-note">
+                      <strong>Chỉnh giờ theo webhook</strong>
+                      <div className="mt-3 space-y-3">
+                        <Field label="Check-in" required>
+                          <Select
+                            value={attendanceEventForm.checkinEventId}
+                            onChange={(event) => setAttendanceEventForm({ ...attendanceEventForm, checkinEventId: event.target.value, checkoutEventId: "" })}
+                            disabled={!options.length || saveShiftAttendanceEvents.isPending}
+                          >
+                            <option value="">Chọn event check-in</option>
+                            {options.map((event) => (
+                              <option key={event.id} value={event.id}>
+                                {shiftEventLabel(event)}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Field label="Check-out" hint="Có thể để trống nếu ca thiếu check-out.">
+                          <Select
+                            value={attendanceEventForm.checkoutEventId}
+                            onChange={(event) => setAttendanceEventForm({ ...attendanceEventForm, checkoutEventId: event.target.value })}
+                            disabled={!options.length || saveShiftAttendanceEvents.isPending}
+                          >
+                            <option value="">Chưa chọn check-out</option>
+                            {checkoutOptions.map((event) => (
+                              <option key={event.id} value={event.id}>
+                                {shiftEventLabel(event)}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Button
+                          size="sm"
+                          loading={saveShiftAttendanceEvents.isPending}
+                          loadingText="Đang lưu..."
+                          disabled={!attendanceEventForm.checkinEventId || !options.length}
+                          onClick={() => saveShiftAttendanceEvents.mutate({
+                            shiftId: reportDetail.scheduleId,
+                            payload: {
+                              checkinEventId: attendanceEventForm.checkinEventId,
+                              checkoutEventId: attendanceEventForm.checkoutEventId || null,
+                            },
+                          })}
+                        >
+                          <Save size={14} /> Lưu giờ chấm công
+                        </Button>
+                        {!options.length && <p>Không có event webhook trong ngày để chọn.</p>}
+                      </div>
+                    </section>
+                  );
+                })()}
                 <section className="shift-event-timeline"><div className="shift-review-section-title"><span>Event chấm công</span><strong>{(reportDetail.events?.length || reportDetail.dayEvents?.length || 0)} event</strong></div>{(reportDetail.events?.length ? reportDetail.events : reportDetail.dayEvents || []).map((event) => <div key={event.id}><i /><time>{timeOnly(event.eventTime)}</time><span><strong>{event.action || "DAH event"}</strong><small>{event.status}{event.attendanceSessionId ? ` · Session #${event.attendanceSessionId}` : ""}</small></span></div>)}{!(reportDetail.events?.length || reportDetail.dayEvents?.length) && <p>Không có event trong ngày để đối chiếu.</p>}</section>
               </div>
               <footer><Button variant="secondary" onClick={() => setReportDetail(null)}>Đóng</Button><Button onClick={() => { openShiftOverride({ employeeId: reportDetail.employeeId, employeeName: reportDetail.employeeName, title: reportDetail.title }, { workDate: reportDetail.workDate }, reportDetail); setReportDetail(null); }}><Pencil size={14} />Duyệt đổi ca</Button></footer>

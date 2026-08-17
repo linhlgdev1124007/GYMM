@@ -85,6 +85,7 @@ const auditActionLabels = {
   upgrade: "Nâng cấp gói",
   change: "Đổi gói",
   cancel: "Hủy dịch vụ",
+  employee_attendance_adjust: "Chỉnh chấm công",
   login: "Đăng nhập",
   logout: "Đăng xuất",
   login_failed: "Đăng nhập lỗi",
