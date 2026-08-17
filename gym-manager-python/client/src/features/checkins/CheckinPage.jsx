@@ -282,6 +282,13 @@ export function CheckinPage() {
       sortValue: (row) => row.employeeName || row.memberName || "",
       render: (row) => <PersonCell row={row} />,
     },
+    ...(workspaceView === "employee"
+      ? [{
+          key: "shift",
+          label: "Ca",
+          render: (row) => shiftWindowText(row),
+        }]
+      : []),
     {
       key: "checkedInAt",
       label: "Giờ vào",
@@ -294,10 +301,6 @@ export function CheckinPage() {
     },
     ...(workspaceView === "employee"
       ? [{
-          key: "shift",
-          label: "Ca",
-          render: (row) => shiftWindowText(row),
-        }, {
           key: "duration",
           label: "Thời lượng",
           render: (row) => durationText(row.checkedInAt, row.checkedOutAt),
