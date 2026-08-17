@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -654,5 +655,30 @@ def test_dah_events_are_paginated(tmp_path):
         assert second_page["pagination"] == {"page": 2, "pageSize": 2, "total": 3, "pages": 2}
         assert len(second_page["items"]) == 1
         assert first_page["items"][0]["eventTime"] > second_page["items"][0]["eventTime"]
+    finally:
+        db.close()
+
+
+def test_dah_verify_persists_event_before_processing_failure(tmp_path, monkeypatch):
+    from server.models import AttendanceSession, DahWebhookEvent
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        seed_member(db)
+
+        def fail_speech(*_args, **_kwargs):
+            raise RuntimeError("speech queue failed")
+
+        monkeypatch.setattr(dah_service, "queue_checkin_speech", fail_speech)
+        with pytest.raises(RuntimeError, match="speech queue failed"):
+            dah_service.verify(db, verify_payload("2026-08-11T13:00:00", "701"))
+
+        event = db.query(DahWebhookEvent).one()
+        assert event.status == "error"
+        assert event.action == "processing_error"
+        assert "speech queue failed" in event.note
+        assert event.raw_payload
+        assert db.query(AttendanceSession).count() == 0
     finally:
         db.close()

@@ -437,85 +437,103 @@ def verify(db: Session, payload: dict):
     similarity = _float(info.get("Similarity1"))
     person_uuid = _clean(info.get("PersonUUID"))
     person_id = _clean(info.get("PersonID"))
-    identity_key = _dah_identity_key(person_uuid, person_id)
-    identity, customer, employee, identity_created = _identity_for_dah_key(db, device, info, event_time)
-    status = "received"
-    action = None
-    note = None
-    session_id = None
-    member_session_id = None
-    employee_session_id = None
-
-    if verify_status != 1:
-        status = "rejected"
-        action = "verify_failed"
-        note = "DAH xác thực không thành công."
-    elif not identity_key:
-        status = "unknown"
-        action = "missing_dah_identity"
-        note = "Webhook không có PersonUUID hoặc PersonID."
-    elif not customer and not employee:
-        status = "unknown"
-        action = "unknown_identity"
-        note = "Định danh DAH chưa khớp hội viên hoặc nhân viên."
-    else:
-        if _recent_duplicate_scan(db, identity_key, person_id, event_time):
-            status = "duplicate"
-            action = "duplicate_scan"
-            note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
-        else:
-            results = []
-            speech_candidate = None
-            if employee:
-                employee_result = _toggle_employee_attendance(db, employee, event_time, device)
-                employee_session_id = employee_result["session_id"]
-                results.append(employee_result)
-                if employee_result.get("action") == "checkin":
-                    speech_candidate = (employee_session_id, "employee", employee.person.display_name)
-            if customer:
-                customer_result = _toggle_customer_attendance(db, customer, event_time, device, image, identity_created)
-                member_session_id = customer_result["session_id"]
-                results.append(customer_result)
-                if customer_result.get("action") == "checkin" and not speech_candidate:
-                    speech_candidate = (member_session_id, "member", customer.person.display_name)
-
-            if speech_candidate:
-                queue_checkin_speech(db, *speech_candidate)
-
-            processed = [row for row in results if row["status"] == "processed"]
-            if processed:
-                status = "processed"
-                processed_actions = {row["action"] for row in processed}
-                action = processed[0]["action"] if len(processed_actions) == 1 else "mixed"
-                session_id = member_session_id or employee_session_id
-                notes = [row["note"] for row in results if row.get("note")]
-                note = " ".join(notes)[:255] if notes else None
-            else:
-                denied = results[0] if results else {"note": "Không có đối tượng để xử lý."}
-                status = denied.get("status") or "denied"
-                action = denied.get("action") or "denied"
-                note = denied.get("note")
-            _record_dah_customer_audit(db, customer, action, status, member_session_id, device, note, event_time, identity_key)
-
     event = DahWebhookEvent(
         event_key=key,
         operator=operator,
         device_id=device.id if device else None,
-        customer_id=customer.id if customer else None,
-        employee_id=employee.id if employee else None,
-        attendance_session_id=session_id,
         person_uuid=person_uuid,
         person_id=person_id,
         verify_status=verify_status,
         similarity=similarity,
         event_time=event_time,
-        status=status,
-        action=action,
-        note=note,
+        status="received",
+        action="received",
+        note="Webhook đã nhận, đang xử lý.",
         image_data=image,
         raw_payload=_payload_json(payload),
     )
     db.add(event)
+    db.commit()
+
+    identity_key = _dah_identity_key(person_uuid, person_id)
+    customer = None
+    employee = None
+    status = "received"
+    action = "received"
+    note = None
+    session_id = None
+    member_session_id = None
+    employee_session_id = None
+    try:
+        identity, customer, employee, identity_created = _identity_for_dah_key(db, device, info, event_time)
+
+        if verify_status != 1:
+            status = "rejected"
+            action = "verify_failed"
+            note = "DAH xác thực không thành công."
+        elif not identity_key:
+            status = "unknown"
+            action = "missing_dah_identity"
+            note = "Webhook không có PersonUUID hoặc PersonID."
+        elif not customer and not employee:
+            status = "unknown"
+            action = "unknown_identity"
+            note = "Định danh DAH chưa khớp hội viên hoặc nhân viên."
+        else:
+            if _recent_duplicate_scan(db, identity_key, person_id, event_time):
+                status = "duplicate"
+                action = "duplicate_scan"
+                note = f"Quét lại trong {DUPLICATE_SCAN_SECONDS} giây."
+            else:
+                results = []
+                speech_candidate = None
+                if employee:
+                    employee_result = _toggle_employee_attendance(db, employee, event_time, device)
+                    employee_session_id = employee_result["session_id"]
+                    results.append(employee_result)
+                    if employee_result.get("action") == "checkin":
+                        speech_candidate = (employee_session_id, "employee", employee.person.display_name)
+                if customer:
+                    customer_result = _toggle_customer_attendance(db, customer, event_time, device, image, identity_created)
+                    member_session_id = customer_result["session_id"]
+                    results.append(customer_result)
+                    if customer_result.get("action") == "checkin" and not speech_candidate:
+                        speech_candidate = (member_session_id, "member", customer.person.display_name)
+
+                if speech_candidate:
+                    queue_checkin_speech(db, *speech_candidate)
+
+                processed = [row for row in results if row["status"] == "processed"]
+                if processed:
+                    status = "processed"
+                    processed_actions = {row["action"] for row in processed}
+                    action = processed[0]["action"] if len(processed_actions) == 1 else "mixed"
+                    session_id = member_session_id or employee_session_id
+                    notes = [row["note"] for row in results if row.get("note")]
+                    note = " ".join(notes)[:255] if notes else None
+                else:
+                    denied = results[0] if results else {"note": "Không có đối tượng để xử lý."}
+                    status = denied.get("status") or "denied"
+                    action = denied.get("action") or "denied"
+                    note = denied.get("note")
+                _record_dah_customer_audit(db, customer, action, status, member_session_id, device, note, event_time, identity_key)
+    except Exception as exc:
+        db.rollback()
+        event = db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first()
+        if event:
+            event.status = "error"
+            event.action = "processing_error"
+            event.note = str(exc)[:255] or "Lỗi xử lý webhook sau khi đã nhận."
+            db.commit()
+        raise
+
+    event = db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first() or event
+    event.customer_id = customer.id if customer else None
+    event.employee_id = employee.id if employee else None
+    event.attendance_session_id = session_id
+    event.status = status
+    event.action = action
+    event.note = note
     db.commit()
     return {
         "code": 0,
