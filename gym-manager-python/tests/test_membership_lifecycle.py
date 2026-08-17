@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 import tempfile
@@ -858,6 +858,52 @@ def test_membership_payment_validation_is_enforced_by_backend(tmp_path):
                 "paidAmount": "50000",
                 "paymentMethod": "cash",
             }, [], None))
+    finally:
+        db.close()
+
+
+def test_debt_collection_uses_actual_paid_at(tmp_path):
+    import asyncio
+    from server.models import Payment
+    from server.services.members_service import update_membership
+    from server.services.dashboard_service import reports
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 7, 1),
+            activated_at=date(2026, 7, 1),
+        )
+        membership.final_price = 1000000
+        membership.paid_amount = 200000
+        membership.deposit_amount = 200000
+        membership.debt_amount = 800000
+        membership.debt_due_date = date(2026, 7, 20)
+        db.commit()
+
+        asyncio.run(update_membership(db, membership.id, {
+            "startsAt": "2026-07-01",
+            "expiresAt": "2026-07-31",
+            "finalPrice": "1000000",
+            "paidAmount": "1000000",
+            "debtDueDate": "",
+            "paymentMethod": "cash",
+            "status": "active",
+            "paidAt": "2026-08-01T09:15",
+        }, [], None))
+
+        payment = db.query(Payment).filter(Payment.membership_id == membership.id).one()
+        assert payment.paid_at == datetime(2026, 8, 1, 2, 15)
+        assert payment.shift_date == date(2026, 8, 1)
+
+        august_first = reports(db, "2026-08-01", "2026-08-01")
+        assert august_first["summary"]["revenue"] == 800000
+        assert august_first["revenueItems"][0]["paymentNo"] == payment.payment_no
+
+        august_second = reports(db, "2026-08-02", "2026-08-02")
+        assert august_second["summary"]["revenue"] == 0
     finally:
         db.close()
 

@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import secrets
 import json
@@ -17,7 +17,7 @@ from . import dah_service
 from .membership_lifecycle import activate_membership, _complete_freeze, freeze_affects_day, freeze_compensation_days, refresh_membership_lifecycle
 from .serializers import employee_data, membership_data, membership_event_data, package_data, pagination, person_data, pt_data, payment_data
 from .training_schedule import normalize_schedule, schedule_storage
-from ..timeutils import utc_iso, utc_now, vietnam_today
+from ..timeutils import VIETNAM_TZ, utc_iso, utc_now, utc_vietnam_date, vietnam_today
 
 RECEIPT_DIR = ROOT_DIR / "server" / "uploads" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,6 +55,21 @@ def _parse_date(value):
         return date.fromisoformat(str(value))
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, "Ngày không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.") from exc
+
+
+def _parse_paid_at(value):
+    if not value:
+        return utc_now()
+    text = str(value).strip()
+    if not text:
+        return utc_now()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Ngày thu thực tế không hợp lệ.") from exc
+    if parsed.tzinfo:
+        return parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed.replace(tzinfo=VIETNAM_TZ).astimezone(UTC).replace(tzinfo=None)
 
 
 def _attendance_iso(value, source: str | None):
@@ -907,11 +922,12 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     payment = None
     if delta > 0:
         sequence = db.query(Payment).filter(Payment.membership_id == row.id).count() + 1
-        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=utc_now(), shift_date=vietnam_today(), note="Thanh toán gói", amount=delta, method=method, bank_account_id=bank_account_id)
+        paid_at = _parse_paid_at(form.get("paidAt"))
+        payment = Payment(customer_id=row.customer_id, membership_id=row.id, payment_no=f"PAY-{row.id:06d}-{sequence:03d}", paid_at=paid_at, shift_date=utc_vietnam_date(paid_at) or vietnam_today(), note="Thanh toán gói", amount=delta, method=method, bank_account_id=bank_account_id)
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
-        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts)})
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at)})
     new_values = {
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,

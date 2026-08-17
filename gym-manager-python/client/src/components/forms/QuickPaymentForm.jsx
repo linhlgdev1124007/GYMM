@@ -1,10 +1,27 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
-import { Field, Select } from "../ui/Form";
+import { Field, Input, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { money } from "../../utils/format";
 import { MoneyInput } from "../ui/SmartInputs";
 import { ReceiptPicker } from "../ui/ReceiptPicker";
+
+function currentDatetimeLocal() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function buildInitialForm(membership) {
+  return {
+    mode: "full",
+    amount: membership?.debtAmount || 0,
+    paymentMethod: "cash",
+    bankAccountId: "",
+    paidAt: currentDatetimeLocal(),
+    receipts: [],
+  };
+}
 
 export function QuickPaymentForm({
   membership,
@@ -15,21 +32,13 @@ export function QuickPaymentForm({
   pending,
   error,
 }) {
-  const [form, setForm] = useState({
-    mode: "full",
-    amount: 0,
-    paymentMethod: "cash",
-    bankAccountId: "",
-    receipts: [],
-  });
-  const initial = {
-    mode: "full",
-    amount: membership?.debtAmount || 0,
-    paymentMethod: "cash",
-    bankAccountId: "",
-    receipts: [],
-  };
-  useEffect(() => setForm(initial), [membership, open]);
+  const [initial, setInitial] = useState(() => buildInitialForm(membership));
+  const [form, setForm] = useState(() => buildInitialForm(membership));
+  useEffect(() => {
+    const next = buildInitialForm(membership);
+    setInitial(next);
+    setForm(next);
+  }, [membership, open]);
   if (!membership) return null;
   const remaining = Math.max(
     Number(membership.debtAmount || 0) - Number(form.amount || 0),
@@ -62,6 +71,7 @@ export function QuickPaymentForm({
     );
     payload.append("paymentMethod", form.paymentMethod);
     payload.append("bankAccountId", form.bankAccountId);
+    payload.append("paidAt", form.paidAt);
     payload.append(
       "status",
       membership.status === "expiring" ? "active" : membership.status,
@@ -86,6 +96,7 @@ export function QuickPaymentForm({
               : 0,
       paymentMethod: mode === "waive" ? "cash" : form.paymentMethod,
       bankAccountId: mode === "waive" ? "" : form.bankAccountId,
+      paidAt: mode === "waive" ? currentDatetimeLocal() : form.paidAt,
       receipts: mode === "waive" ? [] : form.receipts,
     });
   return (
@@ -170,6 +181,13 @@ export function QuickPaymentForm({
                 <option value="bank_transfer">Chuyển khoản</option>
                 <option value="card">Thẻ</option>
               </Select>
+            </Field>
+            <Field label="Ngày thu thực tế" required hint="Dùng khi nhập bù giao dịch đã thu trước đó.">
+              <Input
+                type="datetime-local"
+                value={form.paidAt}
+                onChange={(e) => setForm({ ...form, paidAt: e.target.value })}
+              />
             </Field>
             {form.paymentMethod !== "cash" && (
               <Field label="Tài khoản nhận" required={form.paymentMethod === "bank_transfer"}>
