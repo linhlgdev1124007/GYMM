@@ -11,7 +11,7 @@ from uuid import uuid4
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import AttendanceSession, Customer, DahWebhookEvent, Device, Employee, Person
+from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, Person
 from ..timeutils import utc_iso, utc_now
 from . import dah_service
 from .employee_shift_attendance import rebuild_employee_attendance_for_day
@@ -205,6 +205,24 @@ def _name_key(value: str | None) -> str | None:
     return " ".join(no_marks.lower().split())
 
 
+def _phone_key(value: str | None) -> str | None:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[-9:] if len(digits) >= 9 else digits or None
+
+
+def _profile_key(event: dict) -> str | None:
+    direct = _clean(event.get("profileKey"), 120)
+    if direct:
+        return direct
+    ref = event.get("profileImageRef") if isinstance(event.get("profileImageRef"), dict) else None
+    if not ref:
+        return None
+    try:
+        return f"dah_profile:{int(ref.get('fileType'))}/{int(ref.get('fileIndex'))}/{int(ref.get('filePos'))}"
+    except (TypeError, ValueError):
+        return None
+
+
 def _people_by_name(db: Session) -> dict[str, list[Person]]:
     rows = (
         db.query(Person)
@@ -218,6 +236,72 @@ def _people_by_name(db: Session) -> dict[str, list[Person]]:
         if key:
             by_name.setdefault(key, []).append(person)
     return by_name
+
+
+def _people_by_phone(db: Session) -> dict[str, list[Person]]:
+    rows = (
+        db.query(Person)
+        .options(joinedload(Person.customer), joinedload(Person.employee))
+        .filter(Person.status == "active", Person.phone.is_not(None))
+        .all()
+    )
+    by_phone: dict[str, list[Person]] = {}
+    for person in rows:
+        key = _phone_key(person.phone)
+        if key:
+            by_phone.setdefault(key, []).append(person)
+    return by_phone
+
+
+def _identity_match(db: Session, event: dict):
+    profile = _profile_key(event)
+    dah_person_uid = _clean(event.get("dahPersonUid"), 80)
+    filters = []
+    if profile:
+        filters.append(DahCustomerIdentity.person_uuid == profile)
+    if dah_person_uid:
+        filters.append(DahCustomerIdentity.person_id == dah_person_uid)
+    if not filters:
+        return None
+    return db.query(DahCustomerIdentity).filter(or_(*filters)).order_by(DahCustomerIdentity.id.desc()).first()
+
+
+def _match_people(db: Session, event: dict, by_name: dict[str, list[Person]], by_phone: dict[str, list[Person]]):
+    identity = _identity_match(db, event)
+    if identity:
+        return identity.customer, identity.employee, "identity"
+    phone = _phone_key(event.get("registeredPhone") or event.get("phone"))
+    people = by_phone.get(phone, []) if phone else []
+    source = "phone" if people else None
+    if not people:
+        people = by_name.get(_name_key(event.get("registeredName") or event.get("name")) or "", [])
+        source = "name" if people else None
+    customer = next((person.customer for person in people if person.customer), None)
+    employee = next((person.employee for person in people if person.employee), None)
+    return customer, employee, source
+
+
+def _upsert_identity_for_match(db: Session, event: dict, device: Device | None, customer: Customer | None, employee: Employee | None, event_time: datetime) -> None:
+    profile = _profile_key(event)
+    dah_person_uid = _clean(event.get("dahPersonUid"), 80)
+    if not profile or not (customer or employee):
+        return
+    identity = (
+        db.query(DahCustomerIdentity)
+        .filter(DahCustomerIdentity.person_uuid == profile)
+        .order_by(DahCustomerIdentity.id.desc())
+        .first()
+    )
+    if not identity:
+        identity = DahCustomerIdentity(person_uuid=profile)
+        db.add(identity)
+    identity.customer_id = customer.id if customer else identity.customer_id
+    identity.employee_id = employee.id if employee else identity.employee_id
+    identity.device_id = device.id if device else identity.device_id
+    identity.person_id = dah_person_uid or identity.person_id
+    identity.face_name = _clean(event.get("registeredName") or event.get("name"), 160) or identity.face_name
+    identity.rfid_card = _clean(event.get("mjCardNo"), 80) or identity.rfid_card
+    identity.last_seen_at = event_time
 
 
 def _device(db: Session, payload: dict) -> Device | None:
@@ -404,6 +488,7 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
     if len(events) > MAX_EVENTS_PER_RESULT:
         events = events[:MAX_EVENTS_PER_RESULT]
     by_name = _people_by_name(db)
+    by_phone = _people_by_phone(db)
     items = []
     duplicates = unknown = rejected = matched = 0
 
@@ -418,9 +503,7 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
             duplicate = False
         event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
-        people = by_name.get(_name_key(item.get("name")) or "", [])
-        customer = next((person.customer for person in people if person.customer), None)
-        employee = next((person.employee for person in people if person.employee), None)
+        customer, employee, match_source = _match_people(db, item, by_name, by_phone)
         status = "duplicate" if duplicate else "matched" if verify_status == 1 and (customer or employee) else "unknown"
         if verify_status not in (None, 1):
             status = "rejected"
@@ -440,7 +523,12 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
             "customerName": customer.person.display_name if customer and customer.person else None,
             "employeeId": employee.id if employee else None,
             "employeeName": employee.person.display_name if employee and employee.person else None,
+            "matchSource": match_source,
             "dahUid": _clean(item.get("dahUid"), 80),
+            "dahPersonUid": _clean(item.get("dahPersonUid"), 80),
+            "profileKey": _profile_key(item),
+            "registeredName": _clean(item.get("registeredName"), 160),
+            "registeredPhone": _clean(item.get("registeredPhone"), 40),
             "mjCardNo": _clean(item.get("mjCardNo"), 80),
             "willSync": status == "matched",
             "raw": item,
@@ -464,6 +552,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
         events = events[:MAX_EVENTS_PER_RESULT]
     device = _device(db, payload)
     by_name = _people_by_name(db)
+    by_phone = _people_by_phone(db)
     affected_customers: set[tuple[int, date]] = set()
     affected_employees: set[tuple[int, date]] = set()
     imported = duplicates = unknown = rejected = skipped = 0
@@ -481,9 +570,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
         event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
         similarity = dah_service._float(item.get("similarity"))
-        people = by_name.get(_name_key(item.get("name")) or "", [])
-        customer = next((person.customer for person in people if person.customer), None)
-        employee = next((person.employee for person in people if person.employee), None)
+        customer, employee, match_source = _match_people(db, item, by_name, by_phone)
         status = "processed" if verify_status == 1 and (customer or employee) else "unknown"
         action = "local_sync" if status == "processed" else "unknown_identity"
         note = "Đã nhận từ DAH local agent." if status == "processed" else "Không khớp tên với hội viên/nhân viên."
@@ -500,8 +587,8 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
             device_id=device.id if device else None,
             customer_id=customer.id if customer else None,
             employee_id=employee.id if employee else None,
-            person_uuid=_clean(item.get("dahUid"), 80),
-            person_id=_clean(item.get("mjCardNo"), 80),
+            person_uuid=_profile_key(item),
+            person_id=_clean(item.get("dahPersonUid"), 80) or _clean(item.get("mjCardNo"), 80),
             verify_status=verify_status,
             similarity=similarity,
             event_time=event_time,
@@ -511,6 +598,8 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
             raw_payload=_event_payload(payload, item),
         )
         db.add(row)
+        if status == "processed":
+            _upsert_identity_for_match(db, item, device, customer, employee, event_time)
         imported += 1
         if status == "processed":
             if customer:

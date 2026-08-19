@@ -611,12 +611,14 @@ export function SettingsPage() {
                         <td className="px-3 py-2 whitespace-nowrap">{dateTime(event.eventTime)}</td>
                         <td className="px-3 py-2">
                           <div className="font-medium text-slate-800">{event.name || "—"}</div>
-                          <div className="text-xs text-slate-400">UID: {event.dahUid || "—"} · Card: {event.mjCardNo || "—"}</div>
+                          <div className="text-xs text-slate-400">Event UID: {event.dahUid || "—"} · Person UID: {event.dahPersonUid || "—"} · Card: {event.mjCardNo || "—"}</div>
+                          <div className="text-xs text-slate-400">Profile: {event.profileKey || "—"} · Phone: {event.registeredPhone || "—"}</div>
                         </td>
                         <td className="px-3 py-2">
                           {event.customerName && <div>Hội viên: {event.customerName}</div>}
                           {event.employeeName && <div>Nhân viên: {event.employeeName}</div>}
                           {!event.customerName && !event.employeeName && <span className="text-slate-400">Không khớp tên</span>}
+                          {event.matchSource && <div className="text-xs text-slate-400">Match theo: {event.matchSource}</div>}
                         </td>
                         <td className="px-3 py-2">
                           {event.status === "matched" && <span className="text-emerald-700">Hợp lệ</span>}

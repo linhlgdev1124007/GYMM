@@ -209,6 +209,35 @@ def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
         db.close()
 
 
+def test_dah_local_sync_matches_short_dah_name_by_whitelist_phone(tmp_path):
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+        preview = dah_local_sync_service.preview_agent_result(db, {
+            "ok": True,
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "24602",
+                "dahPersonUid": "1149",
+                "profileKey": "dah_profile:0/0/75366400",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "LONG",
+                "registeredName": "LONG",
+                "registeredPhone": "0900000001",
+            }],
+        })
+
+        event = preview["events"][0]
+        assert preview["matched"] == 1
+        assert event["customerId"] == customer_id
+        assert event["matchSource"] == "phone"
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service

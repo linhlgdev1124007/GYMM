@@ -125,6 +125,7 @@ def parse_control_items(text: str) -> tuple[dict[str, Any], list[dict[str, Any]]
     items = []
     for index in sorted(by_index):
         row = by_index[index]
+        profile_ref = image_ref(row, "dwfile")
         items.append({
             "dahUid": row.get("uid"),
             "eventTime": parse_dah_time(row.get("utime")),
@@ -138,7 +139,45 @@ def parse_control_items(text: str) -> tuple[dict[str, Any], list[dict[str, Any]]
             "birthDate": clean_null(row.get("ubirth")),
             "phone": clean_null(row.get("uphone")),
             "captureImageRef": image_ref(row, "cfile"),
-            "profileImageRef": image_ref(row, "dwfile"),
+            "profileImageRef": profile_ref,
+            "profileKey": profile_key(profile_ref),
+            "raw": row,
+        })
+    return meta, items
+
+
+def parse_list_items(text: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    pairs = parse_root_kv_response(text)
+    meta = {
+        "sessionId": pairs.get("LIST.sessionid"),
+        "totalCount": safe_int(pairs.get("LIST.totalcount"), 0),
+        "beginNo": safe_int(pairs.get("LIST.beginno"), 0),
+        "responseCount": safe_int(pairs.get("LIST.rspcount"), 0),
+    }
+    by_index: dict[int, dict[str, str]] = {}
+    for key, value in pairs.items():
+        match = re.match(r"LIST\.ITEM(\d+)\.(.+)", key)
+        if not match:
+            continue
+        index = int(match.group(1))
+        field = match.group(2)
+        by_index.setdefault(index, {})[field] = value
+
+    items = []
+    for index in sorted(by_index):
+        row = by_index[index]
+        profile_ref = image_ref(row, "dwfile")
+        items.append({
+            "dahPersonUid": clean_null(row.get("uid")),
+            "personType": safe_int(row.get("utype"), None),
+            "name": clean_null(row.get("uname")),
+            "mjCardNo": clean_null(row.get("MjCardNo")),
+            "gender": safe_int(row.get("usex"), None),
+            "birthDate": clean_null(row.get("ubirth")),
+            "phone": clean_null(row.get("uphone")),
+            "profileImageRef": profile_ref,
+            "profileKey": profile_key(profile_ref),
+            "registeredAt": parse_dah_time(row.get("utime")),
             "raw": row,
         })
     return meta, items
@@ -151,6 +190,12 @@ def image_ref(row: dict[str, str], prefix: str) -> dict[str, int] | None:
     if ftype is None or findex is None or fpos is None or fpos <= 0:
         return None
     return {"fileType": ftype, "fileIndex": findex, "filePos": fpos}
+
+
+def profile_key(ref: dict[str, int] | None) -> str | None:
+    if not ref:
+        return None
+    return f"dah_profile:{ref['fileType']}/{ref['fileIndex']}/{ref['filePos']}"
 
 
 def clean_null(value: Any) -> str | None:
@@ -278,10 +323,38 @@ class DahClient:
         response.raise_for_status()
         return parse_control_items(response.text)
 
+    def get_whitelist_page(self, begin_no: int, req_count: int, session_id: int = 0) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        url = (
+            f"{self.config.dah_base_url}/webs/getWhitelist"
+            f"?action=list&group=LIST&uflag=0&Searchname=AccessCardNumber"
+            f"&sequence=1&beginno={int(begin_no)}&reqcount={int(req_count)}"
+            f"&sessionid={int(session_id or 0)}&RanId={random.randint(10000000,99999999)}"
+        )
+        response = self.session.get(url, timeout=25)
+        response.raise_for_status()
+        return parse_list_items(response.text)
+
+    def fetch_whitelist(self, req_count: int = 100) -> list[dict[str, Any]]:
+        all_items: list[dict[str, Any]] = []
+        first_meta, first_items = self.get_whitelist_page(0, req_count, 0)
+        all_items.extend(first_items)
+        total = int(first_meta.get("totalCount") or len(first_items))
+        session_id = int(first_meta.get("sessionId") or 0)
+        begin_no = len(first_items)
+        while begin_no < total:
+            meta, items = self.get_whitelist_page(begin_no, req_count, session_id)
+            all_items.extend(items)
+            if not items:
+                break
+            begin_no += len(items)
+        return all_items
+
     def fetch_events(self, lookback_hours: int | None = None, req_count: int = 20) -> dict[str, Any]:
         self.warmup_browser()
         end = datetime.now()
         begin = end - timedelta(hours=max(int(lookback_hours or self.config.lookback_hours or 24), 1))
+        whitelist = self.fetch_whitelist()
+        whitelist_by_profile = {row.get("profileKey"): row for row in whitelist if row.get("profileKey")}
         all_items: list[dict[str, Any]] = []
         first_meta, first_items = self.get_control_page(begin, end, 0, req_count, 0)
         all_items.extend(first_items)
@@ -294,12 +367,20 @@ class DahClient:
             if not items:
                 break
             begin_no += len(items)
+        for item in all_items:
+            registered = whitelist_by_profile.get(item.get("profileKey"))
+            if registered:
+                item["dahPersonUid"] = registered.get("dahPersonUid")
+                item["registeredName"] = registered.get("name")
+                item["registeredPhone"] = registered.get("phone")
+                item["registeredAt"] = registered.get("registeredAt")
         return {
             "deviceCode": f"DAH-{self.config.dah_host}",
             "dahBaseUrl": self.config.dah_base_url,
             "pulledAt": datetime.now().isoformat(),
             "range": {"begin": begin.isoformat(), "end": end.isoformat()},
             "totalCount": total,
+            "whitelistCount": len(whitelist),
             "events": all_items,
         }
 
