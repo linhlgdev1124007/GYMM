@@ -324,9 +324,13 @@ class DahClient:
         return parse_control_items(response.text)
 
     def get_whitelist_page(self, begin_no: int, req_count: int, session_id: int = 0) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        begin = quote("2020-01-01/00:00:00", safe="/:")
+        end = quote("2038-08-19/23:59:59", safe="/:")
         url = (
             f"{self.config.dah_base_url}/webs/getWhitelist"
-            f"?action=list&group=LIST&uflag=0&Searchname=AccessCardNumber"
+            f"?action=list&group=LIST"
+            f"&uflag=0&usex=2&uage=0-100&MjCardNo=0&pfsel=0&bIsPicNormal=0"
+            f"&begintime={begin}&endtime={end}&utype=3"
             f"&sequence=1&beginno={int(begin_no)}&reqcount={int(req_count)}"
             f"&sessionid={int(session_id or 0)}&RanId={random.randint(10000000,99999999)}"
         )
@@ -334,19 +338,34 @@ class DahClient:
         response.raise_for_status()
         return parse_list_items(response.text)
 
-    def fetch_whitelist(self, req_count: int = 100) -> list[dict[str, Any]]:
+    def fetch_whitelist(self, req_count: int = 20) -> list[dict[str, Any]]:
         all_items: list[dict[str, Any]] = []
         first_meta, first_items = self.get_whitelist_page(0, req_count, 0)
         all_items.extend(first_items)
-        total = int(first_meta.get("totalCount") or len(first_items))
+        total = int(first_meta.get("totalCount") or 0)
         session_id = int(first_meta.get("sessionId") or 0)
         begin_no = len(first_items)
-        while begin_no < total:
+        max_pages = 500
+        pages = 1
+        while True:
+            if total and begin_no >= total:
+                break
+            if len(first_items) < req_count and not total:
+                break
+            if pages >= max_pages:
+                log(f"Whitelist pagination stopped at safety limit: {len(all_items)} items")
+                break
             meta, items = self.get_whitelist_page(begin_no, req_count, session_id)
             all_items.extend(items)
             if not items:
                 break
+            pages += 1
             begin_no += len(items)
+            if len(items) < req_count and not total:
+                break
+            if not session_id:
+                session_id = int(meta.get("sessionId") or 0)
+        log(f"DAH whitelist pulled {len(all_items)} people")
         return all_items
 
     def fetch_events(self, lookback_hours: int | None = None, req_count: int = 20) -> dict[str, Any]:
