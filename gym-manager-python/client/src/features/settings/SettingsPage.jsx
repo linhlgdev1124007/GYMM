@@ -107,7 +107,7 @@ export function SettingsPage() {
   }, [accountModal]);
   useEffect(() => {
     if (!syncDetail?.events) return;
-    setSelectedSyncEvents(Object.fromEntries(syncDetail.events.map((event) => [event.eventKey, event.willSync])));
+    setSelectedSyncEvents(Object.fromEntries(syncDetail.events.map((event) => [event.eventKey, event.status === "matched" && event.willSync])));
   }, [syncDetail?.id]);
 
   const saveJobTitle = useMutation({
@@ -220,7 +220,10 @@ export function SettingsPage() {
   const selectedVoiceAvailable = !speechDraft.voiceUri || speechVoices.some((voice) => voice.voiceURI === speechDraft.voiceUri);
   const pendingBatches = pendingSyncBatches.data?.items || [];
   const agent = dahAgentStatus.data?.agent;
-  const selectedEventKeys = Object.entries(selectedSyncEvents).filter(([, checked]) => checked).map(([key]) => key);
+  const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter((event) => event.status === "matched").map((event) => event.eventKey));
+  const selectedEventKeys = Object.entries(selectedSyncEvents)
+    .filter(([key, checked]) => checked && selectableSyncEventKeys.has(key))
+    .map(([key]) => key);
 
   const handleDeleteTitle = (row) => {
     const confirmed = window.confirm(
@@ -539,7 +542,7 @@ export function SettingsPage() {
         open={!!syncModal}
         onClose={() => setSyncModal(null)}
         title="Duyệt batch sync DAH"
-        description="Chỉ những event được chọn mới được ghi vào check-in/check-out. Event không khớp tên hoặc bị trùng mặc định không chọn."
+        description="Chỉ những event được chọn mới được ghi vào check-in/check-out. Event không khớp person id hoặc đã có trên server sẽ bị khóa."
         size="xl"
       >
         <div className="modal-body">
@@ -597,15 +600,17 @@ export function SettingsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(syncDetail.events || []).map((event) => (
-                      <tr key={event.eventKey} className="border-t border-slate-100">
+                    {(syncDetail.events || []).map((event) => {
+                      const disabled = event.status !== "matched";
+                      return (
+                      <tr key={event.eventKey} className={`border-t border-slate-100 ${disabled ? "bg-slate-50 opacity-55" : ""}`}>
                         <td className="px-3 py-2">
                           <input
                             type="checkbox"
-                            className="h-4 w-4 accent-navy-900"
-                            disabled={event.status !== "matched"}
+                            className="h-4 w-4 accent-navy-900 disabled:cursor-not-allowed"
+                            disabled={disabled}
                             checked={!!selectedSyncEvents[event.eventKey]}
-                            onChange={(change) => setSelectedSyncEvents({ ...selectedSyncEvents, [event.eventKey]: change.target.checked })}
+                            onChange={(change) => !disabled && setSelectedSyncEvents({ ...selectedSyncEvents, [event.eventKey]: change.target.checked })}
                           />
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">{dateTime(event.eventTime)}</td>
@@ -617,18 +622,24 @@ export function SettingsPage() {
                         <td className="px-3 py-2">
                           {event.customerName && <div>Hội viên: {event.customerName}</div>}
                           {event.employeeName && <div>Nhân viên: {event.employeeName}</div>}
-                          {!event.customerName && !event.employeeName && <span className="text-slate-400">Không khớp tên</span>}
+                          {!event.customerName && !event.employeeName && <span className="text-slate-400">Không khớp person id</span>}
                           {event.matchSource && <div className="text-xs text-slate-400">Match theo: {event.matchSource}</div>}
                         </td>
                         <td className="px-3 py-2">
                           {event.status === "matched" && <span className="text-emerald-700">Hợp lệ</span>}
-                          {event.status === "duplicate" && <span className="text-slate-500">Đã có trong hệ thống</span>}
+                          {event.status === "duplicate" && (
+                            <div>
+                              <span className="text-slate-500">Bị trùng</span>
+                              <div className="text-xs text-slate-400">Đã có trên server</div>
+                            </div>
+                          )}
                           {event.status === "unknown" && <span className="text-amber-700">Không khớp</span>}
                           {event.status === "rejected" && <span className="text-red-700">DAH báo fail</span>}
                         </td>
                         <td className="px-3 py-2 text-right">{event.similarity ?? "—"}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
