@@ -66,6 +66,11 @@ export function SettingsPage() {
     queryFn: () => api("/api/dah/local-agent/pending-batches"),
     refetchInterval: 10000,
   });
+  const dahScanDays = useQuery({
+    queryKey: ["dah-local-agent-scan-days"],
+    queryFn: () => api("/api/dah/local-agent/scan-days"),
+    refetchInterval: 30000,
+  });
   const syncBatchDetail = useQuery({
     queryKey: ["dah-local-agent-pending-batch", syncModal?.id],
     queryFn: () => api(`/api/dah/local-agent/pending-batches/${syncModal.id}`),
@@ -191,6 +196,7 @@ export function SettingsPage() {
     onSuccess: (result) => {
       client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
       client.invalidateQueries({ queryKey: ["dah-local-agent-pending-batches"] });
+      client.invalidateQueries({ queryKey: ["dah-local-agent-scan-days"] });
       client.invalidateQueries({ queryKey: ["dah-events"] });
       client.invalidateQueries({ queryKey: ["dashboard"] });
       setSyncModal(null);
@@ -219,6 +225,7 @@ export function SettingsPage() {
   const otherVoices = speechVoices.filter((voice) => !voice.lang?.toLowerCase().startsWith("vi"));
   const selectedVoiceAvailable = !speechDraft.voiceUri || speechVoices.some((voice) => voice.voiceURI === speechDraft.voiceUri);
   const pendingBatches = pendingSyncBatches.data?.items || [];
+  const scanDays = dahScanDays.data?.items || [];
   const agent = dahAgentStatus.data?.agent;
   const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter((event) => event.status === "matched").map((event) => event.eventKey));
   const selectedEventKeys = Object.entries(selectedSyncEvents)
@@ -452,7 +459,7 @@ export function SettingsPage() {
               <p className="text-sm text-slate-500">
                 Agent: {agent?.agentId || "—"} · Trạng thái: {agent?.status === "online" ? "online" : "offline"} · Batch chờ duyệt: {pendingBatches.length}
               </p>
-              <p className="text-xs text-slate-400">Heartbeat cuối: {dateTime(agent?.lastSeenAt)}</p>
+              <p className="text-xs text-slate-400">Heartbeat cuối: {dateTime(agent?.lastSeenAt)} · Agent tự quét mỗi 30 phút từ 19/08/2026</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" onClick={() => pendingSyncBatches.refetch()}>
@@ -467,25 +474,32 @@ export function SettingsPage() {
           </div>
           {pendingBatches.length > 0 && (
             <div className="mt-4 overflow-x-auto">
+              <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Phát hiện batch cần duyệt: bị miss {pendingBatches.reduce((sum, batch) => sum + (batch.summary?.matched || 0), 0)} event,
+                chưa khớp {pendingBatches.reduce((sum, batch) => sum + (batch.summary?.unknown || 0), 0)},
+                lỗi {pendingBatches.reduce((sum, batch) => sum + (batch.summary?.rejected || 0), 0)}.
+              </div>
               <table className="min-w-full text-sm">
                 <thead className="text-left text-xs uppercase tracking-wide text-slate-400">
                   <tr>
+                    <th className="py-2 pr-4">Ngày</th>
                     <th className="py-2 pr-4">Thời gian</th>
                     <th className="py-2 pr-4">Thiết bị</th>
-                    <th className="py-2 pr-4 text-right">Khớp</th>
+                    <th className="py-2 pr-4 text-right">Miss sync được</th>
                     <th className="py-2 pr-4 text-right">Trùng</th>
-                    <th className="py-2 pr-4 text-right">Không khớp</th>
+                    <th className="py-2 pr-4 text-right">Chưa khớp/lỗi</th>
                     <th className="py-2 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pendingBatches.map((batch) => (
                     <tr key={batch.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-4">{batch.workDate || "—"}</td>
                       <td className="py-2 pr-4">{dateTime(batch.createdAt)}</td>
                       <td className="py-2 pr-4">{batch.deviceCode || "DAH local"}</td>
                       <td className="py-2 pr-4 text-right text-emerald-700">{batch.summary?.matched || 0}</td>
                       <td className="py-2 pr-4 text-right text-slate-500">{batch.summary?.duplicates || 0}</td>
-                      <td className="py-2 pr-4 text-right text-amber-700">{batch.summary?.unknown || 0}</td>
+                      <td className="py-2 pr-4 text-right text-amber-700">{(batch.summary?.unknown || 0) + (batch.summary?.rejected || 0)}</td>
                       <td className="py-2 text-right">
                         <Button size="sm" variant="secondary" onClick={() => setSyncModal(batch)}>
                           <Eye size={14} />
@@ -499,6 +513,36 @@ export function SettingsPage() {
             </div>
           )}
           {!pendingBatches.length && <p className="mt-3 text-sm text-slate-400">Chưa có batch sync nào đang chờ duyệt.</p>}
+          {scanDays.length > 0 && (
+            <div className="mt-4 overflow-x-auto rounded-lg border border-slate-100">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2">Ngày scan</th>
+                    <th className="px-3 py-2">Lần quét cuối</th>
+                    <th className="px-3 py-2 text-right">Tổng</th>
+                    <th className="px-3 py-2 text-right">Đã có</th>
+                    <th className="px-3 py-2 text-right">Miss</th>
+                    <th className="px-3 py-2 text-right">Chưa khớp</th>
+                    <th className="px-3 py-2 text-right">Fail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scanDays.map((day) => (
+                    <tr key={day.workDate} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{day.workDate}</td>
+                      <td className="px-3 py-2">{dateTime(day.lastScannedAt)}</td>
+                      <td className="px-3 py-2 text-right">{day.total || 0}</td>
+                      <td className="px-3 py-2 text-right">{day.duplicates || 0}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700">{day.matchedMissUnapproved || 0}</td>
+                      <td className="px-3 py-2 text-right text-amber-700">{day.unknown || 0}</td>
+                      <td className="px-3 py-2 text-right text-red-700">{day.failCount || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
         <DataTable
           rows={data?.devices}
@@ -556,7 +600,7 @@ export function SettingsPage() {
                   <div className="text-lg font-semibold">{syncDetail.summary?.received || syncDetail.eventCount || 0}</div>
                 </div>
                 <div className="rounded-lg bg-emerald-50 p-3 text-emerald-800">
-                  <div className="text-xs opacity-70">Có thể sync</div>
+                  <div className="text-xs opacity-70">Miss sync được</div>
                   <div className="text-lg font-semibold">{syncDetail.summary?.matched || 0}</div>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">

@@ -650,3 +650,27 @@ class DahWebhookEvent(Base):
     customer: Mapped[Customer | None] = relationship()
     employee: Mapped[Employee | None] = relationship()
     attendance_session: Mapped[AttendanceSession | None] = relationship()
+
+
+class DahLocalSyncDay(Base):
+    __tablename__ = "dah_local_sync_days"
+    __table_args__ = (
+        UniqueConstraint("work_date", name="uq_dah_local_sync_days_work_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    range_start: Mapped[datetime | None] = mapped_column(DateTime)
+    range_end: Mapped[datetime | None] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    device_code: Mapped[str | None] = mapped_column(String(80))
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    matched_miss_count: Mapped[int] = mapped_column(Integer, default=0)
+    unknown_count: Mapped[int] = mapped_column(Integer, default=0)
+    rejected_count: Mapped[int] = mapped_column(Integer, default=0)
+    fail_count: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    pending_batch_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

@@ -11,8 +11,8 @@ from uuid import uuid4
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee
-from ..timeutils import utc_iso, utc_now
+from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahLocalSyncDay, DahWebhookEvent, Device, Employee
+from ..timeutils import VIETNAM_TZ, utc_iso, utc_now, vietnam_today
 from . import dah_service
 from .employee_shift_attendance import rebuild_employee_attendance_for_day
 
@@ -21,6 +21,7 @@ DEFAULT_LOOKBACK_HOURS = 24
 MAX_LOOKBACK_HOURS = 24 * 14
 MAX_EVENTS_PER_RESULT = 5000
 JOB_TTL_SECONDS = 60 * 60 * 24
+SCAN_START_DATE = date(2026, 8, 19)
 
 _lock = threading.RLock()
 _jobs: dict[str, dict] = {}
@@ -81,9 +82,11 @@ def _batch_public(row: dict, include_events: bool = False) -> dict:
         "deviceCode": row.get("deviceCode"),
         "dahBaseUrl": row.get("dahBaseUrl"),
         "createdAt": row.get("createdAt"),
+        "workDate": row.get("workDate"),
         "range": row.get("range"),
         "status": row.get("status"),
         "totalCount": row.get("totalCount"),
+        "failCount": row.get("failCount"),
         "eventCount": len(row.get("events") or []),
         "summary": row.get("summary"),
     }
@@ -134,6 +137,37 @@ def status() -> dict:
         }
 
 
+def _scan_day_public(row: DahLocalSyncDay) -> dict:
+    return {
+        "workDate": row.work_date.isoformat(),
+        "status": row.status,
+        "range": {
+            "begin": row.range_start.isoformat(timespec="seconds") if row.range_start else None,
+            "end": row.range_end.isoformat(timespec="seconds") if row.range_end else None,
+        },
+        "agentId": row.agent_id,
+        "deviceCode": row.device_code,
+        "lastScannedAt": utc_iso(row.last_scanned_at) if row.last_scanned_at else None,
+        "total": row.total_count,
+        "duplicates": row.duplicate_count,
+        "matchedMissUnapproved": row.matched_miss_count,
+        "unknown": row.unknown_count,
+        "rejected": row.rejected_count,
+        "failCount": row.fail_count,
+        "pendingBatchId": row.pending_batch_id,
+    }
+
+
+def scan_days(db: Session, limit: int = 14) -> dict:
+    rows = (
+        db.query(DahLocalSyncDay)
+        .order_by(DahLocalSyncDay.work_date.desc())
+        .limit(max(1, min(int(limit or 14), 60)))
+        .all()
+    )
+    return {"items": [_scan_day_public(row) for row in rows]}
+
+
 def pending_batches() -> dict:
     with _lock:
         rows = sorted(_pending_batches.values(), key=lambda row: row.get("createdAt") or "", reverse=True)
@@ -169,6 +203,60 @@ def create_sync_job(payload: dict | None = None, actor=None) -> dict:
         _jobs[job["id"]] = job
         _pending.append(job["id"])
         return _job_public(job)
+
+
+def _parse_date(value) -> date | None:
+    text = _clean(value, 40)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _day_range(work_date: date, now: datetime | None = None) -> tuple[datetime, datetime]:
+    start = datetime.combine(work_date, datetime.min.time())
+    end = start + timedelta(days=1)
+    now = now or datetime.now(VIETNAM_TZ).replace(tzinfo=None)
+    if work_date == now.date() and now < end:
+        end = now
+    return start, end
+
+
+def scan_plan(db: Session, payload: dict | None = None) -> dict:
+    payload = payload or {}
+    now = datetime.now(VIETNAM_TZ).replace(tzinfo=None)
+    start_date = _parse_date(payload.get("from") or payload.get("fromDate")) or SCAN_START_DATE
+    end_date = _parse_date(payload.get("to") or payload.get("toDate")) or vietnam_today()
+    if start_date < SCAN_START_DATE:
+        start_date = SCAN_START_DATE
+    if end_date > vietnam_today():
+        end_date = vietnam_today()
+    if end_date < start_date:
+        return {"items": []}
+    existing = {
+        row.work_date: row
+        for row in db.query(DahLocalSyncDay)
+        .filter(DahLocalSyncDay.work_date >= start_date, DahLocalSyncDay.work_date <= end_date)
+        .all()
+    }
+    items = []
+    current = start_date
+    while current <= end_date:
+        row = existing.get(current)
+        include = row is None or current == now.date() or int(row.fail_count or 0) > 0
+        if include:
+            begin, end = _day_range(current, now)
+            reason = "not_scanned" if row is None else "today" if current == now.date() else "has_failures"
+            items.append({
+                "workDate": current.isoformat(),
+                "range": {"begin": begin.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds")},
+                "reason": reason,
+                "failCount": int(row.fail_count or 0) if row else None,
+            })
+        current += timedelta(days=1)
+    return {"items": items, "from": start_date.isoformat(), "to": end_date.isoformat()}
 
 
 def next_job(agent_id: str | None, timeout: int = 55) -> dict | None:
@@ -611,10 +699,57 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
     }
 
 
+def _summary_with_fail(preview: dict) -> dict:
+    matched = int(preview.get("matched") or 0)
+    unknown = int(preview.get("unknown") or 0)
+    rejected = int(preview.get("rejected") or 0)
+    return {
+        "received": int(preview.get("received") or 0),
+        "matched": matched,
+        "matchedMissUnapproved": matched,
+        "duplicates": int(preview.get("duplicates") or 0),
+        "unknown": unknown,
+        "rejected": rejected,
+        "failCount": matched + unknown + rejected,
+    }
+
+
+def _upsert_scan_day(db: Session, payload: dict, preview: dict, batch_id: str | None = None) -> DahLocalSyncDay | None:
+    work_date = _parse_date(payload.get("workDate"))
+    if not work_date:
+        range_payload = payload.get("range") if isinstance(payload.get("range"), dict) else {}
+        work_date = (_parse_datetime(range_payload.get("begin")) or utc_now()).date()
+    range_payload = payload.get("range") if isinstance(payload.get("range"), dict) else {}
+    range_start = _parse_datetime(range_payload.get("begin"))
+    range_end = _parse_datetime(range_payload.get("end"))
+    summary = _summary_with_fail(preview)
+    row = db.query(DahLocalSyncDay).filter(DahLocalSyncDay.work_date == work_date).first()
+    if not row:
+        row = DahLocalSyncDay(work_date=work_date)
+        db.add(row)
+    row.range_start = range_start
+    row.range_end = range_end
+    row.status = "needs_review" if summary["failCount"] > 0 else "clean"
+    row.agent_id = _clean(payload.get("agentId"), 80)
+    row.device_code = _clean(payload.get("deviceCode"), 80)
+    row.last_scanned_at = utc_now()
+    row.total_count = summary["received"]
+    row.duplicate_count = summary["duplicates"]
+    row.matched_miss_count = summary["matchedMissUnapproved"]
+    row.unknown_count = summary["unknown"]
+    row.rejected_count = summary["rejected"]
+    row.fail_count = summary["failCount"]
+    row.pending_batch_id = batch_id if summary["failCount"] > 0 else None
+    row.updated_at = utc_now()
+    db.commit()
+    return row
+
+
 def record_result(db: Session, job_id: str, payload: dict) -> dict:
     preview = preview_agent_result(db, payload)
     now = utc_now()
     batch_id = uuid4().hex
+    summary = _summary_with_fail(preview)
     batch = {
         "id": batch_id,
         "jobId": job_id,
@@ -622,12 +757,14 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
         "deviceCode": _clean(payload.get("deviceCode"), 80),
         "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
         "createdAt": utc_iso(now),
+        "workDate": _clean(payload.get("workDate"), 20),
         "range": payload.get("range"),
         "status": "pending" if preview.get("ok") else "failed",
         "totalCount": payload.get("totalCount"),
+        "failCount": summary["failCount"],
         "events": preview.get("events") or [],
         "rawPayload": payload,
-        "summary": {key: preview.get(key, 0) for key in ("received", "matched", "duplicates", "unknown", "rejected")},
+        "summary": summary,
     }
     with _lock:
         _pending_batches[batch_id] = batch
@@ -659,6 +796,53 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
         return {**_job_public(job), "batch": _batch_public(batch)}
 
 
+def record_day_scan_result(db: Session, payload: dict) -> dict:
+    preview = preview_agent_result(db, payload)
+    now = utc_now()
+    summary = _summary_with_fail(preview)
+    batch_id = uuid4().hex if summary["failCount"] > 0 and preview.get("ok") else None
+    work_date = _clean(payload.get("workDate"), 20)
+    batch = None
+    if batch_id:
+        batch = {
+            "id": batch_id,
+            "jobId": _clean(payload.get("jobId"), 80) or f"scan-{work_date or uuid4().hex}",
+            "agentId": _clean(payload.get("agentId"), 80),
+            "deviceCode": _clean(payload.get("deviceCode"), 80),
+            "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
+            "createdAt": utc_iso(now),
+            "workDate": work_date,
+            "range": payload.get("range"),
+            "status": "pending",
+            "totalCount": payload.get("totalCount"),
+            "failCount": summary["failCount"],
+            "events": preview.get("events") or [],
+            "rawPayload": payload,
+            "summary": summary,
+        }
+    scan_day = _upsert_scan_day(db, payload, preview, batch_id=batch_id)
+    with _lock:
+        if work_date:
+            for existing in _pending_batches.values():
+                if existing.get("status") == "pending" and existing.get("workDate") == work_date:
+                    existing["status"] = "superseded"
+                    existing["supersededAt"] = utc_iso(now)
+        if batch:
+            _pending_batches[batch_id] = batch
+        _agent_state.update({
+            "agentId": _clean(payload.get("agentId"), 80) or _agent_state.get("agentId"),
+            "status": "online",
+            "lastSeenAt": utc_iso(now),
+            "lastError": preview.get("error"),
+        })
+    return {
+        "ok": bool(preview.get("ok")),
+        "scanDay": _scan_day_public(scan_day) if scan_day else None,
+        "batch": _batch_public(batch) if batch else None,
+        "summary": summary,
+    }
+
+
 def approve_batch(db: Session, batch_id: str, payload: dict | None = None, actor=None) -> dict:
     payload = payload or {}
     with _lock:
@@ -671,6 +855,10 @@ def approve_batch(db: Session, batch_id: str, payload: dict | None = None, actor
         }
         raw_payload = dict(batch["rawPayload"])
     result = import_agent_result(db, raw_payload, selected_event_keys=selected_keys)
+    refreshed_scan_day = None
+    if raw_payload.get("workDate"):
+        refreshed_preview = preview_agent_result(db, raw_payload)
+        refreshed_scan_day = _upsert_scan_day(db, raw_payload, refreshed_preview, batch_id=None)
     with _lock:
         batch["status"] = "approved"
         batch["approvedAt"] = utc_iso(utc_now())
@@ -680,7 +868,7 @@ def approve_batch(db: Session, batch_id: str, payload: dict | None = None, actor
         if job:
             job["status"] = "completed"
             job["result"] = {**result, "batchId": batch_id}
-    return {"ok": True, "batch": _batch_public(batch), "result": result}
+    return {"ok": True, "batch": _batch_public(batch), "result": result, "scanDay": _scan_day_public(refreshed_scan_day) if refreshed_scan_day else None}
 
 
 def reject_batch(batch_id: str, actor=None) -> dict:

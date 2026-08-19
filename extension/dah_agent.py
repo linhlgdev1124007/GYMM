@@ -58,8 +58,9 @@ class AgentConfig:
     dah_username: str = DEFAULT_DAH_USERNAME
     dah_password: str = DEFAULT_DAH_PASSWORD
     auto_start: bool = True
-    sync_interval_seconds: int = 300
+    sync_interval_seconds: int = 1800
     lookback_hours: int = 24
+    scan_start_date: str = "2026-08-19"
     browser_warmup: bool = True
 
     @property
@@ -231,6 +232,19 @@ def parse_dah_time(value: str | None) -> str | None:
         return text.replace("/", "T", 1)
 
 
+def parse_iso_datetime(value: Any) -> datetime:
+    text = clean_null(value)
+    if not text:
+        return datetime.now()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return datetime.now()
+
+
 class DahClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -368,11 +382,8 @@ class DahClient:
         log(f"DAH whitelist pulled {len(all_items)} people")
         return all_items
 
-    def fetch_events(self, lookback_hours: int | None = None, req_count: int = 20) -> dict[str, Any]:
-        self.warmup_browser()
-        end = datetime.now()
-        begin = end - timedelta(hours=max(int(lookback_hours or self.config.lookback_hours or 24), 1))
-        whitelist = self.fetch_whitelist()
+    def fetch_events_range(self, begin: datetime, end: datetime, whitelist: list[dict[str, Any]] | None = None, req_count: int = 20) -> dict[str, Any]:
+        whitelist = whitelist if whitelist is not None else self.fetch_whitelist()
         whitelist_by_profile = {row.get("profileKey"): row for row in whitelist if row.get("profileKey")}
         all_items: list[dict[str, Any]] = []
         first_meta, first_items = self.get_control_page(begin, end, 0, req_count, 0)
@@ -402,6 +413,12 @@ class DahClient:
             "whitelistCount": len(whitelist),
             "events": all_items,
         }
+
+    def fetch_events(self, lookback_hours: int | None = None, req_count: int = 20) -> dict[str, Any]:
+        self.warmup_browser()
+        end = datetime.now()
+        begin = end - timedelta(hours=max(int(lookback_hours or self.config.lookback_hours or 24), 1))
+        return self.fetch_events_range(begin, end, req_count=req_count)
 
 
 class ServerClient:
@@ -439,6 +456,25 @@ class ServerClient:
     def post_result(self, job_id: str, result: dict[str, Any]) -> None:
         self.session.post(
             f"{self.config.server_base_url}/api/dah/local-agent/jobs/{job_id}/result",
+            json=result,
+            headers=auth_headers(self.config),
+            timeout=60,
+        ).raise_for_status()
+
+    def scan_plan(self) -> list[dict[str, Any]]:
+        response = self.session.post(
+            f"{self.config.server_base_url}/api/dah/local-agent/scan-plan",
+            json={"agentId": self.config.agent_id, "from": self.config.scan_start_date},
+            headers=auth_headers(self.config),
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("items") if isinstance(data, dict) and isinstance(data.get("items"), list) else []
+
+    def post_day_scan_result(self, result: dict[str, Any]) -> None:
+        self.session.post(
+            f"{self.config.server_base_url}/api/dah/local-agent/day-scan-result",
             json=result,
             headers=auth_headers(self.config),
             timeout=60,
@@ -494,8 +530,11 @@ class AgentWorker:
                 if job or should_auto_sync or should_manual_sync:
                     self.sync_now_event.clear()
                     if should_auto_sync:
-                        next_auto = time.monotonic() + max(int(self.config.sync_interval_seconds), 60)
-                    self._run_sync(server, job)
+                        next_auto = time.monotonic() + max(int(self.config.sync_interval_seconds), 1800)
+                    if job:
+                        self._run_sync(server, job)
+                    else:
+                        self._run_day_scans(server)
                 self.stop_event.wait(3)
             except Exception:
                 self._emit("Worker loop error:\n" + traceback.format_exc())
@@ -533,6 +572,46 @@ class AgentWorker:
             except Exception as exc:
                 self._emit(f"Local sync result not posted: {exc}")
 
+    def _run_day_scans(self, server: ServerClient) -> None:
+        self._emit("Day scan plan requested")
+        try:
+            plan = server.scan_plan()
+        except Exception as exc:
+            self._emit(f"Day scan plan failed: {exc}")
+            return
+        if not plan:
+            self._emit("Day scan skipped: no days need scanning")
+            return
+        self._emit(f"Day scan plan: {len(plan)} day(s)")
+        client = DahClient(self.config)
+        try:
+            client.warmup_browser()
+            whitelist = client.fetch_whitelist()
+        except Exception as exc:
+            self._emit(f"Day scan setup failed: {exc}")
+            return
+        for item in plan:
+            if self.stop_event.is_set():
+                return
+            work_date = clean_null(item.get("workDate")) or "unknown"
+            range_payload = item.get("range") if isinstance(item.get("range"), dict) else {}
+            begin = parse_iso_datetime(range_payload.get("begin"))
+            end = parse_iso_datetime(range_payload.get("end"))
+            self._emit(f"Day scan started: {work_date}")
+            try:
+                result = client.fetch_events_range(begin, end, whitelist=whitelist)
+                result.update({
+                    "agentId": self.config.agent_id,
+                    "jobId": f"scan-{work_date}-{int(time.time())}",
+                    "ok": True,
+                    "workDate": work_date,
+                    "range": {"begin": begin.isoformat(), "end": end.isoformat()},
+                })
+                server.post_day_scan_result(result)
+                self._emit(f"Day scan posted: {work_date}, {len(result.get('events', []))} events")
+            except Exception as exc:
+                self._emit(f"Day scan failed {work_date}: {exc}")
+
 
 class AgentApp(tk.Tk):
     def __init__(self):
@@ -567,11 +646,12 @@ class AgentApp(tk.Tk):
         self._add_entry(form, "DAH password", "dah_password", 8, width=20, show="*")
         self._add_entry(form, "Sync interval seconds", "sync_interval_seconds", 9, width=8)
         self._add_entry(form, "Lookback hours", "lookback_hours", 10, width=8)
+        self._add_entry(form, "Scan start date", "scan_start_date", 11, width=12)
 
         self.vars["auto_start"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Auto start worker when app opens", variable=self.vars["auto_start"]).grid(row=11, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Auto start worker when app opens", variable=self.vars["auto_start"]).grid(row=12, column=1, sticky="w", pady=3)
         self.vars["browser_warmup"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Use hidden browser warmup/login before pulling API", variable=self.vars["browser_warmup"]).grid(row=12, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Use hidden browser warmup/login before pulling API", variable=self.vars["browser_warmup"]).grid(row=13, column=1, sticky="w", pady=3)
 
         actions = ttk.Frame(root)
         actions.pack(fill="x", pady=10)

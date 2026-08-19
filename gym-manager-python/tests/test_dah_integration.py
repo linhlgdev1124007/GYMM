@@ -357,6 +357,66 @@ def test_dah_local_sync_upserts_one_identity_for_repeated_profile_in_batch(tmp_p
         db.close()
 
 
+def test_dah_day_scan_tracks_failures_and_refreshes_after_approval(tmp_path):
+    from server.models import DahCustomerIdentity, DahLocalSyncDay
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="legacy-545", person_id="545"))
+        db.commit()
+
+        payload = {
+            "ok": True,
+            "agentId": "test-agent",
+            "deviceCode": "DAH-192.168.1.60",
+            "workDate": "2026-08-11",
+            "range": {"begin": "2026-08-11T00:00:00", "end": "2026-08-11T23:59:59"},
+            "events": [
+                {
+                    "dahUid": "local-1",
+                    "dahPersonUid": "545",
+                    "profileKey": "dah_profile:0/0/35651584",
+                    "eventTime": "2026-08-11T20:10:43",
+                    "status": 1,
+                    "name": "Do Hoang Trung",
+                },
+                {
+                    "dahUid": "unknown-1",
+                    "dahPersonUid": "999999",
+                    "profileKey": "dah_profile:0/0/999999",
+                    "eventTime": "2026-08-11T20:14:16",
+                    "status": 1,
+                    "name": "Unknown",
+                },
+            ],
+        }
+
+        recorded = dah_local_sync_service.record_day_scan_result(db, payload)
+        batch_id = recorded["batch"]["id"]
+        day = db.query(DahLocalSyncDay).filter_by(work_date=date(2026, 8, 11)).one()
+
+        assert recorded["summary"]["matchedMissUnapproved"] == 1
+        assert recorded["summary"]["unknown"] == 1
+        assert recorded["summary"]["failCount"] == 2
+        assert day.fail_count == 2
+        assert day.pending_batch_id == batch_id
+
+        detail = dah_local_sync_service.pending_batch(batch_id)["item"]
+        event_key = next(row["eventKey"] for row in detail["events"] if row["status"] == "matched")
+        approved = dah_local_sync_service.approve_batch(db, batch_id, {"eventKeys": [event_key]})
+        day = db.query(DahLocalSyncDay).filter_by(work_date=date(2026, 8, 11)).one()
+
+        assert approved["result"]["imported"] == 1
+        assert day.matched_miss_count == 0
+        assert day.unknown_count == 1
+        assert day.fail_count == 1
+        assert day.pending_batch_id is None
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service

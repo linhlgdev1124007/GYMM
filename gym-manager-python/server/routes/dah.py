@@ -83,6 +83,11 @@ def local_agent_pending_batches():
     return dah_local_sync_service.pending_batches()
 
 
+@router.get("/api/dah/local-agent/scan-days", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_scan_days(db: Session = Depends(get_db)):
+    return dah_local_sync_service.scan_days(db)
+
+
 @router.get("/api/dah/local-agent/pending-batches/{batch_id}", dependencies=[Depends(require_roles("admin", "manager"))])
 def local_agent_pending_batch(batch_id: str):
     result = dah_local_sync_service.pending_batch(batch_id)
@@ -136,6 +141,16 @@ def local_agent_next_job(
 @router.post("/api/dah/local-agent/jobs/{job_id}/result", dependencies=[Depends(_require_agent_token)])
 async def local_agent_job_result(job_id: str, request: Request, db: Session = Depends(get_db)):
     return dah_local_sync_service.record_result(db, job_id, await _payload(request))
+
+
+@router.post("/api/dah/local-agent/scan-plan", dependencies=[Depends(_require_agent_token)])
+async def local_agent_scan_plan(request: Request, db: Session = Depends(get_db)):
+    return dah_local_sync_service.scan_plan(db, await _payload(request))
+
+
+@router.post("/api/dah/local-agent/day-scan-result", dependencies=[Depends(_require_agent_token)])
+async def local_agent_day_scan_result(request: Request, db: Session = Depends(get_db)):
+    return dah_local_sync_service.record_day_scan_result(db, await _payload(request))
 
 
 @router.post("/api/members/{member_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
