@@ -313,6 +313,50 @@ def test_dah_local_sync_treats_person_id_and_time_as_duplicate(tmp_path):
         db.close()
 
 
+def test_dah_local_sync_upserts_one_identity_for_repeated_profile_in_batch(tmp_path):
+    from server.models import DahCustomerIdentity
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="legacy-545", person_id="545"))
+        db.commit()
+
+        result = dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "test-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [
+                {
+                    "dahUid": "local-1",
+                    "dahPersonUid": "545",
+                    "profileKey": "dah_profile:0/0/35651584",
+                    "eventTime": "2026-08-11T20:10:43",
+                    "status": 1,
+                    "name": "Do Hoang Trung",
+                },
+                {
+                    "dahUid": "local-2",
+                    "dahPersonUid": "545",
+                    "profileKey": "dah_profile:0/0/35651584",
+                    "eventTime": "2026-08-11T20:14:16",
+                    "status": 1,
+                    "name": "Do Hoang Trung",
+                },
+            ],
+        })
+
+        assert result["imported"] == 2
+        assert db.query(DahCustomerIdentity).filter_by(person_uuid="dah_profile:0/0/35651584").count() == 1
+        identity = db.query(DahCustomerIdentity).filter_by(person_uuid="dah_profile:0/0/35651584").one()
+        assert identity.customer_id == customer_id
+        assert identity.person_id == "545"
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service

@@ -237,20 +237,32 @@ def _match_people(db: Session, event: dict):
     return None, None, None
 
 
-def _upsert_identity_for_match(db: Session, event: dict, device: Device | None, customer: Customer | None, employee: Employee | None, event_time: datetime) -> None:
+def _upsert_identity_for_match(
+    db: Session,
+    event: dict,
+    device: Device | None,
+    customer: Customer | None,
+    employee: Employee | None,
+    event_time: datetime,
+    identity_cache: dict[str, DahCustomerIdentity] | None = None,
+) -> None:
     profile = _profile_key(event)
     dah_person_uid = _clean(event.get("dahPersonUid"), 80)
     if not profile or not (customer or employee):
         return
-    identity = (
-        db.query(DahCustomerIdentity)
-        .filter(DahCustomerIdentity.person_uuid == profile)
-        .order_by(DahCustomerIdentity.id.desc())
-        .first()
-    )
+    identity = identity_cache.get(profile) if identity_cache is not None else None
+    if not identity:
+        identity = (
+            db.query(DahCustomerIdentity)
+            .filter(DahCustomerIdentity.person_uuid == profile)
+            .order_by(DahCustomerIdentity.id.desc())
+            .first()
+        )
     if not identity:
         identity = DahCustomerIdentity(person_uuid=profile)
         db.add(identity)
+    if identity_cache is not None:
+        identity_cache[profile] = identity
     identity.customer_id = customer.id if customer else identity.customer_id
     identity.employee_id = employee.id if employee else identity.employee_id
     identity.device_id = device.id if device else identity.device_id
@@ -528,6 +540,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
     device = _device(db, payload)
     affected_customers: set[tuple[int, date]] = set()
     affected_employees: set[tuple[int, date]] = set()
+    identity_cache: dict[str, DahCustomerIdentity] = {}
     imported = duplicates = unknown = rejected = skipped = 0
 
     for item in events:
@@ -573,7 +586,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
         )
         db.add(row)
         if status == "processed":
-            _upsert_identity_for_match(db, item, device, customer, employee, event_time)
+            _upsert_identity_for_match(db, item, device, customer, employee, event_time, identity_cache)
         imported += 1
         if status == "processed":
             if customer:
