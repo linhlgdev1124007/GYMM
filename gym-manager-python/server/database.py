@@ -257,7 +257,16 @@ def migrate_dah_integration():
     tables = set(inspector.get_table_names())
     if "dah_customer_identities" in tables:
         columns = {column["name"] for column in inspector.get_columns("dah_customer_identities")}
+        indexes = {index["name"] for index in inspector.get_indexes("dah_customer_identities")}
         with engine.begin() as connection:
+            if "person_id" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('dah_customer_identities')} ADD COLUMN {quote('person_id')} VARCHAR(80)"
+                )
+            if "ix_dah_customer_identities_person_id" not in indexes:
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_dah_customer_identities_person_id')} ON {quote('dah_customer_identities')} ({quote('person_id')})"
+                )
             if "employee_id" not in columns:
                 connection.exec_driver_sql(
                     f"ALTER TABLE {quote('dah_customer_identities')} ADD COLUMN {quote('employee_id')} INTEGER"
@@ -276,8 +285,25 @@ def migrate_dah_integration():
                     )
     if "dah_webhook_events" in tables:
         columns = {column["name"] for column in inspector.get_columns("dah_webhook_events")}
-        if "employee_id" not in columns:
-            with engine.begin() as connection:
+        indexes = {index["name"] for index in inspector.get_indexes("dah_webhook_events")}
+        with engine.begin() as connection:
+            if "person_id" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('dah_webhook_events')} ADD COLUMN {quote('person_id')} VARCHAR(80)"
+                )
+            if "ix_dah_webhook_events_person_id" not in indexes:
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_dah_webhook_events_person_id')} ON {quote('dah_webhook_events')} ({quote('person_id')})"
+                )
+            if "person_uuid" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('dah_webhook_events')} ADD COLUMN {quote('person_uuid')} VARCHAR(80)"
+                )
+            if "ix_dah_webhook_events_person_uuid" not in indexes:
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_dah_webhook_events_person_uuid')} ON {quote('dah_webhook_events')} ({quote('person_uuid')})"
+                )
+            if "employee_id" not in columns:
                 connection.exec_driver_sql(
                     f"ALTER TABLE {quote('dah_webhook_events')} ADD COLUMN {quote('employee_id')} INTEGER"
                 )
