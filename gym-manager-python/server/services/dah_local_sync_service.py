@@ -290,6 +290,26 @@ def _event_key(payload: dict, event: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _existing_event_by_person_time(db: Session, person_id: str | None, event_time: datetime | None) -> DahWebhookEvent | None:
+    person_id = _clean(person_id, 80)
+    if not person_id or not event_time:
+        return None
+    return (
+        db.query(DahWebhookEvent)
+        .filter(
+            DahWebhookEvent.person_id == person_id,
+            DahWebhookEvent.event_time == event_time,
+        )
+        .order_by(DahWebhookEvent.id.desc())
+        .first()
+    )
+
+
+def _existing_duplicate_event(db: Session, key: str, person_id: str | None, event_time: datetime | None) -> DahWebhookEvent | None:
+    existing = db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first()
+    return existing or _existing_event_by_person_time(db, person_id, event_time)
+
+
 def _event_payload(payload: dict, event: dict) -> str:
     compact = dict(event)
     return json.dumps({
@@ -450,12 +470,13 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
         if not isinstance(item, dict):
             continue
         key = _event_key(payload, item)
-        if db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first():
+        event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
+        person_id = _clean(item.get("dahPersonUid"), 80) or _clean(item.get("mjCardNo"), 80)
+        if _existing_duplicate_event(db, key, person_id, event_time):
             duplicates += 1
             duplicate = True
         else:
             duplicate = False
-        event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
         customer, employee, match_source = _match_people(db, item)
         status = "duplicate" if duplicate else "matched" if verify_status == 1 and (customer or employee) else "unknown"
@@ -516,10 +537,11 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
         if selected_event_keys is not None and key not in selected_event_keys:
             skipped += 1
             continue
-        if db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first():
+        event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
+        person_id = _clean(item.get("dahPersonUid"), 80) or _clean(item.get("mjCardNo"), 80)
+        if _existing_duplicate_event(db, key, person_id, event_time):
             duplicates += 1
             continue
-        event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
         similarity = dah_service._float(item.get("similarity"))
         customer, employee, match_source = _match_people(db, item)
@@ -540,7 +562,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
             customer_id=customer.id if customer else None,
             employee_id=employee.id if employee else None,
             person_uuid=_profile_key(item),
-            person_id=_clean(item.get("dahPersonUid"), 80) or _clean(item.get("mjCardNo"), 80),
+            person_id=person_id,
             verify_status=verify_status,
             similarity=similarity,
             event_time=event_time,

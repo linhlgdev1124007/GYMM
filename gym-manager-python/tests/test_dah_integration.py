@@ -263,6 +263,56 @@ def test_dah_local_sync_matches_by_person_id_only(tmp_path):
         db.close()
 
 
+def test_dah_local_sync_treats_person_id_and_time_as_duplicate(tmp_path):
+    from server.models import DahCustomerIdentity, DahWebhookEvent
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="732", person_id="1149"))
+        db.add(DahWebhookEvent(
+            event_key="webhook-existing-hash",
+            operator="VerifyPush",
+            customer_id=customer_id,
+            person_uuid="732",
+            person_id="1149",
+            verify_status=1,
+            event_time=datetime(2026, 8, 11, 7, 0),
+            status="processed",
+            action="checkin",
+            raw_payload="{}",
+        ))
+        db.commit()
+
+        payload = {
+            "ok": True,
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "24602",
+                "dahPersonUid": "1149",
+                "profileKey": "dah_profile:0/0/75366400",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "LONG",
+            }],
+        }
+        preview = dah_local_sync_service.preview_agent_result(db, payload)
+        event_key = preview["events"][0]["eventKey"]
+
+        assert preview["duplicates"] == 1
+        assert preview["matched"] == 0
+        assert preview["events"][0]["status"] == "duplicate"
+        assert preview["events"][0]["willSync"] is False
+
+        result = dah_local_sync_service.import_agent_result(db, payload, selected_event_keys={event_key})
+        assert result["duplicates"] == 1
+        assert result["imported"] == 0
+        assert db.query(DahWebhookEvent).count() == 1
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service
