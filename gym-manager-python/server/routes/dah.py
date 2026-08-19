@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, Query, Request
+import hmac
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..dependencies import require_roles
 from ..models import User
-from ..services import dah_service
+from ..services import dah_local_sync_service, dah_service
 
 
 router = APIRouter(tags=["dah"])
@@ -13,6 +16,16 @@ router = APIRouter(tags=["dah"])
 async def _payload(request: Request) -> dict:
     data = await request.json()
     return data if isinstance(data, dict) else {}
+
+
+def _require_agent_token(authorization: str = Header("")):
+    expected = settings.dah_agent_token
+    if not expected:
+        raise HTTPException(503, "GYM_DAH_AGENT_TOKEN chưa được cấu hình trên server.")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, "DAH agent token không hợp lệ.")
+    return True
 
 
 @router.post("/Subscribe/heartbeat")
@@ -50,6 +63,42 @@ def dah_events(
     db: Session = Depends(get_db),
 ):
     return dah_service.dah_events(db, view=view, limit=limit, page=page, page_size=page_size)
+
+
+@router.get("/api/dah/local-agent/status", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_status():
+    return dah_local_sync_service.status()
+
+
+@router.post("/api/dah/local-agent/sync-request", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_sync_request(
+    payload: dict,
+    user: User = Depends(require_roles("admin", "manager")),
+):
+    return dah_local_sync_service.create_sync_job(payload, actor=user)
+
+
+@router.post("/api/dah/local-agent/heartbeat", dependencies=[Depends(_require_agent_token)])
+async def local_agent_heartbeat(request: Request):
+    return dah_local_sync_service.heartbeat(await _payload(request))
+
+
+@router.get("/api/dah/local-agent/jobs/next", dependencies=[Depends(_require_agent_token)])
+def local_agent_next_job(
+    response: Response,
+    agentId: str = Query(""),
+    timeout: int = Query(55, ge=0, le=55),
+):
+    job = dah_local_sync_service.next_job(agentId, timeout=timeout)
+    if not job:
+        response.status_code = 204
+        return None
+    return job
+
+
+@router.post("/api/dah/local-agent/jobs/{job_id}/result", dependencies=[Depends(_require_agent_token)])
+async def local_agent_job_result(job_id: str, request: Request, db: Session = Depends(get_db)):
+    return dah_local_sync_service.record_result(db, job_id, await _payload(request))
 
 
 @router.post("/api/members/{member_id}/dah-identity", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])

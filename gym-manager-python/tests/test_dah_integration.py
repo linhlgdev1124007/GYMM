@@ -138,6 +138,44 @@ def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_p
         db.close()
 
 
+def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_path):
+    from server.models import AttendanceSession
+    from server.services import dah_local_sync_service, dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+
+        late = dah_service.verify(db, verify_payload("2026-08-11T10:00:00", "late"))
+        assert late["action"] == "checkin"
+
+        result = dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "test-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "dahBaseUrl": "http://192.168.1.60:80",
+            "events": [{
+                "dahUid": "early",
+                "eventTime": "2026-08-11T07:00:00",
+                "rawEventTime": "2026-08-11/07:00:00",
+                "status": 1,
+                "similarity": 95,
+                "name": "TRAN NGUYEN KHAI HOAN",
+                "mjCardNo": "1",
+                "raw": {},
+            }],
+        })
+
+        assert result["imported"] == 1
+        session = db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").one()
+        assert session.checked_in_at == datetime(2026, 8, 11, 7, 0)
+        assert session.checked_out_at == datetime(2026, 8, 11, 10, 0)
+        assert session.status == "closed"
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service
@@ -558,6 +596,46 @@ def test_employee_dah_attendance_uses_shift_cutoff_for_close_shifts(tmp_path):
         assert rows[0].checked_out_at.isoformat() == "2026-08-11T13:10:00"
         assert rows[1].checked_in_at.isoformat() == "2026-08-11T13:12:00"
         assert rows[1].checked_out_at.isoformat() == "2026-08-11T14:20:00"
+    finally:
+        db.close()
+
+
+def test_dah_local_sync_employee_event_rebuilds_shift_attendance(tmp_path):
+    from server.models import AttendanceSession, Employee, EmployeeShiftSchedule, Person
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Local Sync Coach", phone="0900000091", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00091", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 11),
+            starts_at=datetime(2026, 8, 11, 7, 0),
+            ends_at=datetime(2026, 8, 11, 10, 0),
+        ))
+        db.commit()
+
+        result = dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "test-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [
+                {"dahUid": "coach-1", "eventTime": "2026-08-11T10:00:00", "status": 1, "name": "Local Sync Coach"},
+                {"dahUid": "coach-2", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "Local Sync Coach"},
+            ],
+        })
+
+        assert result["imported"] == 2
+        session = db.query(AttendanceSession).filter_by(employee_id=employee.id, source="dah").one()
+        assert session.checked_in_at == datetime(2026, 8, 11, 7, 0)
+        assert session.checked_out_at == datetime(2026, 8, 11, 10, 0)
+        assert session.status == "closed"
     finally:
         db.close()
 

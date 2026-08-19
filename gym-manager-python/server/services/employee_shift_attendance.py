@@ -607,7 +607,7 @@ def _employee_scan_events(db: Session, employee_id: int, work_date: date, extra_
             DahWebhookEvent.event_time < end,
             DahWebhookEvent.verify_status == 1,
             DahWebhookEvent.status == "processed",
-            DahWebhookEvent.action.in_(("checkin", "checkout", "mixed", "employee_shift_sync")),
+            DahWebhookEvent.action.in_(("checkin", "checkout", "mixed", "employee_shift_sync", "local_sync")),
         )
         .order_by(DahWebhookEvent.event_time.asc(), DahWebhookEvent.id.asc())
         .all()

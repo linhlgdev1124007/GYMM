@@ -34,6 +34,7 @@ class Settings:
     session_days: int
     max_sessions_per_user: int
     metrics_token: str
+    dah_agent_token: str
     log_level: str
     otel_exporter_endpoint: str
     otel_service_name: str
@@ -63,6 +64,7 @@ def load_settings() -> Settings:
         session_days=_int("GYM_SESSION_DAYS", 7),
         max_sessions_per_user=_int("GYM_MAX_SESSIONS_PER_USER", 5),
         metrics_token=os.getenv("GYM_METRICS_TOKEN", "").strip(),
+        dah_agent_token=os.getenv("GYM_DAH_AGENT_TOKEN", "").strip(),
         log_level=os.getenv("GYM_LOG_LEVEL", "INFO").strip().upper(),
         otel_exporter_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip(),
         otel_service_name=os.getenv("OTEL_SERVICE_NAME", "pulsefit-api").strip() or "pulsefit-api",
@@ -77,6 +79,10 @@ def load_settings() -> Settings:
             problems.append("GYM_METRICS_TOKEN is required")
         if len(settings.metrics_token) < 32 or settings.metrics_token.startswith("replace-with-"):
             problems.append("GYM_METRICS_TOKEN must contain at least 32 characters")
+        if not settings.dah_agent_token:
+            problems.append("GYM_DAH_AGENT_TOKEN is required")
+        if len(settings.dah_agent_token) < 24 or settings.dah_agent_token.startswith("replace-with-"):
+            problems.append("GYM_DAH_AGENT_TOKEN must contain at least 24 characters")
         if not os.getenv("GYM_ALLOWED_HOSTS", "").strip():
             problems.append("GYM_ALLOWED_HOSTS must be configured explicitly")
         if not os.getenv("GYM_ALLOWED_ORIGINS", "").strip():
