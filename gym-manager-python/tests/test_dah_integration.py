@@ -176,6 +176,39 @@ def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_pa
         db.close()
 
 
+def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
+    from server.models import AttendanceSession
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db)
+        payload = {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "approval-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "approval-1",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "TRAN NGUYEN KHAI HOAN",
+            }],
+        }
+
+        posted = dah_local_sync_service.record_result(db, "approval-job", payload)
+        batch_id = posted["batch"]["id"]
+        assert posted["status"] == "pending_approval"
+        assert posted["batch"]["summary"]["matched"] == 1
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").count() == 0
+
+        approved = dah_local_sync_service.approve_batch(db, batch_id, {})
+        assert approved["result"]["imported"] == 1
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").count() == 1
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service

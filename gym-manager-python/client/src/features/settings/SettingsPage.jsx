@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Save, Trash2, Volume2 } from "lucide-react";
+import { Check, Eye, Pencil, Plus, RefreshCw, Save, Trash2, Volume2, X } from "lucide-react";
 import { api } from "../../services/api";
 import { notify } from "../../services/notify";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -50,11 +50,29 @@ export function SettingsPage() {
   const [speechDraft, setSpeechDraft] = useState({ enabled: false, voiceUri: "", voiceName: "", volume: 1, rate: 1, pitch: 1, patterns: [] });
   const [speechVoices, setSpeechVoices] = useState([]);
   const [speechSampleName, setSpeechSampleName] = useState("Khải Hoàn");
+  const [syncModal, setSyncModal] = useState(null);
+  const [selectedSyncEvents, setSelectedSyncEvents] = useState({});
   const query = useQuery({
     queryKey: ["settings"],
     queryFn: () => api("/api/settings"),
   });
+  const dahAgentStatus = useQuery({
+    queryKey: ["dah-local-agent-status"],
+    queryFn: () => api("/api/dah/local-agent/status"),
+    refetchInterval: 15000,
+  });
+  const pendingSyncBatches = useQuery({
+    queryKey: ["dah-local-agent-pending-batches"],
+    queryFn: () => api("/api/dah/local-agent/pending-batches"),
+    refetchInterval: 10000,
+  });
+  const syncBatchDetail = useQuery({
+    queryKey: ["dah-local-agent-pending-batch", syncModal?.id],
+    queryFn: () => api(`/api/dah/local-agent/pending-batches/${syncModal.id}`),
+    enabled: !!syncModal?.id,
+  });
   const data = query.data;
+  const syncDetail = syncBatchDetail.data?.item;
 
   useEffect(() => {
     if (data?.checkinSpeech) {
@@ -87,6 +105,10 @@ export function SettingsPage() {
     setAccountDraft(accountForm(accountModal));
     setError("");
   }, [accountModal]);
+  useEffect(() => {
+    if (!syncDetail?.events) return;
+    setSelectedSyncEvents(Object.fromEntries(syncDetail.events.map((event) => [event.eventKey, event.willSync])));
+  }, [syncDetail?.id]);
 
   const saveJobTitle = useMutation({
     mutationFn: (payload) =>
@@ -152,6 +174,40 @@ export function SettingsPage() {
     },
     onError: (reason) => setSpeechError(reason.message),
   });
+  const requestDahSync = useMutation({
+    mutationFn: () => api("/api/dah/local-agent/sync-request", { method: "POST", body: { lookbackHours: 24 } }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      notify.success("Đã gửi yêu cầu sync tới DAH agent.");
+    },
+    onError: (reason) => notify.error(reason.message),
+  });
+  const approveDahSync = useMutation({
+    mutationFn: ({ batchId, eventKeys }) =>
+      api(`/api/dah/local-agent/pending-batches/${batchId}/approve`, {
+        method: "POST",
+        body: { eventKeys },
+      }),
+    onSuccess: (result) => {
+      client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      client.invalidateQueries({ queryKey: ["dah-local-agent-pending-batches"] });
+      client.invalidateQueries({ queryKey: ["dah-events"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      setSyncModal(null);
+      notify.success(`Đã đồng bộ ${result?.result?.imported || 0} event DAH.`);
+    },
+    onError: (reason) => notify.error(reason.message),
+  });
+  const rejectDahSync = useMutation({
+    mutationFn: (batchId) => api(`/api/dah/local-agent/pending-batches/${batchId}/reject`, { method: "POST", body: {} }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      client.invalidateQueries({ queryKey: ["dah-local-agent-pending-batches"] });
+      setSyncModal(null);
+      notify.success("Đã bỏ batch sync.");
+    },
+    onError: (reason) => notify.error(reason.message),
+  });
 
   const previewSpeech = (pattern) => {
     const message = String(pattern.text || "").replaceAll("{name}", speechSampleName.trim() || "Khải Hoàn");
@@ -162,6 +218,9 @@ export function SettingsPage() {
   const vietnameseVoices = speechVoices.filter((voice) => voice.lang?.toLowerCase().startsWith("vi"));
   const otherVoices = speechVoices.filter((voice) => !voice.lang?.toLowerCase().startsWith("vi"));
   const selectedVoiceAvailable = !speechDraft.voiceUri || speechVoices.some((voice) => voice.voiceURI === speechDraft.voiceUri);
+  const pendingBatches = pendingSyncBatches.data?.items || [];
+  const agent = dahAgentStatus.data?.agent;
+  const selectedEventKeys = Object.entries(selectedSyncEvents).filter(([, checked]) => checked).map(([key]) => key);
 
   const handleDeleteTitle = (row) => {
     const confirmed = window.confirm(
@@ -383,6 +442,61 @@ export function SettingsPage() {
             <p>Chỉ theo dõi DAH1017; trạng thái online dựa trên heartbeat gần nhất.</p>
           </div>
         </div>
+        <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">DAH local agent</h3>
+              <p className="text-sm text-slate-500">
+                Agent: {agent?.agentId || "—"} · Trạng thái: {agent?.status === "online" ? "online" : "offline"} · Batch chờ duyệt: {pendingBatches.length}
+              </p>
+              <p className="text-xs text-slate-400">Heartbeat cuối: {dateTime(agent?.lastSeenAt)}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => pendingSyncBatches.refetch()}>
+                <RefreshCw size={14} />
+                Làm mới
+              </Button>
+              <Button size="sm" loading={requestDahSync.isPending} onClick={() => requestDahSync.mutate()}>
+                <RefreshCw size={14} />
+                Yêu cầu sync
+              </Button>
+            </div>
+          </div>
+          {pendingBatches.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="py-2 pr-4">Thời gian</th>
+                    <th className="py-2 pr-4">Thiết bị</th>
+                    <th className="py-2 pr-4 text-right">Khớp</th>
+                    <th className="py-2 pr-4 text-right">Trùng</th>
+                    <th className="py-2 pr-4 text-right">Không khớp</th>
+                    <th className="py-2 text-right">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingBatches.map((batch) => (
+                    <tr key={batch.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-4">{dateTime(batch.createdAt)}</td>
+                      <td className="py-2 pr-4">{batch.deviceCode || "DAH local"}</td>
+                      <td className="py-2 pr-4 text-right text-emerald-700">{batch.summary?.matched || 0}</td>
+                      <td className="py-2 pr-4 text-right text-slate-500">{batch.summary?.duplicates || 0}</td>
+                      <td className="py-2 pr-4 text-right text-amber-700">{batch.summary?.unknown || 0}</td>
+                      <td className="py-2 text-right">
+                        <Button size="sm" variant="secondary" onClick={() => setSyncModal(batch)}>
+                          <Eye size={14} />
+                          Xem & duyệt
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!pendingBatches.length && <p className="mt-3 text-sm text-slate-400">Chưa có batch sync nào đang chờ duyệt.</p>}
+        </div>
         <DataTable
           rows={data?.devices}
           loading={query.isLoading}
@@ -421,6 +535,122 @@ export function SettingsPage() {
           ]}
         />
       </section>
+      <Modal
+        open={!!syncModal}
+        onClose={() => setSyncModal(null)}
+        title="Duyệt batch sync DAH"
+        description="Chỉ những event được chọn mới được ghi vào check-in/check-out. Event không khớp tên hoặc bị trùng mặc định không chọn."
+        size="xl"
+      >
+        <div className="modal-body">
+          {syncBatchDetail.isLoading && <p className="text-sm text-slate-500">Đang tải batch…</p>}
+          {syncBatchDetail.error && <div className="inline-error">{syncBatchDetail.error.message}</div>}
+          {syncDetail && (
+            <>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-xs text-slate-400">Tổng event</div>
+                  <div className="text-lg font-semibold">{syncDetail.summary?.received || syncDetail.eventCount || 0}</div>
+                </div>
+                <div className="rounded-lg bg-emerald-50 p-3 text-emerald-800">
+                  <div className="text-xs opacity-70">Có thể sync</div>
+                  <div className="text-lg font-semibold">{syncDetail.summary?.matched || 0}</div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-xs text-slate-400">Bị trùng</div>
+                  <div className="text-lg font-semibold">{syncDetail.summary?.duplicates || 0}</div>
+                </div>
+                <div className="rounded-lg bg-amber-50 p-3 text-amber-800">
+                  <div className="text-xs opacity-70">Không khớp / lỗi</div>
+                  <div className="text-lg font-semibold">{(syncDetail.summary?.unknown || 0) + (syncDetail.summary?.rejected || 0)}</div>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-500">Đang chọn {selectedEventKeys.length} event để đồng bộ.</p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setSelectedSyncEvents(Object.fromEntries((syncDetail.events || []).map((event) => [event.eventKey, event.status === "matched"])))}
+                  >
+                    Chọn event hợp lệ
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelectedSyncEvents(Object.fromEntries((syncDetail.events || []).map((event) => [event.eventKey, false])))}
+                  >
+                    Bỏ chọn hết
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-3 max-h-[52vh] overflow-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
+                    <tr>
+                      <th className="w-10 px-3 py-2"></th>
+                      <th className="px-3 py-2">Thời gian</th>
+                      <th className="px-3 py-2">Tên DAH</th>
+                      <th className="px-3 py-2">Khớp vào hệ thống</th>
+                      <th className="px-3 py-2">Trạng thái</th>
+                      <th className="px-3 py-2 text-right">Similarity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(syncDetail.events || []).map((event) => (
+                      <tr key={event.eventKey} className="border-t border-slate-100">
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-navy-900"
+                            disabled={event.status !== "matched"}
+                            checked={!!selectedSyncEvents[event.eventKey]}
+                            onChange={(change) => setSelectedSyncEvents({ ...selectedSyncEvents, [event.eventKey]: change.target.checked })}
+                          />
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{dateTime(event.eventTime)}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-slate-800">{event.name || "—"}</div>
+                          <div className="text-xs text-slate-400">UID: {event.dahUid || "—"} · Card: {event.mjCardNo || "—"}</div>
+                        </td>
+                        <td className="px-3 py-2">
+                          {event.customerName && <div>Hội viên: {event.customerName}</div>}
+                          {event.employeeName && <div>Nhân viên: {event.employeeName}</div>}
+                          {!event.customerName && !event.employeeName && <span className="text-slate-400">Không khớp tên</span>}
+                        </td>
+                        <td className="px-3 py-2">
+                          {event.status === "matched" && <span className="text-emerald-700">Hợp lệ</span>}
+                          {event.status === "duplicate" && <span className="text-slate-500">Đã có trong hệ thống</span>}
+                          {event.status === "unknown" && <span className="text-amber-700">Không khớp</span>}
+                          {event.status === "rejected" && <span className="text-red-700">DAH báo fail</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right">{event.similarity ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="form-actions">
+          <Button variant="danger" loading={rejectDahSync.isPending} onClick={() => rejectDahSync.mutate(syncModal.id)}>
+            <X size={14} />
+            Bỏ batch này
+          </Button>
+          <Button data-modal-close variant="secondary" onClick={() => setSyncModal(null)}>
+            Đóng
+          </Button>
+          <Button
+            loading={approveDahSync.isPending}
+            disabled={!selectedEventKeys.length}
+            onClick={() => approveDahSync.mutate({ batchId: syncModal.id, eventKeys: selectedEventKeys })}
+          >
+            <Check size={14} />
+            Duyệt & đồng bộ
+          </Button>
+        </div>
+      </Modal>
       <Modal
         open={!!titleModal}
         onClose={() => setTitleModal(null)}

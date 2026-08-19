@@ -78,6 +78,43 @@ def local_agent_sync_request(
     return dah_local_sync_service.create_sync_job(payload, actor=user)
 
 
+@router.get("/api/dah/local-agent/pending-batches", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_pending_batches():
+    return dah_local_sync_service.pending_batches()
+
+
+@router.get("/api/dah/local-agent/pending-batches/{batch_id}", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_pending_batch(batch_id: str):
+    result = dah_local_sync_service.pending_batch(batch_id)
+    if not result.get("item"):
+        raise HTTPException(404, "Không tìm thấy batch sync đang chờ duyệt.")
+    return result
+
+
+@router.post("/api/dah/local-agent/pending-batches/{batch_id}/approve", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_approve_batch(
+    batch_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "manager")),
+):
+    result = dah_local_sync_service.approve_batch(db, batch_id, payload, actor=user)
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("error") or "Không tìm thấy batch sync đang chờ duyệt.")
+    return result
+
+
+@router.post("/api/dah/local-agent/pending-batches/{batch_id}/reject", dependencies=[Depends(require_roles("admin", "manager"))])
+def local_agent_reject_batch(
+    batch_id: str,
+    user: User = Depends(require_roles("admin", "manager")),
+):
+    result = dah_local_sync_service.reject_batch(batch_id, actor=user)
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("error") or "Không tìm thấy batch sync đang chờ duyệt.")
+    return result
+
+
 @router.post("/api/dah/local-agent/heartbeat", dependencies=[Depends(_require_agent_token)])
 async def local_agent_heartbeat(request: Request):
     return dah_local_sync_service.heartbeat(await _payload(request))

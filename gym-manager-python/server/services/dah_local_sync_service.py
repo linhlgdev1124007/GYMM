@@ -33,6 +33,7 @@ _agent_state: dict = {
     "lastError": None,
     "lastJobId": None,
 }
+_pending_batches: dict[str, dict] = {}
 
 
 def _clean(value, limit: int = 255) -> str | None:
@@ -72,6 +73,25 @@ def _job_public(row: dict) -> dict:
     }
 
 
+def _batch_public(row: dict, include_events: bool = False) -> dict:
+    result = {
+        "id": row["id"],
+        "jobId": row.get("jobId"),
+        "agentId": row.get("agentId"),
+        "deviceCode": row.get("deviceCode"),
+        "dahBaseUrl": row.get("dahBaseUrl"),
+        "createdAt": row.get("createdAt"),
+        "range": row.get("range"),
+        "status": row.get("status"),
+        "totalCount": row.get("totalCount"),
+        "eventCount": len(row.get("events") or []),
+        "summary": row.get("summary"),
+    }
+    if include_events:
+        result["events"] = row.get("events") or []
+    return result
+
+
 def _prune_jobs(now: datetime | None = None) -> None:
     now = now or utc_now()
     expired = []
@@ -109,8 +129,23 @@ def status() -> dict:
         return {
             "agent": state,
             "pendingCount": len(_pending),
+            "pendingBatchCount": len([row for row in _pending_batches.values() if row.get("status") == "pending"]),
             "recentJobs": [_job_public(row) for row in recent],
         }
+
+
+def pending_batches() -> dict:
+    with _lock:
+        rows = sorted(_pending_batches.values(), key=lambda row: row.get("createdAt") or "", reverse=True)
+        return {"items": [_batch_public(row) for row in rows if row.get("status") == "pending"]}
+
+
+def pending_batch(batch_id: str) -> dict:
+    with _lock:
+        row = _pending_batches.get(batch_id)
+        if not row or row.get("status") != "pending":
+            return {"item": None}
+        return {"item": _batch_public(row, include_events=True)}
 
 
 def create_sync_job(payload: dict | None = None, actor=None) -> dict:
@@ -362,7 +397,66 @@ def _relink_employee_events(db: Session, employee_id: int, work_date: date) -> i
     return changed
 
 
-def import_agent_result(db: Session, payload: dict) -> dict:
+def preview_agent_result(db: Session, payload: dict) -> dict:
+    if not payload.get("ok", True):
+        return {"ok": False, "imported": 0, "duplicates": 0, "unknown": 0, "error": _clean(payload.get("error"), 255)}
+    events = payload.get("events") if isinstance(payload.get("events"), list) else []
+    if len(events) > MAX_EVENTS_PER_RESULT:
+        events = events[:MAX_EVENTS_PER_RESULT]
+    by_name = _people_by_name(db)
+    items = []
+    duplicates = unknown = rejected = matched = 0
+
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        key = _event_key(payload, item)
+        if db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first():
+            duplicates += 1
+            duplicate = True
+        else:
+            duplicate = False
+        event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
+        verify_status = dah_service._int(item.get("status"))
+        people = by_name.get(_name_key(item.get("name")) or "", [])
+        customer = next((person.customer for person in people if person.customer), None)
+        employee = next((person.employee for person in people if person.employee), None)
+        status = "duplicate" if duplicate else "matched" if verify_status == 1 and (customer or employee) else "unknown"
+        if verify_status not in (None, 1):
+            status = "rejected"
+            rejected += 1
+        elif status == "unknown":
+            unknown += 1
+        elif status == "matched":
+            matched += 1
+        items.append({
+            "eventKey": key,
+            "eventTime": event_time.isoformat(timespec="seconds"),
+            "name": _clean(item.get("name"), 160),
+            "status": status,
+            "verifyStatus": verify_status,
+            "similarity": dah_service._float(item.get("similarity")),
+            "customerId": customer.id if customer else None,
+            "customerName": customer.person.display_name if customer and customer.person else None,
+            "employeeId": employee.id if employee else None,
+            "employeeName": employee.person.display_name if employee and employee.person else None,
+            "dahUid": _clean(item.get("dahUid"), 80),
+            "mjCardNo": _clean(item.get("mjCardNo"), 80),
+            "willSync": status == "matched",
+            "raw": item,
+        })
+    return {
+        "ok": True,
+        "received": len(events),
+        "matched": matched,
+        "duplicates": duplicates,
+        "unknown": unknown,
+        "rejected": rejected,
+        "events": items,
+    }
+
+
+def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str] | None = None) -> dict:
     if not payload.get("ok", True):
         return {"ok": False, "imported": 0, "duplicates": 0, "unknown": 0, "error": _clean(payload.get("error"), 255)}
     events = payload.get("events") if isinstance(payload.get("events"), list) else []
@@ -372,12 +466,15 @@ def import_agent_result(db: Session, payload: dict) -> dict:
     by_name = _people_by_name(db)
     affected_customers: set[tuple[int, date]] = set()
     affected_employees: set[tuple[int, date]] = set()
-    imported = duplicates = unknown = rejected = 0
+    imported = duplicates = unknown = rejected = skipped = 0
 
     for item in events:
         if not isinstance(item, dict):
             continue
         key = _event_key(payload, item)
+        if selected_event_keys is not None and key not in selected_event_keys:
+            skipped += 1
+            continue
         if db.query(DahWebhookEvent).filter(DahWebhookEvent.event_key == key).first():
             duplicates += 1
             continue
@@ -432,15 +529,32 @@ def import_agent_result(db: Session, payload: dict) -> dict:
         "duplicates": duplicates,
         "unknown": unknown,
         "rejected": rejected,
+        "skipped": skipped,
         "relinkedMembers": relinked_members,
         "relinkedEmployees": relinked_employees,
     }
 
 
 def record_result(db: Session, job_id: str, payload: dict) -> dict:
-    result = import_agent_result(db, payload)
+    preview = preview_agent_result(db, payload)
     now = utc_now()
+    batch_id = uuid4().hex
+    batch = {
+        "id": batch_id,
+        "jobId": job_id,
+        "agentId": _clean(payload.get("agentId"), 80),
+        "deviceCode": _clean(payload.get("deviceCode"), 80),
+        "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
+        "createdAt": utc_iso(now),
+        "range": payload.get("range"),
+        "status": "pending" if preview.get("ok") else "failed",
+        "totalCount": payload.get("totalCount"),
+        "events": preview.get("events") or [],
+        "rawPayload": payload,
+        "summary": {key: preview.get(key, 0) for key in ("received", "matched", "duplicates", "unknown", "rejected")},
+    }
     with _lock:
+        _pending_batches[batch_id] = batch
         job = _jobs.get(job_id)
         if not job:
             job = {
@@ -452,18 +566,57 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             }
             _jobs[job_id] = job
         job.update({
-            "status": "completed" if result.get("ok") else "failed",
+            "status": "pending_approval" if preview.get("ok") else "failed",
             "completedAt": utc_iso(now),
             "agentId": _clean(payload.get("agentId"), 80) or job.get("agentId"),
             "range": payload.get("range") or job.get("range"),
-            "result": result,
-            "error": result.get("error"),
+            "result": {**batch["summary"], "batchId": batch_id, "pendingApproval": preview.get("ok")},
+            "error": preview.get("error"),
         })
         _agent_state.update({
             "agentId": job.get("agentId") or _agent_state.get("agentId"),
             "status": "online",
             "lastSeenAt": utc_iso(now),
             "lastJobId": job_id,
-            "lastError": result.get("error"),
+            "lastError": preview.get("error"),
         })
-        return _job_public(job)
+        return {**_job_public(job), "batch": _batch_public(batch)}
+
+
+def approve_batch(db: Session, batch_id: str, payload: dict | None = None, actor=None) -> dict:
+    payload = payload or {}
+    with _lock:
+        batch = _pending_batches.get(batch_id)
+        if not batch or batch.get("status") != "pending":
+            return {"ok": False, "error": "Không tìm thấy batch đang chờ duyệt."}
+        selected = payload.get("eventKeys")
+        selected_keys = {str(key) for key in selected} if isinstance(selected, list) else {
+            row["eventKey"] for row in batch.get("events") or [] if row.get("willSync")
+        }
+        raw_payload = dict(batch["rawPayload"])
+    result = import_agent_result(db, raw_payload, selected_event_keys=selected_keys)
+    with _lock:
+        batch["status"] = "approved"
+        batch["approvedAt"] = utc_iso(utc_now())
+        batch["approvedByUserId"] = getattr(actor, "id", None)
+        batch["commitResult"] = result
+        job = _jobs.get(batch.get("jobId"))
+        if job:
+            job["status"] = "completed"
+            job["result"] = {**result, "batchId": batch_id}
+    return {"ok": True, "batch": _batch_public(batch), "result": result}
+
+
+def reject_batch(batch_id: str, actor=None) -> dict:
+    with _lock:
+        batch = _pending_batches.get(batch_id)
+        if not batch or batch.get("status") != "pending":
+            return {"ok": False, "error": "Không tìm thấy batch đang chờ duyệt."}
+        batch["status"] = "rejected"
+        batch["rejectedAt"] = utc_iso(utc_now())
+        batch["rejectedByUserId"] = getattr(actor, "id", None)
+        job = _jobs.get(batch.get("jobId"))
+        if job:
+            job["status"] = "rejected"
+            job["result"] = {"batchId": batch_id, "rejected": True}
+        return {"ok": True, "batch": _batch_public(batch)}
