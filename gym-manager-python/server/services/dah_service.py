@@ -70,6 +70,44 @@ def _identity_query(db: Session, person_uuid: str | None, person_id: str | None)
     return None
 
 
+def _merge_person_id_alias(db: Session, identity: DahCustomerIdentity, person_id: str | None) -> DahCustomerIdentity:
+    if not person_id or not identity or identity.person_uuid == _synthetic_person_uuid(person_id):
+        return identity
+    alias = (
+        db.query(DahCustomerIdentity)
+        .filter(
+            DahCustomerIdentity.person_id == person_id,
+            DahCustomerIdentity.person_uuid == _synthetic_person_uuid(person_id),
+            DahCustomerIdentity.id != identity.id,
+        )
+        .order_by(DahCustomerIdentity.id.desc())
+        .first()
+    )
+    if not alias:
+        return identity
+    customer_conflict = (
+        alias.customer_id
+        and identity.customer_id
+        and alias.customer_id != identity.customer_id
+    )
+    employee_conflict = (
+        alias.employee_id
+        and identity.employee_id
+        and alias.employee_id != identity.employee_id
+    )
+    if customer_conflict or employee_conflict:
+        return identity
+    identity.customer_id = identity.customer_id or alias.customer_id
+    identity.employee_id = identity.employee_id or alias.employee_id
+    identity.device_id = identity.device_id or alias.device_id
+    identity.face_name = identity.face_name or alias.face_name
+    identity.rfid_card = identity.rfid_card or alias.rfid_card
+    identity.last_seen_at = identity.last_seen_at or alias.last_seen_at
+    db.delete(alias)
+    db.flush()
+    return identity
+
+
 def _int(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
@@ -222,13 +260,18 @@ def _identity_for_dah_key(db: Session, device: Device | None, info: dict, event_
             ).first()
             if not existing_uuid:
                 identity.person_uuid = person_uuid
+        identity = _merge_person_id_alias(db, identity, person_id)
         identity.person_id = person_id or identity.person_id
         identity.face_name = face_name or identity.face_name
         identity.rfid_card = rfid or identity.rfid_card
         identity.last_seen_at = event_time or utc_now()
         customer = db.get(Customer, identity.customer_id) if identity.customer_id else None
         employee = db.get(Employee, identity.employee_id) if identity.employee_id else None
-        if customer and (not customer.person_uuid or customer.person_uuid == previous_identity_key):
+        if customer and (
+            not customer.person_uuid
+            or customer.person_uuid == previous_identity_key
+            or customer.person_uuid == _synthetic_person_uuid(person_id)
+        ):
             customer.person_uuid = identity.person_uuid
         return identity, customer, employee, False
 

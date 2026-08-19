@@ -138,6 +138,23 @@ def test_dah_verify_maps_existing_customer_uuid_updates_avatar_and_toggles(tmp_p
         db.close()
 
 
+def test_dah_webhook_real_uuid_persists_person_id_on_identity(tmp_path):
+    from server.models import DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid="732")
+
+        result = dah_service.verify(db, verify_payload_for_uuid_and_person_id("732", "812", "2026-08-11T09:00:00", "uuid-id"))
+
+        assert result["status"] == "processed"
+        identity = db.query(DahCustomerIdentity).filter_by(customer_id=customer_id, person_uuid="732").one()
+        assert identity.person_id == "812"
+    finally:
+        db.close()
+
+
 def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_path):
     from server.models import AttendanceSession
     from server.services import dah_local_sync_service, dah_service
@@ -338,6 +355,34 @@ def test_dah_person_id_fallback_upgrades_to_real_uuid_without_stale_customer_key
         assert identity.person_uuid == "real-uuid-1128"
         assert identity.person_id == "1128"
         assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+    finally:
+        db.close()
+
+
+def test_dah_webhook_merges_stale_person_id_alias_into_real_uuid(tmp_path):
+    from server.models import Customer, DahCustomerIdentity
+    from server.services import dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid="person_id:1128")
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="person_id:1128", person_id="1128"))
+        db.add(DahCustomerIdentity(person_uuid="real-uuid-1128"))
+        db.commit()
+
+        result = dah_service.verify(
+            db,
+            verify_payload_for_uuid_and_person_id("real-uuid-1128", "1128", "2026-08-11T10:30:00", "merge-alias"),
+        )
+        customer = db.get(Customer, customer_id)
+        identities = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_id == "1128").all()
+
+        assert result["status"] == "processed"
+        assert result["memberId"] == customer_id
+        assert customer.person_uuid == "real-uuid-1128"
+        assert len(identities) == 1
+        assert identities[0].person_uuid == "real-uuid-1128"
+        assert identities[0].customer_id == customer_id
     finally:
         db.close()
 
