@@ -17,6 +17,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 CSRF_COOKIE = "gym_csrf"
 CSRF_HEADER = "x-csrf-token"
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+TOKEN_AUTH_PATH_PREFIXES = ("/api/dah/local-agent/",)
 
 
 def new_csrf_token() -> str:
@@ -147,7 +148,8 @@ class RequestSecurityMiddleware:
             await response(scope, receive, send)
             return
 
-        if request.method not in SAFE_METHODS:
+        token_authenticated_path = any(path.startswith(prefix) for prefix in TOKEN_AUTH_PATH_PREFIXES)
+        if request.method not in SAFE_METHODS and not token_authenticated_path:
             origin = _source_origin(request)
             if not origin or origin not in settings.allowed_origins:
                 response = JSONResponse(

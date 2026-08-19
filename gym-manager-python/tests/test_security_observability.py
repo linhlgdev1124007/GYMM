@@ -20,6 +20,7 @@ os.environ.update({
     "GYM_MAX_REQUEST_BYTES": "1048576",
     "GYM_MAX_SESSIONS_PER_USER": "3",
     "GYM_METRICS_TOKEN": "m" * 40,
+    "GYM_DAH_AGENT_TOKEN": "d" * 40,
 })
 
 import pytest
@@ -117,6 +118,16 @@ def test_cross_site_mutation_and_oversized_request_are_rejected(client):
         headers={**ORIGIN, "Content-Type": "application/json", "Content-Length": "1048577", "X-Forwarded-For": "10.0.0.9"},
     )
     assert oversized.status_code == 413
+
+
+def test_dah_local_agent_post_uses_bearer_token_not_browser_origin(client):
+    response = client.post(
+        "/api/dah/local-agent/heartbeat",
+        json={"agentId": "test-agent"},
+        headers={"Authorization": f"Bearer {'d' * 40}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["agent"]["agentId"] == "test-agent"
 
 
 def test_login_rate_limit_returns_retry_after(client):
