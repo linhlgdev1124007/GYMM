@@ -174,6 +174,7 @@ def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_pa
             "dahBaseUrl": "http://192.168.1.60:80",
             "events": [{
                 "dahUid": "early",
+                "dahPersonUid": "812",
                 "eventTime": "2026-08-11T07:00:00",
                 "rawEventTime": "2026-08-11/07:00:00",
                 "status": 1,
@@ -194,12 +195,14 @@ def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_pa
 
 
 def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
-    from server.models import AttendanceSession
+    from server.models import AttendanceSession, DahCustomerIdentity
     from server.services import dah_local_sync_service
 
     db = make_session(tmp_path)
     try:
         customer_id = seed_member(db)
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="dah_profile:0/0/1", person_id="812"))
+        db.commit()
         payload = {
             "ok": True,
             "agentId": "test-agent",
@@ -207,6 +210,8 @@ def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
             "deviceCode": "DAH-192.168.1.60",
             "events": [{
                 "dahUid": "approval-1",
+                "dahPersonUid": "812",
+                "profileKey": "dah_profile:0/0/1",
                 "eventTime": "2026-08-11T07:00:00",
                 "status": 1,
                 "name": "TRAN NGUYEN KHAI HOAN",
@@ -226,12 +231,15 @@ def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
         db.close()
 
 
-def test_dah_local_sync_matches_short_dah_name_by_whitelist_phone(tmp_path):
+def test_dah_local_sync_matches_by_person_id_only(tmp_path):
+    from server.models import DahCustomerIdentity
     from server.services import dah_local_sync_service
 
     db = make_session(tmp_path)
     try:
         customer_id = seed_member(db)
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="dah_profile:0/0/75366400", person_id="1149"))
+        db.commit()
         preview = dah_local_sync_service.preview_agent_result(db, {
             "ok": True,
             "deviceCode": "DAH-192.168.1.60",
@@ -250,7 +258,7 @@ def test_dah_local_sync_matches_short_dah_name_by_whitelist_phone(tmp_path):
         event = preview["events"][0]
         assert preview["matched"] == 1
         assert event["customerId"] == customer_id
-        assert event["matchSource"] == "phone"
+        assert event["matchSource"] == "person_id"
     finally:
         db.close()
 
@@ -708,7 +716,7 @@ def test_employee_dah_attendance_uses_shift_cutoff_for_close_shifts(tmp_path):
 
 
 def test_dah_local_sync_employee_event_rebuilds_shift_attendance(tmp_path):
-    from server.models import AttendanceSession, Employee, EmployeeShiftSchedule, Person
+    from server.models import AttendanceSession, DahCustomerIdentity, Employee, EmployeeShiftSchedule, Person
     from server.services import dah_local_sync_service
 
     db = make_session(tmp_path)
@@ -719,6 +727,7 @@ def test_dah_local_sync_employee_event_rebuilds_shift_attendance(tmp_path):
         employee = Employee(person_id=person.id, employee_code="EMP-00091", job_title="Coach", status="active")
         db.add(employee)
         db.flush()
+        db.add(DahCustomerIdentity(employee_id=employee.id, person_uuid="dah_profile:0/0/90091", person_id="90091"))
         db.add(EmployeeShiftSchedule(
             employee_id=employee.id,
             work_date=date(2026, 8, 11),
@@ -733,8 +742,8 @@ def test_dah_local_sync_employee_event_rebuilds_shift_attendance(tmp_path):
             "jobId": "test-job",
             "deviceCode": "DAH-192.168.1.60",
             "events": [
-                {"dahUid": "coach-1", "eventTime": "2026-08-11T10:00:00", "status": 1, "name": "Local Sync Coach"},
-                {"dahUid": "coach-2", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "Local Sync Coach"},
+                {"dahUid": "coach-1", "dahPersonUid": "90091", "profileKey": "dah_profile:0/0/90091", "eventTime": "2026-08-11T10:00:00", "status": 1, "name": "Local Sync Coach"},
+                {"dahUid": "coach-2", "dahPersonUid": "90091", "profileKey": "dah_profile:0/0/90091", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "Local Sync Coach"},
             ],
         })
 

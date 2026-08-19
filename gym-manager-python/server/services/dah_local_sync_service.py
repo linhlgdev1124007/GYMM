@@ -11,7 +11,7 @@ from uuid import uuid4
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, Person
+from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee
 from ..timeutils import utc_iso, utc_now
 from . import dah_service
 from .employee_shift_attendance import rebuild_employee_attendance_for_day
@@ -205,11 +205,6 @@ def _name_key(value: str | None) -> str | None:
     return " ".join(no_marks.lower().split())
 
 
-def _phone_key(value: str | None) -> str | None:
-    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-    return digits[-9:] if len(digits) >= 9 else digits or None
-
-
 def _profile_key(event: dict) -> str | None:
     direct = _clean(event.get("profileKey"), 120)
     if direct:
@@ -223,62 +218,23 @@ def _profile_key(event: dict) -> str | None:
         return None
 
 
-def _people_by_name(db: Session) -> dict[str, list[Person]]:
-    rows = (
-        db.query(Person)
-        .options(joinedload(Person.customer), joinedload(Person.employee))
-        .filter(Person.status == "active")
-        .all()
-    )
-    by_name: dict[str, list[Person]] = {}
-    for person in rows:
-        key = _name_key(person.display_name)
-        if key:
-            by_name.setdefault(key, []).append(person)
-    return by_name
-
-
-def _people_by_phone(db: Session) -> dict[str, list[Person]]:
-    rows = (
-        db.query(Person)
-        .options(joinedload(Person.customer), joinedload(Person.employee))
-        .filter(Person.status == "active", Person.phone.is_not(None))
-        .all()
-    )
-    by_phone: dict[str, list[Person]] = {}
-    for person in rows:
-        key = _phone_key(person.phone)
-        if key:
-            by_phone.setdefault(key, []).append(person)
-    return by_phone
-
-
 def _identity_match(db: Session, event: dict):
-    profile = _profile_key(event)
     dah_person_uid = _clean(event.get("dahPersonUid"), 80)
-    filters = []
-    if profile:
-        filters.append(DahCustomerIdentity.person_uuid == profile)
-    if dah_person_uid:
-        filters.append(DahCustomerIdentity.person_id == dah_person_uid)
-    if not filters:
+    if not dah_person_uid:
         return None
-    return db.query(DahCustomerIdentity).filter(or_(*filters)).order_by(DahCustomerIdentity.id.desc()).first()
+    return (
+        db.query(DahCustomerIdentity)
+        .filter(DahCustomerIdentity.person_id == dah_person_uid)
+        .order_by(DahCustomerIdentity.id.desc())
+        .first()
+    )
 
 
-def _match_people(db: Session, event: dict, by_name: dict[str, list[Person]], by_phone: dict[str, list[Person]]):
+def _match_people(db: Session, event: dict):
     identity = _identity_match(db, event)
     if identity:
-        return identity.customer, identity.employee, "identity"
-    phone = _phone_key(event.get("registeredPhone") or event.get("phone"))
-    people = by_phone.get(phone, []) if phone else []
-    source = "phone" if people else None
-    if not people:
-        people = by_name.get(_name_key(event.get("registeredName") or event.get("name")) or "", [])
-        source = "name" if people else None
-    customer = next((person.customer for person in people if person.customer), None)
-    employee = next((person.employee for person in people if person.employee), None)
-    return customer, employee, source
+        return identity.customer, identity.employee, "person_id"
+    return None, None, None
 
 
 def _upsert_identity_for_match(db: Session, event: dict, device: Device | None, customer: Customer | None, employee: Employee | None, event_time: datetime) -> None:
@@ -487,8 +443,6 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
     events = payload.get("events") if isinstance(payload.get("events"), list) else []
     if len(events) > MAX_EVENTS_PER_RESULT:
         events = events[:MAX_EVENTS_PER_RESULT]
-    by_name = _people_by_name(db)
-    by_phone = _people_by_phone(db)
     items = []
     duplicates = unknown = rejected = matched = 0
 
@@ -503,7 +457,7 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
             duplicate = False
         event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
-        customer, employee, match_source = _match_people(db, item, by_name, by_phone)
+        customer, employee, match_source = _match_people(db, item)
         status = "duplicate" if duplicate else "matched" if verify_status == 1 and (customer or employee) else "unknown"
         if verify_status not in (None, 1):
             status = "rejected"
@@ -551,8 +505,6 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
     if len(events) > MAX_EVENTS_PER_RESULT:
         events = events[:MAX_EVENTS_PER_RESULT]
     device = _device(db, payload)
-    by_name = _people_by_name(db)
-    by_phone = _people_by_phone(db)
     affected_customers: set[tuple[int, date]] = set()
     affected_employees: set[tuple[int, date]] = set()
     imported = duplicates = unknown = rejected = skipped = 0
@@ -570,10 +522,10 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
         event_time = _parse_datetime(item.get("eventTime") or item.get("rawEventTime")) or utc_now()
         verify_status = dah_service._int(item.get("status"))
         similarity = dah_service._float(item.get("similarity"))
-        customer, employee, match_source = _match_people(db, item, by_name, by_phone)
+        customer, employee, match_source = _match_people(db, item)
         status = "processed" if verify_status == 1 and (customer or employee) else "unknown"
         action = "local_sync" if status == "processed" else "unknown_identity"
-        note = "Đã nhận từ DAH local agent." if status == "processed" else "Không khớp tên với hội viên/nhân viên."
+        note = "Đã nhận từ DAH local agent." if status == "processed" else "Không khớp person id với hội viên/nhân viên."
         if verify_status not in (None, 1):
             status = "rejected"
             action = "verify_failed"
