@@ -47,6 +47,7 @@ services:
       GYM_ALLOWED_ORIGINS: ${GYM_ALLOWED_ORIGINS:-http://localhost:3333,http://127.0.0.1:3333}
       GYM_TRUST_PROXY_HEADERS: ${GYM_TRUST_PROXY_HEADERS:-0}
       GYM_METRICS_TOKEN: ${GYM_METRICS_TOKEN:-docker-local-metrics-token-change-me-2026}
+      GYM_DAH_AGENT_TOKEN: ${GYM_DAH_AGENT_TOKEN:-}
       GYM_LOG_LEVEL: ${GYM_LOG_LEVEL:-INFO}
       TZ: Asia/Ho_Chi_Minh
     ports:
