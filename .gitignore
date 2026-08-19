@@ -2,3 +2,7 @@ data/
 gym-manager-python/temp/
 test.js
 get-customer.js
+*.har
+__pycache__/
+extension/build/
+extension/*.spec
