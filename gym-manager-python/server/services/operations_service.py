@@ -832,6 +832,12 @@ def employee_shift_report(
         filtered_rows.sort(key=lambda row: (-row["earlyCheckoutMinutes"], row["workDate"], row["employeeName"] or ""))
     elif sort == "employee":
         filtered_rows.sort(key=lambda row: (row["employeeName"] or "", row["workDate"], row["startTime"]))
+    elif sort == "employee_desc":
+        filtered_rows.sort(key=lambda row: (row["employeeName"] or "", row["workDate"], row["startTime"]), reverse=True)
+    elif sort == "planned_asc":
+        filtered_rows.sort(key=lambda row: (row["workDate"], row["startTime"], row["employeeName"] or ""))
+    elif sort == "planned_desc":
+        filtered_rows.sort(key=lambda row: (row["workDate"], row["startTime"], row["employeeName"] or ""), reverse=True)
     elif sort == "date_desc":
         filtered_rows.sort(key=lambda row: (row["workDate"], row["startTime"], row["employeeName"] or ""), reverse=True)
     else:

@@ -500,6 +500,71 @@ def test_employee_shift_report_normalizes_status_and_filters_flat_rows(tmp_path)
         db.close()
 
 
+def test_employee_shift_report_sorts_by_employee_and_planned_time(tmp_path):
+    from server.models import Employee, EmployeeShiftSchedule, Person
+    from server.services.operations_service import employee_shift_report
+
+    db = make_session(tmp_path)
+    try:
+        people = [
+            Person(display_name="Bao Sale", phone="0900000121", status="active"),
+            Person(display_name="An Coach", phone="0900000122", status="active"),
+            Person(display_name="Chi Reception", phone="0900000123", status="active"),
+        ]
+        db.add_all(people)
+        db.flush()
+        employees = [
+            Employee(person_id=people[0].id, employee_code="EMP-00121", job_title="Sale", status="active"),
+            Employee(person_id=people[1].id, employee_code="EMP-00122", job_title="Coach", status="active"),
+            Employee(person_id=people[2].id, employee_code="EMP-00123", job_title="Reception", status="active"),
+        ]
+        db.add_all(employees)
+        db.flush()
+        db.add_all([
+            EmployeeShiftSchedule(
+                employee_id=employees[0].id,
+                work_date=date(2026, 8, 17),
+                starts_at=datetime(2026, 8, 17, 14, 0),
+                ends_at=datetime(2026, 8, 17, 18, 0),
+            ),
+            EmployeeShiftSchedule(
+                employee_id=employees[1].id,
+                work_date=date(2026, 8, 17),
+                starts_at=datetime(2026, 8, 17, 8, 0),
+                ends_at=datetime(2026, 8, 17, 12, 0),
+            ),
+            EmployeeShiftSchedule(
+                employee_id=employees[2].id,
+                work_date=date(2026, 8, 17),
+                starts_at=datetime(2026, 8, 17, 19, 0),
+                ends_at=datetime(2026, 8, 17, 22, 0),
+            ),
+        ])
+        db.commit()
+
+        by_employee_desc = employee_shift_report(db, range_type="date", day="2026-08-17", sort="employee_desc")
+        by_planned_asc = employee_shift_report(db, range_type="date", day="2026-08-17", sort="planned_asc")
+        by_planned_desc = employee_shift_report(db, range_type="date", day="2026-08-17", sort="planned_desc")
+
+        assert [row["employeeName"] for row in by_employee_desc["rows"]] == [
+            "Chi Reception",
+            "Bao Sale",
+            "An Coach",
+        ]
+        assert [(row["employeeName"], row["startTime"]) for row in by_planned_asc["rows"]] == [
+            ("An Coach", "08:00"),
+            ("Bao Sale", "14:00"),
+            ("Chi Reception", "19:00"),
+        ]
+        assert [(row["employeeName"], row["startTime"]) for row in by_planned_desc["rows"]] == [
+            ("Chi Reception", "19:00"),
+            ("Bao Sale", "14:00"),
+            ("An Coach", "08:00"),
+        ]
+    finally:
+        db.close()
+
+
 def test_employee_shift_report_uses_approved_override(tmp_path):
     from server.models import AttendanceSession, Employee, EmployeeShiftSchedule, Person
     from server.services.operations_service import approve_employee_shift_override, employee_shift_report
