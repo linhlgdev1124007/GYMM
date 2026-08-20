@@ -153,6 +153,20 @@ function shiftEventLabel(event) {
   return `${timeOnly(event.eventTime)} · #${event.id} · ${event.action || "DAH event"} · ${event.status || "received"}`;
 }
 
+function DahEventList({ events = [] }) {
+  if (!events.length) return <span className="text-xs text-slate-400">—</span>;
+  return (
+    <span className="shift-dah-events" title={events.map(shiftEventLabel).join("\n")}>
+      {events.map((event) => (
+        <span key={event.id}>
+          <strong>{timeOnly(event.eventTime)}</strong>
+          <small>{event.action || "DAH"}</small>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function checkStatusClass(status) {
   if (status === "late" || status === "early_checkout") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "on_time") return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -195,12 +209,14 @@ function downloadAttendanceCsv(data) {
         employeeCode: employee.employeeCode,
         employeeName: employee.employeeName,
         title: employee.title,
+        dahEvents: day.events,
         dayEvents: day.events,
       }))));
   const csv = [
-    "Ngày,Mã nhân viên,Họ tên,Chức vụ,Ca tính công,Ca gốc,Đã duyệt đổi ca,Lý do đổi ca,Check-in,Trạng thái check-in,Check-out,Trạng thái check-out,Trạng thái tổng,Trễ phút,Checkout sớm phút,Event rà soát",
+    "Ngày,Mã nhân viên,Họ tên,Chức vụ,Ca tính công,Ca gốc,Đã duyệt đổi ca,Lý do đổi ca,Check-in,Trạng thái check-in,Check-out,Trạng thái check-out,Trạng thái tổng,Trễ phút,Checkout sớm phút,Lịch DAH,Event rà soát",
     ...rows.map((row) => {
-      const events = (row.events?.length ? row.events : row.dayEvents || []).map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`).join(" | ");
+      const dahEvents = (row.dahEvents || row.dayEvents || []).map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`).join(" | ");
+      const events = (row.events || []).map((event) => `${timeOnly(event.eventTime)} ${event.action || "event"} ${event.status}`).join(" | ");
       return [
         row.workDate, row.employeeCode, row.employeeName, row.title,
         `${row.startTime} - ${row.endTime}`,
@@ -209,7 +225,7 @@ function downloadAttendanceCsv(data) {
         row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("vi-VN") : "",
         row.checkinStatusLabel, row.checkedOutAt ? new Date(row.checkedOutAt).toLocaleString("vi-VN") : "",
         row.checkoutStatusLabel, row.displayStatusLabel || row.statusLabel,
-        row.lateMinutes || "", row.earlyCheckoutMinutes || "", events,
+        row.lateMinutes || "", row.earlyCheckoutMinutes || "", dahEvents, events,
       ].map(csvValue).join(",");
     }),
   ].join("\n");
@@ -1761,6 +1777,7 @@ export function TrainersPage() {
                   { key: "workDate", label: "Ngày / ca", sortable: false, render: (row) => <span className="shift-date-cell"><strong>{dateLabel(row.workDate)}</strong><small>{row.shiftKind === "morning" ? "Ca sáng" : row.shiftKind === "afternoon" ? "Ca chiều" : "Ca tối"}</small></span> },
                   { key: "planned", label: "Giờ kế hoạch", sortable: false, render: (row) => <span className="shift-time-cell"><strong>{row.startTime}–{row.endTime}</strong>{row.hasOverride && <small className="override">Đã đổi · gốc {row.originalStartTime}–{row.originalEndTime}</small>}</span> },
                   { key: "actual", label: "Giờ thực tế", sortable: false, render: (row) => <span className="shift-actual-cell"><span><small>Vào</small><strong>{timeOnly(row.checkedInAt)}</strong></span><i /><span><small>Ra</small><strong>{timeOnly(row.checkedOutAt)}</strong></span></span> },
+                  { key: "dahEvents", label: "Lịch DAH", sortable: false, render: (row) => <DahEventList events={row.dahEvents || row.dayEvents || []} /> },
                   { key: "variance", label: "Sai lệch", sortable: false, render: (row) => <span className="shift-variance">{row.lateMinutes > 0 ? <strong className={row.checkinStatus === "late" ? "warning" : "neutral"}>+{row.lateMinutes}p vào</strong> : <small>Đúng giờ vào</small>}{row.earlyCheckoutMinutes > 0 ? <strong className="warning">-{row.earlyCheckoutMinutes}p ra</strong> : row.checkedOutAt ? <small>Đúng giờ ra</small> : null}</span> },
                   { key: "status", label: "Tình trạng", sortable: false, render: (row) => <ReportStatus row={row} /> },
                   { key: "override", label: "Điều chỉnh", sortable: false, render: (row) => row.hasOverride ? <span className="shift-override-label"><CheckCircle2 size={12} />Đã duyệt</span> : <span className="text-xs text-slate-400">—</span> },

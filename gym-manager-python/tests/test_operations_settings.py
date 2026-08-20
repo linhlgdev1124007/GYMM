@@ -389,16 +389,27 @@ def test_employee_shift_report_marks_late_and_not_checked(tmp_path):
         )
         db.add_all([session, early_session])
         db.flush()
-        db.add(DahWebhookEvent(
-            event_key="report-event-1",
-            operator="face",
-            employee_id=employee.id,
-            attendance_session_id=session.id,
-            event_time=datetime(2026, 8, 17, 8, 12),
-            verify_status=1,
-            status="processed",
-            action="employee_shift_sync",
-        ))
+        db.add_all([
+            DahWebhookEvent(
+                event_key="report-event-1",
+                operator="face",
+                employee_id=employee.id,
+                attendance_session_id=session.id,
+                event_time=datetime(2026, 8, 17, 8, 12),
+                verify_status=1,
+                status="processed",
+                action="employee_shift_sync",
+            ),
+            DahWebhookEvent(
+                event_key="report-event-2",
+                operator="face",
+                employee_id=employee.id,
+                event_time=datetime(2026, 8, 17, 15, 45),
+                verify_status=1,
+                status="received",
+                action="VerifyPush",
+            ),
+        ])
         db.commit()
 
         report = employee_shift_report(db, range_type="date", day="2026-08-17")
@@ -410,6 +421,10 @@ def test_employee_shift_report_marks_late_and_not_checked(tmp_path):
         assert [shift["checkoutStatus"] for shift in shifts] == ["on_time", "not_checked", "early_checkout"]
         assert shifts[0]["lateMinutes"] == 12
         assert shifts[0]["events"][0]["attendanceSessionId"] == session.id
+        assert [event["eventTime"] for event in report["rows"][0]["dahEvents"]] == [
+            "2026-08-17T08:12:00",
+            "2026-08-17T15:45:00",
+        ]
         assert shifts[1]["statusLabel"] == "Chưa chấm công"
         assert shifts[1]["checkinStatusLabel"] == "Chưa chấm công"
         assert shifts[2]["checkinStatusLabel"] == "Check-in đúng giờ"

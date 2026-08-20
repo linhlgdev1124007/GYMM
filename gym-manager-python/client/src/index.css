@@ -2120,6 +2120,10 @@ thead .shift-employee-col { z-index: 18; background: #f8fafc; }
 .shift-actual-cell > span small { color: #94a3b8; font-size: 9px; font-weight: 600; text-transform: uppercase; }
 .shift-actual-cell > span strong { margin-top: 1px; color: #0f172a; font-size: 12px; font-variant-numeric: tabular-nums; }
 .shift-actual-cell > i { height: 1px; background: #cbd5e1; }
+.shift-dah-events { display: flex; max-width: 210px; flex-wrap: wrap; gap: 4px; }
+.shift-dah-events > span { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid #dbeafe; border-radius: 4px; background: #eff6ff; color: #1d4ed8; }
+.shift-dah-events strong { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.shift-dah-events small { max-width: 72px; overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .shift-variance { gap: 2px; }
 .shift-variance strong, .shift-variance small { font-size: 10px; font-weight: 600; }
 .shift-variance strong.warning { color: #b45309; }

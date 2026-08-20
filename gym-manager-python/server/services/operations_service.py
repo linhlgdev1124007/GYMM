@@ -796,6 +796,7 @@ def employee_shift_report(
                     "title": employee["title"],
                     "workDate": day_group["workDate"],
                     **shift,
+                    "dahEvents": day_group["events"],
                     "dayEvents": day_group["events"],
                 })
     completed = summary["shifts"] - summary["upcoming"] - sum(1 for row in all_rows if row["displayStatus"] == "awaiting_checkin")
