@@ -1,10 +1,50 @@
-import { FileImage, Paperclip, X } from "lucide-react";
+import { useState } from "react";
+import { ClipboardPaste, FileImage, Paperclip, X } from "lucide-react";
 
 const MAX_FILES = 10;
+const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const IMAGE_EXTENSIONS = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
 
 export function ReceiptPicker({ files = [], onChange, disabled = false }) {
-  const addFiles = (incoming) =>
-    onChange([...files, ...Array.from(incoming)].slice(0, MAX_FILES));
+  const [message, setMessage] = useState("");
+  const addFiles = (incoming, source = "upload") => {
+    const incomingFiles = Array.from(incoming || []).filter((file) =>
+      ACCEPTED_IMAGE_TYPES.has(file.type),
+    );
+    if (!incomingFiles.length) {
+      setMessage(source === "paste" ? "Clipboard không có ảnh JPG, PNG hoặc WebP." : "");
+      return;
+    }
+    const remaining = MAX_FILES - files.length;
+    if (remaining <= 0) {
+      setMessage(`Đã đủ tối đa ${MAX_FILES} ảnh.`);
+      return;
+    }
+    const nextFiles = incomingFiles.slice(0, remaining);
+    onChange([...files, ...nextFiles]);
+    setMessage(source === "paste" ? `Đã dán ${nextFiles.length} ảnh từ clipboard.` : "");
+  };
+  const pasteImages = (event) => {
+    if (disabled) return;
+    const pastedFiles = Array.from(event.clipboardData?.items || [])
+      .filter((item) => item.kind === "file" && ACCEPTED_IMAGE_TYPES.has(item.type))
+      .map((item, index) => {
+        const file = item.getAsFile();
+        if (!file) return null;
+        const extension = IMAGE_EXTENSIONS[file.type] || "png";
+        return new File([file], `receipt-clipboard-${Date.now()}-${index + 1}.${extension}`, {
+          type: file.type,
+          lastModified: Date.now(),
+        });
+      })
+      .filter(Boolean);
+    if (pastedFiles.length) event.preventDefault();
+    addFiles(pastedFiles, "paste");
+  };
   return (
     <div className="receipt-picker">
       <label className={`receipt-dropzone ${disabled ? "disabled" : ""}`}>
@@ -26,6 +66,18 @@ export function ReceiptPicker({ files = [], onChange, disabled = false }) {
           }}
         />
       </label>
+      <div
+        className={`receipt-pastezone ${disabled ? "disabled" : ""}`}
+        tabIndex={disabled ? -1 : 0}
+        onPaste={pasteImages}
+      >
+        <ClipboardPaste size={16} />
+        <span>
+          <strong>Dán ảnh từ clipboard</strong>
+          <small>Click vào đây rồi nhấn Ctrl+V sau khi chụp màn hình hoặc copy ảnh</small>
+        </span>
+      </div>
+      {message && <p className="receipt-picker-message">{message}</p>}
       {!!files.length && (
         <div className="receipt-file-list">
           {files.map((file, index) => (
