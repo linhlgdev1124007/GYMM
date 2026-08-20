@@ -15,7 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import or_, text
 
 from .config import settings
-from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_checkin_speech_config, migrate_checkin_speech_event_reference, migrate_dah_integration, migrate_employee_shift_attendance, migrate_employee_shift_overrides, migrate_mbs_card_code_not_unique, migrate_member_processing, migrate_membership_activation, migrate_membership_freeze_completion, migrate_pt_coaches, migrate_pt_schedule, migrate_remove_branches
+from .database import Base, IS_SQLITE, ROOT_DIR, SessionLocal, engine, migrate_checkin_speech_config, migrate_checkin_speech_event_reference, migrate_dah_integration, migrate_employee_shift_attendance, migrate_employee_shift_overrides, migrate_mbs_card_code_not_unique, migrate_member_processing, migrate_membership_activation, migrate_membership_freeze_completion, migrate_pt_coaches, migrate_pt_finance, migrate_pt_schedule, migrate_remove_branches
 from .models import (
     AuthSession, Device, Payment, PaymentReceipt, PtEnrollment, PtEnrollmentCoach, User,
 )
@@ -39,6 +39,7 @@ def initialize_database():
     migrate_remove_branches()
     migrate_mbs_card_code_not_unique()
     migrate_pt_schedule()
+    migrate_pt_finance()
     migrate_dah_integration()
     migrate_membership_activation()
     migrate_membership_freeze_completion()

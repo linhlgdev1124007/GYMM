@@ -387,6 +387,7 @@ class Payment(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
     membership_id: Mapped[int | None] = mapped_column(ForeignKey("memberships.id"))
+    pt_enrollment_id: Mapped[int | None] = mapped_column(ForeignKey("pt_enrollments.id"), index=True)
     bank_account_id: Mapped[int | None] = mapped_column(ForeignKey("bank_accounts.id"))
     payment_no: Mapped[str] = mapped_column(String(40), unique=True)
     paid_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
@@ -399,6 +400,7 @@ class Payment(Base):
 
     customer: Mapped[Customer | None] = relationship()
     membership: Mapped[Membership | None] = relationship(back_populates="payments")
+    pt_enrollment: Mapped["PtEnrollment | None"] = relationship(back_populates="payments")
     bank_account: Mapped[BankAccount | None] = relationship()
     receipts: Mapped[list["PaymentReceipt"]] = relationship(
         back_populates="payment", cascade="all, delete-orphan"
@@ -479,6 +481,7 @@ class PtEnrollment(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
     coach_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    package_name: Mapped[str | None] = mapped_column(String(160))
     group_type: Mapped[str] = mapped_column(String(20), default="1:1", index=True)
     starts_at: Mapped[date] = mapped_column(Date, default=date.today)
     expires_at: Mapped[date | None] = mapped_column(Date)
@@ -487,10 +490,30 @@ class PtEnrollment(Base):
     schedule_days: Mapped[str | None] = mapped_column(String(120))
     schedule_time: Mapped[str | None] = mapped_column(String(10))
     schedule_json: Mapped[str | None] = mapped_column(Text)
+    final_price: Mapped[float] = mapped_column(Float, default=0)
+    paid_amount: Mapped[float] = mapped_column(Float, default=0)
+    debt_amount: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
 
     customer: Mapped[Customer] = relationship()
     coach_assignments: Mapped[list["PtEnrollmentCoach"]] = relationship(back_populates="enrollment", cascade="all, delete-orphan")
+    debt_installments: Mapped[list["PtDebtInstallment"]] = relationship(back_populates="enrollment", cascade="all, delete-orphan")
+    payments: Mapped[list["Payment"]] = relationship(back_populates="pt_enrollment")
+
+
+class PtDebtInstallment(Base):
+    __tablename__ = "pt_debt_installments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enrollment_id: Mapped[int] = mapped_column(ForeignKey("pt_enrollments.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Float, default=0)
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    paid_amount: Mapped[float] = mapped_column(Float, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    enrollment: Mapped[PtEnrollment] = relationship(back_populates="debt_installments")
 
 
 class PtSessionLog(Base):

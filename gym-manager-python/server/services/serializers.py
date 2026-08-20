@@ -234,6 +234,31 @@ def pt_data(enrollment):
 
     coaches = [employee_data(assignment.coach) for assignment in enrollment.coach_assignments]
     schedule = schedule_data(enrollment)
+    debt_installments = [
+        {
+            "id": row.id,
+            "amount": row.amount or 0,
+            "paidAmount": row.paid_amount or 0,
+            "remainingAmount": max((row.amount or 0) - (row.paid_amount or 0), 0),
+            "dueDate": iso(row.due_date),
+            "status": row.status,
+            "note": row.note,
+        }
+        for row in sorted(getattr(enrollment, "debt_installments", []), key=lambda item: (item.due_date, item.id or 0))
+    ]
+    payments = [
+        {
+            "id": row.id,
+            "number": row.payment_no,
+            "amount": row.amount or 0,
+            "method": row.method,
+            "channel": row.channel,
+            "paidAt": iso(row.paid_at),
+            "status": "refund" if row.channel == "refund" or (row.amount or 0) < 0 else "paid",
+            "description": row.note,
+        }
+        for row in sorted(getattr(enrollment, "payments", []), key=lambda item: item.paid_at, reverse=True)
+    ]
     return {
         "id": enrollment.id,
         "memberId": enrollment.customer_id,
@@ -244,11 +269,18 @@ def pt_data(enrollment):
         } if getattr(enrollment, "customer", None) else None,
         "coach": coaches[0] if coaches else None,
         "coaches": coaches,
+        "packageName": enrollment.package_name,
         "type": enrollment.group_type,
         "startsAt": iso(enrollment.starts_at),
         "expiresAt": iso(enrollment.expires_at),
         "totalSessions": enrollment.total_sessions,
         "remainingSessions": enrollment.remaining_sessions,
+        "finalPrice": enrollment.final_price or 0,
+        "paidAmount": enrollment.paid_amount or 0,
+        "debtAmount": enrollment.debt_amount or 0,
+        "debtInstallments": debt_installments,
+        "nextDebtDueDate": next((row["dueDate"] for row in debt_installments if row["remainingAmount"] > 0), None),
+        "payments": payments,
         "schedule": schedule,
         # Kept in responses during the transition for older clients.
         "scheduleDays": [slot["day"] for slot in schedule],
@@ -281,7 +313,8 @@ def payment_data(payment):
         "memberId": payment.customer_id,
         "memberName": payment.customer.person.display_name if getattr(payment, "customer", None) else None,
         "membershipId": payment.membership_id,
-        "description": payment.note if is_refund else payment.membership.package.name if getattr(payment, "membership", None) and payment.membership.package else payment.note,
+        "ptEnrollmentId": payment.pt_enrollment_id,
+        "description": payment.note if is_refund or getattr(payment, "pt_enrollment_id", None) else payment.membership.package.name if getattr(payment, "membership", None) and payment.membership.package else payment.note,
         "amount": payment.amount or 0,
         "method": payment.method,
         "channel": payment.channel,

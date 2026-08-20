@@ -331,9 +331,10 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         DayPassVisit.paid_at < end_dt,
         _net_day_pass_revenue_filter(),
     ).order_by(DayPassVisit.paid_at.desc(), DayPassVisit.id.desc()).all()
-    membership_revenue = sum(row.amount or 0 for row in payments)
+    membership_revenue = sum(row.amount or 0 for row in payments if not row.pt_enrollment_id)
+    pt_revenue = sum(row.amount or 0 for row in payments if row.pt_enrollment_id)
     day_pass_revenue = sum(row.charged_amount or 0 for row in day_passes)
-    revenue = membership_revenue + day_pass_revenue
+    revenue = membership_revenue + pt_revenue + day_pass_revenue
     previous_revenue = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= previous_start_dt,
         Payment.paid_at < previous_end_dt,
@@ -357,8 +358,8 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         by_sale[key]["amount"] += float(row.amount or 0)
         by_sale[key]["payments"] += 1
         revenue_items.append({
-            "type": "membership",
-            "revenueType": "Hoàn tiền gói" if row.channel == "refund" or (row.amount or 0) < 0 else "Gói hội viên",
+            "type": "pt" if row.pt_enrollment_id else "membership",
+            "revenueType": "Hoàn tiền gói" if row.channel == "refund" or (row.amount or 0) < 0 else "PT/BT" if row.pt_enrollment_id else "Gói hội viên",
             "paymentId": row.id,
             "paymentNo": row.payment_no,
             "paidAt": utc_iso(row.paid_at),
@@ -366,6 +367,7 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "member": row.customer.person.display_name if row.customer and row.customer.person else None,
             "memberCode": row.customer.customer_code if row.customer else None,
             "membershipId": row.membership_id,
+            "ptEnrollmentId": row.pt_enrollment_id,
             "membershipCode": row.membership.code if row.membership else None,
             "package": row.membership.package.name if row.membership and row.membership.package else row.note,
             "saleEmployeeId": sale_id,
@@ -446,12 +448,15 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "dueDate": row.debt_due_date.isoformat() if row.debt_due_date else None,
             "overdue": bool(row.debt_due_date and row.debt_due_date < today),
         })
-    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "membershipAmount": 0, "dayPassAmount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
+    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "membershipAmount": 0, "ptAmount": 0, "dayPassAmount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
     for row in payments:
         local_day = utc_vietnam_date(row.paid_at)
         if local_day in revenue_daily:
             revenue_daily[local_day]["amount"] += float(row.amount or 0)
-            revenue_daily[local_day]["membershipAmount"] += float(row.amount or 0)
+            if row.pt_enrollment_id:
+                revenue_daily[local_day]["ptAmount"] += float(row.amount or 0)
+            else:
+                revenue_daily[local_day]["membershipAmount"] += float(row.amount or 0)
             revenue_daily[local_day]["payments"] += 1
     for row in day_passes:
         local_day = utc_vietnam_date(row.paid_at)
@@ -478,6 +483,7 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         "summary": {
             "revenue": revenue,
             "membershipRevenue": membership_revenue,
+            "ptRevenue": pt_revenue,
             "dayPassRevenue": day_pass_revenue,
             "previousRevenue": previous_revenue,
             "payments": len(revenue_items),
@@ -504,8 +510,15 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
                 "type": "membership",
                 "label": "Gói hội viên",
                 "amount": float(membership_revenue or 0),
-                "payments": len(payments),
+                "payments": sum(1 for row in payments if not row.pt_enrollment_id),
                 "share": round((membership_revenue / revenue) * 100, 1) if revenue else 0,
+            },
+            {
+                "type": "pt",
+                "label": "PT/BT",
+                "amount": float(pt_revenue or 0),
+                "payments": sum(1 for row in payments if row.pt_enrollment_id),
+                "share": round((pt_revenue / revenue) * 100, 1) if revenue else 0,
             },
             {
                 "type": "day_pass",

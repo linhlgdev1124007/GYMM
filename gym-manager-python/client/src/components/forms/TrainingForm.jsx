@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { Button } from "../ui/Button";
-import { Field, Select } from "../ui/Form";
+import { Field, Input, Select } from "../ui/Form";
 import { Modal } from "../ui/Modal";
 import { MultiSearchableSelect } from "../ui/MultiSearchableSelect";
-import { DateInput, NumberUnitInput, TimeInput } from "../ui/SmartInputs";
+import { SearchableSelect } from "../ui/SearchableSelect";
+import { DateInput, MoneyInput, NumberUnitInput, TimeInput } from "../ui/SmartInputs";
+import { money } from "../../utils/format";
 
 export const weekdays = [
   "Thứ 2",
@@ -17,11 +19,19 @@ export const weekdays = [
 ];
 
 export const emptyTrainingForm = () => ({
+  memberId: "",
+  packageName: "",
   coachIds: [],
   type: "1:1",
   totalSessions: 12,
   startsAt: format(new Date(), "yyyy-MM-dd"),
   expiresAt: "",
+  finalPrice: 0,
+  paidAmount: 0,
+  paidAt: format(new Date(), "yyyy-MM-dd"),
+  paymentMethod: "cash",
+  bankAccountId: "",
+  debtInstallments: [],
   schedule: [],
   status: "active",
 });
@@ -33,6 +43,8 @@ function enrollmentForm(enrollment) {
     time: enrollment.scheduleTime || "07:00",
   }));
   return {
+    memberId: enrollment.memberId || "",
+    packageName: enrollment.packageName || "",
     coachIds: (
       enrollment.coaches || (enrollment.coach ? [enrollment.coach] : [])
     ).map((coach) => String(coach.id)),
@@ -41,12 +53,18 @@ function enrollmentForm(enrollment) {
     remainingSessions: enrollment.remainingSessions,
     startsAt: enrollment.startsAt || "",
     expiresAt: enrollment.expiresAt || "",
+    finalPrice: enrollment.finalPrice || 0,
+    paidAmount: enrollment.paidAmount || 0,
+    paidAt: format(new Date(), "yyyy-MM-dd"),
+    paymentMethod: "cash",
+    bankAccountId: "",
+    debtInstallments: enrollment.debtInstallments || [],
     schedule: enrollment.schedule || legacySchedule,
     status: enrollment.status,
   };
 }
 
-export function TrainingFields({ form, setForm, options, editing = false, coachMode = false }) {
+export function TrainingFields({ form, setForm, options, editing = false, coachMode = false, requireMember = false, memberOptions = [] }) {
   const coaches =
     options?.employees?.filter((row) => row.isPtRole) ||
     [];
@@ -59,6 +77,23 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
     ? String(form.totalSessions)
     : "other";
   const selectedDays = new Set((form.schedule || []).map((slot) => slot.day));
+  const remainingDebt = Math.max(Number(form.finalPrice || 0) - Number(form.paidAmount || 0), 0);
+  const debtTotal = (form.debtInstallments || []).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const setDebtInstallment = (index, patch) =>
+    setForm({
+      ...form,
+      debtInstallments: (form.debtInstallments || []).map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
+    });
+  const addDebtInstallment = () =>
+    setForm({
+      ...form,
+      debtInstallments: [
+        ...(form.debtInstallments || []),
+        { amount: Math.max(remainingDebt - debtTotal, 0), dueDate: form.expiresAt || form.startsAt || format(new Date(), "yyyy-MM-dd"), note: "" },
+      ],
+    });
   const toggleDay = (day) =>
     setForm({
       ...form,
@@ -85,6 +120,26 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
   return (
     <>
       <div className="form-grid">
+        {!editing && requireMember && !coachMode && (
+          <Field className="form-span" label="Hội viên" required>
+            <SearchableSelect
+              value={form.memberId || ""}
+              onChange={(memberId) => setForm({ ...form, memberId })}
+              options={memberOptions}
+              placeholder="Chọn hội viên đã có"
+              searchPlaceholder="Tìm tên, mã hoặc số điện thoại..."
+            />
+          </Field>
+        )}
+        {!coachMode && (
+          <Field className="form-span" label="Gói PT/BT">
+            <Input
+              value={form.packageName || ""}
+              onChange={(event) => setForm({ ...form, packageName: event.target.value })}
+              placeholder="Ví dụ: PT Kids 12 buổi"
+            />
+          </Field>
+        )}
         {!coachMode && <Field label="Hình thức">
           <Select
             value={form.type || "1:1"}
@@ -161,6 +216,56 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
             onChange={(expiresAt) => setForm({ ...form, expiresAt })}
           />
         </Field>}
+        {!coachMode && (
+          <>
+            <Field label="Giá trị gói PT">
+              <MoneyInput min="0" value={form.finalPrice || 0} onChange={(finalPrice) => setForm({ ...form, finalPrice })} />
+            </Field>
+            <Field label={editing ? "Đã thu PT" : "Thanh toán lần này"}>
+              <MoneyInput min="0" max={Number(form.finalPrice || 0)} value={form.paidAmount || 0} onChange={(paidAmount) => setForm({ ...form, paidAmount })} />
+            </Field>
+            {Number(form.paidAmount || 0) > 0 && (
+              <>
+                <Field label="Ngày thu tiền">
+                  <DateInput value={form.paidAt || ""} onChange={(paidAt) => setForm({ ...form, paidAt })} />
+                </Field>
+                <Field label="Phương thức">
+                  <Select value={form.paymentMethod || "cash"} onChange={(event) => setForm({ ...form, paymentMethod: event.target.value, bankAccountId: event.target.value === "cash" ? "" : form.bankAccountId })}>
+                    <option value="cash">Tiền mặt</option>
+                    <option value="bank_transfer">Chuyển khoản</option>
+                    <option value="card">Thẻ</option>
+                  </Select>
+                </Field>
+                {form.paymentMethod !== "cash" && (
+                  <Field className="form-span" label="Tài khoản nhận" required={form.paymentMethod === "bank_transfer"}>
+                    <Select value={form.bankAccountId || ""} onChange={(event) => setForm({ ...form, bankAccountId: event.target.value })}>
+                      <option value="">Chọn tài khoản</option>
+                      {options?.bankAccounts?.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}
+                    </Select>
+                  </Field>
+                )}
+              </>
+            )}
+          </>
+        )}
+        {!coachMode && remainingDebt > 0 && (
+          <div className="field form-span">
+            <span className="field-label">Hạn công nợ PT</span>
+            <div className="grid gap-2">
+              {(form.debtInstallments || []).map((row, index) => (
+                <div key={index} className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 sm:grid-cols-[1fr_150px_auto]">
+                  <MoneyInput min="0" value={row.amount || 0} onChange={(amount) => setDebtInstallment(index, { amount })} />
+                  <DateInput value={row.dueDate || ""} onChange={(dueDate) => setDebtInstallment(index, { dueDate })} />
+                  <button type="button" className="btn btn-secondary" onClick={() => setForm({ ...form, debtInstallments: form.debtInstallments.filter((_, rowIndex) => rowIndex !== index) })}>Bỏ</button>
+                </div>
+              ))}
+              <button type="button" className="btn btn-secondary w-fit" onClick={addDebtInstallment}>+ Thêm hạn công nợ</button>
+            </div>
+            <span className={Math.round(debtTotal) === Math.round(remainingDebt) ? "field-hint" : "field-error"}>
+              Tổng hạn nợ {money(debtTotal)} / còn nợ {money(remainingDebt)}
+            </span>
+          </div>
+        )}
         <div className="field form-span">
           <span className="field-label">Lịch tập theo thứ</span>
           <div className="flex flex-wrap gap-2">
@@ -222,6 +327,8 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
 export function TrainingForm({
   enrollment,
   options,
+  memberOptions = [],
+  requireMember = false,
   open,
   onClose,
   onSubmit,
@@ -231,11 +338,15 @@ export function TrainingForm({
 }) {
   const [form, setForm] = useState(emptyTrainingForm);
   const [initial, setInitial] = useState(emptyTrainingForm);
+  const [localError, setLocalError] = useState("");
   useEffect(() => {
     const next = enrollmentForm(enrollment);
     setForm(next);
     setInitial(next);
+    setLocalError("");
   }, [enrollment, open]);
+  const remainingDebt = Math.max(Number(form.finalPrice || 0) - Number(form.paidAmount || 0), 0);
+  const debtTotal = (form.debtInstallments || []).reduce((sum, row) => sum + Number(row.amount || 0), 0);
   return (
     <Modal
       open={open}
@@ -247,6 +358,26 @@ export function TrainingForm({
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          if (!enrollment && requireMember && !form.memberId) {
+            setLocalError("Vui lòng chọn hội viên đăng ký PT.");
+            return;
+          }
+          if (Number(form.paidAmount || 0) > Number(form.finalPrice || 0)) {
+            setLocalError("Số tiền PT đã thanh toán không thể lớn hơn giá trị gói.");
+            return;
+          }
+          if (Number(form.paidAmount || 0) > 0 && form.paymentMethod === "bank_transfer" && !form.bankAccountId) {
+            setLocalError("Vui lòng chọn tài khoản nhận tiền khi thanh toán PT chuyển khoản.");
+            return;
+          }
+          if (remainingDebt > 0 && Math.round(debtTotal) !== Math.round(remainingDebt)) {
+            setLocalError("Tổng các hạn công nợ PT phải bằng số tiền còn nợ.");
+            return;
+          }
+          if (remainingDebt > 0 && !(form.debtInstallments || []).every((row) => Number(row.amount || 0) > 0 && row.dueDate)) {
+            setLocalError("Vui lòng nhập đủ số tiền và ngày hạn cho từng kỳ công nợ PT.");
+            return;
+          }
           onSubmit(form);
         }}
       >
@@ -257,8 +388,10 @@ export function TrainingForm({
             options={options}
             editing={!!enrollment}
             coachMode={coachMode}
+            requireMember={requireMember}
+            memberOptions={memberOptions}
           />
-          {error && <div className="inline-error mt-4">{error}</div>}
+          {(localError || error) && <div className="inline-error mt-4">{localError || error}</div>}
         </div>
         <div className="form-actions">
           <Button data-modal-close type="button" variant="secondary" onClick={onClose}>

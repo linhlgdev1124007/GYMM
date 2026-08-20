@@ -25,10 +25,6 @@ import { DateInput, DateOfBirthInput, MoneyInput, PhoneInput } from "../../compo
 import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import {
-  emptyTrainingForm,
-  TrainingFields,
-} from "../../components/forms/TrainingForm";
 import { MemberQuickDrawer } from "./MemberQuickDrawer";
 import { DahIdentityLinkModal } from "./DahIdentityLinkModal";
 import { useAuth } from "../../app/AuthContext";
@@ -72,8 +68,6 @@ const createInitialForm = () => ({
     paymentMethod: "cash",
     bankAccountId: "",
   },
-  registerPt: false,
-  pt: emptyTrainingForm(),
 });
 const initialForm = createInitialForm();
 const views = [
@@ -1213,8 +1207,6 @@ export function MembersPage() {
               }
             }
             const {
-              registerPt,
-              pt,
               registerMembership,
               membership,
               dahIdentityName,
@@ -1229,7 +1221,6 @@ export function MembersPage() {
               phone: normalizePhone(form.phone),
               email: form.email.trim(),
               membership: registerMembership ? membership : undefined,
-              ptEnrollment: registerPt ? pt : undefined,
             });
           }}
         >
@@ -1541,35 +1532,6 @@ export function MembersPage() {
                       {money(membershipDebtAfterCredit)}
                     </strong>
                   </div>
-                </div>
-              )}
-            </section>
-            <section className="form-section">
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 accent-navy-900"
-                  checked={form.registerPt}
-                  onChange={(event) =>
-                    setForm({ ...form, registerPt: event.target.checked })
-                  }
-                />
-                <span>
-                  <strong className="block text-sm text-slate-800">
-                    Đăng ký nhóm PT cho hội viên này
-                  </strong>
-                  <small className="mt-0.5 block text-xs text-slate-500">
-                    Hồ sơ hội viên và đăng ký PT sẽ được lưu cùng lúc.
-                  </small>
-                </span>
-              </label>
-              {form.registerPt && (
-                <div className="mt-4">
-                  <TrainingFields
-                    form={form.pt}
-                    setForm={(pt) => setForm((current) => ({ ...current, pt }))}
-                    options={options.data}
-                  />
                 </div>
               )}
             </section>

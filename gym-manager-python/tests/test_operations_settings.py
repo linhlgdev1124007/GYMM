@@ -834,3 +834,171 @@ def test_coach_can_only_update_assigned_pt_operational_fields(tmp_path):
         assert forbidden_field.value.status_code == 403
     finally:
         db.close()
+
+
+def test_pt_finance_tracks_debt_separately_from_membership_debt(tmp_path):
+    from server.models import Customer, Payment, Person, PtDebtInstallment
+    from server.services.dashboard_service import reports
+    from server.services.operations_service import create_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="BT Child", phone="0900000050", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-DEBT", status="active")
+        db.add(member)
+        db.commit()
+
+        data = create_pt(db, member.id, {
+            "type": "1:1",
+            "packageName": "BT Kids 12 buổi",
+            "startsAt": "2026-08-20",
+            "totalSessions": 12,
+            "finalPrice": 1_000_000,
+            "paidAmount": 400_000,
+            "paidAt": "2026-08-20",
+            "paymentMethod": "cash",
+            "debtInstallments": [
+                {"amount": 300_000, "dueDate": "2026-09-01"},
+                {"amount": 300_000, "dueDate": "2026-10-01"},
+            ],
+        })
+
+        assert data["finalPrice"] == 1_000_000
+        assert data["packageName"] == "BT Kids 12 buổi"
+        assert data["paidAmount"] == 400_000
+        assert data["debtAmount"] == 600_000
+        assert data["nextDebtDueDate"] == "2026-09-01"
+        assert [row["amount"] for row in data["debtInstallments"]] == [300_000, 300_000]
+        assert [row["paidAmount"] for row in data["debtInstallments"]] == [0, 0]
+        assert [row["status"] for row in data["debtInstallments"]] == ["pending", "pending"]
+
+        payment = db.query(Payment).one()
+        assert payment.customer_id == member.id
+        assert payment.membership_id is None
+        assert payment.pt_enrollment_id == data["id"]
+        assert payment.amount == 400_000
+        assert payment.channel == "pt"
+        assert payment.shift_date.isoformat() == "2026-08-20"
+
+        stored_installments = db.query(PtDebtInstallment).order_by(PtDebtInstallment.due_date.asc()).all()
+        assert [(row.amount, row.paid_amount, row.status) for row in stored_installments] == [
+            (300_000, 0, "pending"),
+            (300_000, 0, "pending"),
+        ]
+
+        report = reports(db, "2026-08-20", "2026-08-20")
+        assert report["summary"]["revenue"] == 400_000
+        assert report["summary"]["membershipRevenue"] == 0
+        assert report["summary"]["ptRevenue"] == 400_000
+        assert report["summary"]["debt"] == 0
+        assert report["debts"] == []
+        pt_type = next(row for row in report["revenueByType"] if row["type"] == "pt")
+        assert pt_type["amount"] == 400_000
+        assert pt_type["payments"] == 1
+        assert report["daily"][0]["ptAmount"] == 400_000
+        assert report["daily"][0]["membershipAmount"] == 0
+        assert report["revenueItems"][0]["type"] == "pt"
+        assert report["revenueItems"][0]["ptEnrollmentId"] == data["id"]
+    finally:
+        db.close()
+
+
+def test_pt_finance_validates_paid_amount_installments_and_transfer_account(tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from server.models import Customer, Person
+    from server.services.operations_service import create_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="BT Validation", phone="0900000051", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-VALID", status="active")
+        db.add(member)
+        db.commit()
+
+        with pytest.raises(HTTPException) as overpaid:
+            create_pt(db, member.id, {
+                "finalPrice": 500_000,
+                "paidAmount": 600_000,
+                "debtInstallments": [],
+            })
+        assert overpaid.value.status_code == 422
+
+        with pytest.raises(HTTPException) as bad_installments:
+            create_pt(db, member.id, {
+                "finalPrice": 1_000_000,
+                "paidAmount": 400_000,
+                "debtInstallments": [{"amount": 500_000, "dueDate": "2026-09-01"}],
+            })
+        assert bad_installments.value.status_code == 422
+
+        with pytest.raises(HTTPException) as missing_account:
+            create_pt(db, member.id, {
+                "finalPrice": 1_000_000,
+                "paidAmount": 1_000_000,
+                "paymentMethod": "bank_transfer",
+                "debtInstallments": [],
+            })
+        assert missing_account.value.status_code == 422
+    finally:
+        db.close()
+
+
+def test_pt_finance_update_collects_more_money_and_replaces_remaining_debt_plan(tmp_path):
+    from server.models import Customer, Payment, Person, PtDebtInstallment
+    from server.services.operations_service import create_pt, update_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="BT Update", phone="0900000052", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-UPD", status="active")
+        db.add(member)
+        db.commit()
+
+        created = create_pt(db, member.id, {
+            "type": "1:2",
+            "packageName": "PT đôi 10 buổi",
+            "startsAt": "2026-08-20",
+            "totalSessions": 10,
+            "finalPrice": 1_000_000,
+            "paidAmount": 400_000,
+            "paidAt": "2026-08-20",
+            "debtInstallments": [
+                {"amount": 300_000, "dueDate": "2026-09-01"},
+                {"amount": 300_000, "dueDate": "2026-10-01"},
+            ],
+        })
+
+        updated = update_pt(db, created["id"], {
+            "packageName": "PT đôi 10 buổi - đã thu thêm",
+            "finalPrice": 1_000_000,
+            "paidAmount": 700_000,
+            "paidAt": "2026-09-05",
+            "paymentMethod": "cash",
+            "debtInstallments": [{"amount": 300_000, "dueDate": "2026-10-01"}],
+        })
+
+        assert updated["paidAmount"] == 700_000
+        assert updated["packageName"] == "PT đôi 10 buổi - đã thu thêm"
+        assert updated["debtAmount"] == 300_000
+        assert len(updated["debtInstallments"]) == 1
+        assert updated["debtInstallments"][0]["amount"] == 300_000
+        assert updated["debtInstallments"][0]["paidAmount"] == 0
+        assert updated["debtInstallments"][0]["status"] == "pending"
+
+        payments = db.query(Payment).order_by(Payment.id.asc()).all()
+        assert [row.amount for row in payments] == [400_000, 300_000]
+        assert [row.payment_no for row in payments] == [
+            f"PTPAY-{created['id']:06d}-001",
+            f"PTPAY-{created['id']:06d}-002",
+        ]
+        installments = db.query(PtDebtInstallment).order_by(PtDebtInstallment.due_date.asc()).all()
+        assert [(row.amount, row.paid_amount, row.status) for row in installments] == [(300_000, 0, "pending")]
+    finally:
+        db.close()

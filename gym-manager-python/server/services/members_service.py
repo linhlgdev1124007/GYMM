@@ -517,7 +517,12 @@ def get_member(db: Session, member_id: int, include_audit: bool = False):
         joinedload(Membership.sale_online_employee).joinedload(Employee.person),
         joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
     ).filter(Membership.customer_id == member_id).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
-    pt_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person), joinedload(PtEnrollment.customer).joinedload(Customer.person)).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
+    pt_rows = db.query(PtEnrollment).options(
+        joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        joinedload(PtEnrollment.customer).joinedload(Customer.person),
+        joinedload(PtEnrollment.debt_installments),
+        joinedload(PtEnrollment.payments),
+    ).filter(PtEnrollment.customer_id == member_id).order_by(PtEnrollment.id.desc()).all()
     pt_session_logs = db.query(PtSessionLog).options(
         joinedload(PtSessionLog.enrollment).joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
         joinedload(PtSessionLog.attendance_session),

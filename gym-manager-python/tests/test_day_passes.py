@@ -61,6 +61,7 @@ def test_day_pass_allows_missing_phone_and_reports_separate_revenue(tmp_path):
         assert data["summary"]["dayPassRevenue"] == 79000
         assert data["revenueByType"] == [
             {"type": "membership", "label": "Gói hội viên", "amount": 0.0, "payments": 0, "share": 0.0},
+            {"type": "pt", "label": "PT/BT", "amount": 0.0, "payments": 0, "share": 0.0},
             {"type": "day_pass", "label": "Khách tập ngày", "amount": 79000.0, "payments": 1, "share": 100.0},
         ]
         assert data["revenueByMethod"] == [{"method": "cash", "amount": 79000.0, "share": 100.0}]

@@ -179,6 +179,7 @@ def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
             "date": vietnam_today().isoformat(),
             "amount": 700000.0,
             "membershipAmount": 700000.0,
+            "ptAmount": 0,
             "dayPassAmount": 0,
             "payments": 1,
             "checkins": 0,

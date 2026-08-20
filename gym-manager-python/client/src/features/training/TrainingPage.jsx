@@ -14,7 +14,7 @@ import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { TrainingForm } from "../../components/forms/TrainingForm";
-import { formatPhone, shortDate } from "../../utils/format";
+import { formatPhone, money, shortDate } from "../../utils/format";
 import { useAuth } from "../../app/AuthContext";
 
 export function TrainingPage() {
@@ -27,6 +27,7 @@ export function TrainingPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selected, setSelected] = useState(null);
+  const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState("");
   const q = useDebouncedValue(search);
   const query = useQuery({
@@ -41,6 +42,29 @@ export function TrainingPage() {
     queryFn: () => api("/api/members/options"),
     staleTime: 300000,
   });
+  const members = useQuery({
+    queryKey: ["training-member-options"],
+    queryFn: () => api("/api/members?pageSize=1000&sort=name"),
+    staleTime: 60000,
+    enabled: !coachMode,
+  });
+  const memberOptions = (members.data?.items || []).map((row) => ({
+    value: row.id,
+    label: row.name,
+    meta: `${row.code} · ${formatPhone(row.phone)}${row.membership ? ` · ${row.membership.packageName || row.membership.package?.name || "Có gói"}` : ""}`,
+  }));
+  const create = useMutation({
+    mutationFn: (payload) => api(`/api/members/${payload.memberId}/training`, { method: "POST", body: payload }),
+    onSuccess: (data) => {
+      client.invalidateQueries({ queryKey: ["training"] });
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["payments"] });
+      client.invalidateQueries({ queryKey: ["reports"] });
+      setCreating(false);
+      notify.success(`Đã thêm hội viên PT ${data.member?.name || ""}.`);
+    },
+    onError: (error) => setFormError(error.message),
+  });
   const save = useMutation({
     mutationFn: (payload) => {
       const body = coachMode
@@ -52,6 +76,8 @@ export function TrainingPage() {
       client.invalidateQueries({ queryKey: ["training"] });
       client.invalidateQueries({ queryKey: ["members"] });
       client.invalidateQueries({ queryKey: ["member", selected.memberId] });
+      client.invalidateQueries({ queryKey: ["payments"] });
+      client.invalidateQueries({ queryKey: ["reports"] });
       setSelected(null);
       const coachCount = payload.coachIds?.length || 0;
       notify.success(coachMode ? `Đã cập nhật tiến độ PT của ${selected.member.name}.` : (
@@ -93,6 +119,9 @@ export function TrainingPage() {
           {row.member.name}
           <div className="cell-secondary">
             {row.member.code} · {formatPhone(row.member.phone)}
+          </div>
+          <div className="cell-secondary">
+            {row.packageName || "Chưa đặt tên gói"} · {row.type}
           </div>
         </Link>
       ),
@@ -150,6 +179,19 @@ export function TrainingPage() {
       label: "Số buổi",
       sortValue: (row) => row.remainingSessions,
       render: (row) => `${row.remainingSessions}/${row.totalSessions}`,
+    },
+    {
+      key: "finance",
+      label: "Tài chính PT",
+      sortValue: (row) => row.debtAmount || 0,
+      render: (row) => (
+        <span className="flex flex-col text-xs">
+          <strong className="text-slate-900">{money(row.paidAmount)} / {money(row.finalPrice)}</strong>
+          <small className={row.debtAmount > 0 ? "text-red-700" : "text-emerald-700"}>
+            {row.debtAmount > 0 ? `${money(row.debtAmount)} nợ${row.nextDebtDueDate ? ` · hạn ${shortDate(row.nextDebtDueDate)}` : ""}` : "Đã tất toán"}
+          </small>
+        </span>
+      ),
     },
     {
       key: "status",
@@ -248,6 +290,11 @@ export function TrainingPage() {
           <option value="assigned">Đã có Coach</option>
         </Select>
         <div className="toolbar-spacer" />
+        {!coachMode && (
+          <Button onClick={() => { setFormError(""); setCreating(true); }}>
+            <UserRoundPlus size={15} /> Thêm hội viên PT
+          </Button>
+        )}
         <span className="text-xs text-slate-400">
           {query.data?.pagination.total || 0} đăng ký
         </span>
@@ -266,17 +313,17 @@ export function TrainingPage() {
         emptyDescription={
           assignment === "unassigned"
             ? "Tất cả khách trong tab này đã có Coach phụ trách."
-            : "Đăng ký PT từ hồ sơ hội viên để khách xuất hiện tại đây."
+            : "Thêm từ danh sách hội viên hiện có để bắt đầu quản lý lịch tập và công nợ PT."
         }
         emptyAction={
           search || assignment !== "all" ? (
             <Button size="sm" variant="secondary" onClick={() => { setSearch(""); setAssignment("all"); setPage(1); }}>
               Xóa tìm kiếm và bộ lọc
             </Button>
-          ) : (
-            <Link className="btn btn-primary btn-sm" to="/members?view=no_pt">
-              Tìm hội viên để đăng ký PT
-            </Link>
+          ) : !coachMode && (
+            <Button size="sm" onClick={() => { setFormError(""); setCreating(true); }}>
+              <UserRoundPlus size={14} /> Thêm hội viên PT
+            </Button>
           )
         }
       />
@@ -298,6 +345,18 @@ export function TrainingPage() {
         pending={save.isPending}
         error={formError}
         coachMode={coachMode}
+      />
+      <TrainingForm
+        enrollment={null}
+        options={options.data}
+        memberOptions={memberOptions}
+        requireMember
+        open={creating}
+        onClose={() => setCreating(false)}
+        onSubmit={(payload) => create.mutate(payload)}
+        pending={create.isPending}
+        error={formError}
+        coachMode={false}
       />
     </>
   );

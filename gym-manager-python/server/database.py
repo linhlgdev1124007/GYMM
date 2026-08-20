@@ -231,6 +231,61 @@ def migrate_pt_schedule():
         )
 
 
+def migrate_pt_finance():
+    """Add isolated PT finance fields and installment debt tracking."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    quote = engine.dialect.identifier_preparer.quote
+    if "pt_enrollments" in tables:
+        columns = {column["name"] for column in inspector.get_columns("pt_enrollments")}
+        definitions = {
+            "package_name": "VARCHAR(160)",
+            "final_price": "FLOAT NOT NULL DEFAULT 0",
+            "paid_amount": "FLOAT NOT NULL DEFAULT 0",
+            "debt_amount": "FLOAT NOT NULL DEFAULT 0",
+        }
+        with engine.begin() as connection:
+            for column, definition in definitions.items():
+                if column not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {quote('pt_enrollments')} ADD COLUMN {quote(column)} {definition}"
+                    )
+    if "payments" in tables:
+        columns = {column["name"] for column in inspector.get_columns("payments")}
+        with engine.begin() as connection:
+            if "pt_enrollment_id" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('payments')} ADD COLUMN {quote('pt_enrollment_id')} INTEGER"
+                )
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote('ix_payments_pt_enrollment_id')} ON {quote('payments')} ({quote('pt_enrollment_id')})"
+                )
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "pt_debt_installments" not in tables:
+        id_definition = "INTEGER NOT NULL PRIMARY KEY" if IS_SQLITE else "INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY"
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"""
+                CREATE TABLE {quote('pt_debt_installments')} (
+                    {quote('id')} {id_definition},
+                    {quote('enrollment_id')} INTEGER NOT NULL,
+                    {quote('amount')} FLOAT NOT NULL DEFAULT 0,
+                    {quote('due_date')} DATE NOT NULL,
+                    {quote('paid_amount')} FLOAT NOT NULL DEFAULT 0,
+                    {quote('status')} VARCHAR(30) NOT NULL DEFAULT 'pending',
+                    {quote('note')} VARCHAR(255) NULL,
+                    {quote('created_at')} DATETIME NOT NULL
+                )
+                """
+            )
+            for column in ("enrollment_id", "due_date", "status"):
+                connection.exec_driver_sql(
+                    f"CREATE INDEX {quote(f'ix_pt_debt_installments_{column}')} "
+                    f"ON {quote('pt_debt_installments')} ({quote(column)})"
+                )
+
+
 def migrate_dah_integration():
     """Add DAH customer identity fields to existing databases."""
     inspector = inspect(engine)

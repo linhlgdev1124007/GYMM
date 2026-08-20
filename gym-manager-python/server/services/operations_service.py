@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import secrets
 
 from fastapi import HTTPException
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
-    Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, EmployeeJobTitle, EmployeeShiftOverride, EmployeeShiftSchedule, Membership, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtGroup, PtSessionLog,
+    Customer, DahCustomerIdentity, DahWebhookEvent, Device, Employee, EmployeeJobTitle, EmployeeShiftOverride, EmployeeShiftSchedule, Membership, Payment, PaymentReceipt, Person, PtDebtInstallment, PtEnrollment, PtEnrollmentCoach, PtGroup, PtSessionLog,
     ServicePackage, User,
 )
 from .audit_service import record_audit
@@ -17,13 +17,14 @@ from .employee_shift_attendance import create_employee_shift, create_employee_sh
 from .membership_lifecycle import activate_customer_first_checkin
 from .serializers import employee_data, membership_data, pagination, payment_data, pt_data
 from .training_schedule import WEEKDAYS, normalize_schedule, schedule_data, schedule_storage
-from ..timeutils import utc_iso, utc_now, vietnam_day_utc_bounds, vietnam_today
+from ..timeutils import VIETNAM_TZ, utc_iso, utc_now, utc_vietnam_date, vietnam_day_utc_bounds, vietnam_today
 
 DEFAULT_JOB_TITLES = ("Sale", "Coach", "Marketing")
 DEFAULT_PT_TITLES = {"Coach"}
 PT_AUDIT_FIELD_LABELS = {
     "coachIds": "Coach phụ trách",
     "coachId": "Coach phụ trách",
+    "packageName": "Gói PT/BT",
     "type": "Nhóm PT",
     "startsAt": "Ngày bắt đầu",
     "expiresAt": "Ngày hết hạn",
@@ -32,6 +33,10 @@ PT_AUDIT_FIELD_LABELS = {
     "schedule": "Lịch tập",
     "scheduleDays": "Ngày tập",
     "scheduleTime": "Giờ tập",
+    "finalPrice": "Giá trị gói PT",
+    "paidAmount": "Đã thu PT",
+    "debtAmount": "Công nợ PT",
+    "debtInstallments": "Hạn công nợ PT",
     "status": "Trạng thái",
 }
 
@@ -39,6 +44,15 @@ PT_AUDIT_FIELD_LABELS = {
 def _as_int(value, default=None):
     try: return int(value) if value not in (None, "") else default
     except (TypeError, ValueError): return default
+
+
+def _money(value, default=0):
+    if value in (None, ""):
+        return float(default or 0)
+    try:
+        return max(float(str(value).replace(",", "")), 0)
+    except (TypeError, ValueError):
+        return float(default or 0)
 
 
 def _as_date(value):
@@ -70,6 +84,21 @@ def _as_datetime(value):
         return datetime.fromisoformat(str(value))
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, "Thời điểm không hợp lệ. Vui lòng dùng định dạng ISO.") from exc
+
+
+def _parse_paid_at(value):
+    if not value:
+        return utc_now()
+    text = str(value).strip()
+    if not text:
+        return utc_now()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Ngày thu thực tế không hợp lệ.") from exc
+    if parsed.tzinfo:
+        return parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed.replace(tzinfo=VIETNAM_TZ).astimezone(UTC).replace(tzinfo=None)
 
 
 def _audit_value(value):
@@ -904,9 +933,41 @@ def delete_trainer(db: Session, trainer_id: int, actor: User | None = None):
     db.delete(row);db.flush();db.delete(person);db.commit();return {"deleted":True,"archived":False}
 
 
+def _pt_installment_status(amount: float, paid_amount: float):
+    if paid_amount >= amount:
+        return "paid"
+    if paid_amount > 0:
+        return "partial"
+    return "pending"
+
+
+def _normalize_pt_debt_installments(payload: dict, debt_amount: float):
+    rows = payload.get("debtInstallments") or []
+    if debt_amount <= 0:
+        return []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(422, "Vui lòng thêm ít nhất một hạn công nợ PT.")
+    normalized = []
+    total = 0.0
+    for index, item in enumerate(rows, start=1):
+        if not isinstance(item, dict):
+            raise HTTPException(422, f"Hạn công nợ PT #{index} không hợp lệ.")
+        amount = _money(item.get("amount"))
+        due_date = _as_date(item.get("dueDate"))
+        if amount <= 0:
+            raise HTTPException(422, f"Số tiền hạn công nợ PT #{index} phải lớn hơn 0.")
+        if not due_date:
+            raise HTTPException(422, f"Vui lòng chọn ngày hạn công nợ PT #{index}.")
+        total += amount
+        normalized.append({"amount": amount, "dueDate": due_date, "note": str(item.get("note") or "").strip()[:255] or None})
+    if round(total, 2) != round(debt_amount, 2):
+        raise HTTPException(422, "Tổng các hạn công nợ PT phải bằng số tiền còn nợ.")
+    return normalized
+
+
 def list_pt(db: Session, group_type: str, q: str, assignment: str, page: int, page_size: int, actor: User | None = None):
     if group_type not in ("1:1","1:2","1:3"): group_type="1:1"
-    query=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.group_type==group_type)
+    query=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),joinedload(PtEnrollment.debt_installments),joinedload(PtEnrollment.payments)).filter(PtEnrollment.group_type==group_type)
     if actor and actor.role == "coach":
         if not actor.employee_id:
             query = query.filter(PtEnrollment.id == -1)
@@ -936,17 +997,33 @@ def create_pt(db: Session, member_id: int, payload: dict, actor: User | None = N
     if len(coaches)!=len(coach_ids): raise HTTPException(422,"Có Coach không hợp lệ hoặc đã ngừng hoạt động.")
     kind=payload.get("type") if payload.get("type") in ("1:1","1:2","1:3") else "1:1";sessions=max(_as_int(payload.get("totalSessions"),12),1)
     schedule_json,schedule_days,schedule_time=schedule_storage(normalize_schedule(payload))
-    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or vietnam_today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_json=schedule_json,schedule_days=schedule_days,schedule_time=schedule_time,status="active")
+    package_name = str(payload.get("packageName") or "").strip()[:160] or None
+    final_price = _money(payload.get("finalPrice"))
+    paid_amount = _money(payload.get("paidAmount"))
+    if paid_amount > final_price:
+        raise HTTPException(422, "Số tiền PT đã thanh toán không thể lớn hơn giá trị gói.")
+    debt_amount = max(final_price - paid_amount, 0)
+    debt_installments = _normalize_pt_debt_installments(payload, debt_amount)
+    paid_at = _parse_paid_at(payload.get("paidAt")) if paid_amount else None
+    method = payload.get("paymentMethod") or "cash"
+    bank_account_id = _as_int(payload.get("bankAccountId"))
+    if paid_amount and method == "bank_transfer" and not bank_account_id:
+        raise HTTPException(422, "Vui lòng chọn tài khoản nhận tiền khi thanh toán PT chuyển khoản.")
+    row=PtEnrollment(customer_id=member_id,coach_id=coach_ids[0] if coach_ids else None,package_name=package_name,group_type=kind,starts_at=_as_date(payload.get("startsAt")) or vietnam_today(),expires_at=_as_date(payload.get("expiresAt")),total_sessions=sessions,remaining_sessions=sessions,schedule_json=schedule_json,schedule_days=schedule_days,schedule_time=schedule_time,final_price=final_price,paid_amount=paid_amount,debt_amount=debt_amount,status="active")
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     db.add(row);db.flush()
     row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
-    record_audit(db, actor, "create", "pt_enrollment", row.id, f"Đăng ký PT {kind} · {sessions} buổi", customer_id=member_id, details={"coachIds": coach_ids, "expiresAt": row.expires_at})
+    row.debt_installments = [PtDebtInstallment(amount=item["amount"], due_date=item["dueDate"], note=item["note"]) for item in debt_installments]
+    if paid_amount:
+        payment = Payment(customer_id=member_id, pt_enrollment_id=row.id, bank_account_id=bank_account_id, payment_no=f"PTPAY-{row.id:06d}-001", paid_at=paid_at, amount=paid_amount, method=method, channel="pt", shift_date=utc_vietnam_date(paid_at) or vietnam_today(), note=f"Thanh toán đăng ký PT {package_name or kind}")
+        db.add(payment)
+    record_audit(db, actor, "create", "pt_enrollment", row.id, f"Đăng ký PT {package_name or kind} · {sessions} buổi", customer_id=member_id, details={"coachIds": coach_ids, "packageName": package_name, "expiresAt": row.expires_at, "finalPrice": final_price, "paidAmount": paid_amount, "debtAmount": debt_amount, "debtInstallments": [{"amount": item["amount"], "dueDate": item["dueDate"].isoformat()} for item in debt_installments]})
     db.commit()
-    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).get(row.id);return pt_data(row)
+    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),joinedload(PtEnrollment.debt_installments),joinedload(PtEnrollment.payments)).get(row.id);return pt_data(row)
 
 
 def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None = None):
-    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.id==enrollment_id).first()
+    row=db.query(PtEnrollment).options(joinedload(PtEnrollment.customer).joinedload(Customer.person),joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),joinedload(PtEnrollment.debt_installments),joinedload(PtEnrollment.payments)).filter(PtEnrollment.id==enrollment_id).first()
     if not row: raise HTTPException(404,"Không tìm thấy đăng ký PT.")
     if actor and actor.role == "coach":
         assigned_coach_ids = {assignment.coach_id for assignment in row.coach_assignments}
@@ -957,6 +1034,7 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
             raise HTTPException(403, "Coach chỉ được cập nhật lịch tập, số buổi còn lại và trạng thái.")
     old_values = {
         "coachIds": [assignment.coach_id for assignment in row.coach_assignments],
+        "packageName": row.package_name,
         "type": row.group_type,
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,
@@ -965,8 +1043,12 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
         "schedule": row.schedule_json,
         "scheduleDays": row.schedule_days,
         "scheduleTime": row.schedule_time,
+        "finalPrice": row.final_price,
+        "paidAmount": row.paid_amount,
+        "debtAmount": row.debt_amount,
         "status": row.status,
     }
+    previous_paid_amount = row.paid_amount or 0
     if "coachIds" in payload or "coachId" in payload:
         raw_ids=payload.get("coachIds") if "coachIds" in payload else ([payload.get("coachId")] if payload.get("coachId") else [])
         coach_ids=list(dict.fromkeys(value for value in (_as_int(value) for value in (raw_ids or [])) if value))
@@ -975,16 +1057,41 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
         row.coach_id=coach_ids[0] if coach_ids else None
         row.coach_assignments=[PtEnrollmentCoach(coach_id=coach_id) for coach_id in coach_ids]
     if payload.get("type") in ("1:1","1:2","1:3"): row.group_type=payload["type"]
+    if "packageName" in payload: row.package_name=str(payload.get("packageName") or "").strip()[:160] or None
     if "startsAt" in payload: row.starts_at=_as_date(payload["startsAt"]) or row.starts_at
     if "expiresAt" in payload: row.expires_at=_as_date(payload["expiresAt"])
     if "totalSessions" in payload: row.total_sessions=max(_as_int(payload["totalSessions"],1),1)
     if "remainingSessions" in payload: row.remaining_sessions=min(max(_as_int(payload["remainingSessions"],0),0),row.total_sessions)
+    if any(key in payload for key in ("finalPrice", "paidAmount", "debtInstallments")) and not (actor and actor.role == "coach"):
+        next_final_price = _money(payload.get("finalPrice"), row.final_price)
+        next_paid_amount = _money(payload.get("paidAmount"), row.paid_amount)
+        if next_paid_amount < previous_paid_amount:
+            raise HTTPException(422, "Không thể giảm số tiền PT đã thu. Hãy tạo nghiệp vụ hoàn tiền riêng.")
+        if next_paid_amount > next_final_price:
+            raise HTTPException(422, "Số tiền PT đã thanh toán không thể lớn hơn giá trị gói.")
+        next_debt_amount = max(next_final_price - next_paid_amount, 0)
+        debt_installments = _normalize_pt_debt_installments(payload, next_debt_amount)
+        row.final_price = next_final_price
+        row.paid_amount = next_paid_amount
+        row.debt_amount = next_debt_amount
+        row.debt_installments = [PtDebtInstallment(amount=item["amount"], due_date=item["dueDate"], note=item["note"]) for item in debt_installments]
+        payment_delta = next_paid_amount - previous_paid_amount
+        if payment_delta > 0:
+            paid_at = _parse_paid_at(payload.get("paidAt"))
+            method = payload.get("paymentMethod") or "cash"
+            bank_account_id = _as_int(payload.get("bankAccountId"))
+            if method == "bank_transfer" and not bank_account_id:
+                raise HTTPException(422, "Vui lòng chọn tài khoản nhận tiền khi thanh toán PT chuyển khoản.")
+            sequence = db.query(Payment).filter(Payment.pt_enrollment_id == row.id).count() + 1
+            payment = Payment(customer_id=row.customer_id, pt_enrollment_id=row.id, bank_account_id=bank_account_id, payment_no=f"PTPAY-{row.id:06d}-{sequence:03d}", paid_at=paid_at, amount=payment_delta, method=method, channel="pt", shift_date=utc_vietnam_date(paid_at) or vietnam_today(), note=f"Thanh toán công nợ PT {row.package_name or row.group_type}")
+            db.add(payment)
     if any(key in payload for key in ("schedule", "scheduleDays", "scheduleTime")):
         row.schedule_json,row.schedule_days,row.schedule_time=schedule_storage(normalize_schedule(payload))
     if payload.get("status") in ("active","completed","inactive"): row.status=payload["status"]
     if row.expires_at and row.expires_at<row.starts_at: raise HTTPException(422,"Ngày hết hạn phải sau ngày bắt đầu.")
     new_values = {
         "coachIds": [assignment.coach_id for assignment in row.coach_assignments],
+        "packageName": row.package_name,
         "type": row.group_type,
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,
@@ -993,6 +1100,9 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
         "schedule": row.schedule_json,
         "scheduleDays": row.schedule_days,
         "scheduleTime": row.schedule_time,
+        "finalPrice": row.final_price,
+        "paidAmount": row.paid_amount,
+        "debtAmount": row.debt_amount,
         "status": row.status,
     }
     fields = []
