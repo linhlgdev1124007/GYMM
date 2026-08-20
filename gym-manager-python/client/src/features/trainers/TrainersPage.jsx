@@ -437,11 +437,11 @@ export function TrainersPage() {
     const options = shiftEventOptions(reportDetail);
     const sessionEvents = reportDetail.events || [];
     const checkinEvent =
-      sessionEvents[0] ||
-      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedInAt));
+      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedInAt)) ||
+      sessionEvents[0];
     const checkoutEvent =
-      (sessionEvents.length > 1 ? sessionEvents[sessionEvents.length - 1] : null) ||
-      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedOutAt));
+      options.find((event) => sameMinute(event.eventTime, reportDetail.checkedOutAt)) ||
+      (sessionEvents.length > 1 ? sessionEvents[sessionEvents.length - 1] : null);
     setAttendanceEventForm({
       checkinEventId: checkinEvent?.id ? String(checkinEvent.id) : "",
       checkoutEventId: checkoutEvent?.id ? String(checkoutEvent.id) : "",
