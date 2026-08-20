@@ -275,7 +275,7 @@ function recentMemberActivity(member) {
     id: `payment-${payment.id}`,
     kind: "payment",
     occurredAt: payment.paidAt,
-    title: `Đã thu ${money(payment.amount)}`,
+    title: Number(payment.amount || 0) < 0 ? `Hoàn tiền ${money(Math.abs(Number(payment.amount || 0)))}` : `Đã thu ${money(payment.amount)}`,
     description: payment.description || "Thanh toán gói tập",
     meta: payment.number,
     record: payment,
@@ -769,7 +769,7 @@ export function MemberDetailPage() {
       label: "Số tiền",
       className: "text-right",
       render: (row) => (
-        <strong className="text-slate-900">{money(row.amount)}</strong>
+        <strong className={Number(row.amount || 0) < 0 ? "text-red-700" : "text-slate-900"}>{money(row.amount)}</strong>
       ),
     },
     {

@@ -880,7 +880,8 @@ def test_change_membership_to_lower_plan_can_keep_overpayment_as_credit(tmp_path
 
 def test_change_membership_to_lower_plan_can_record_external_refund(tmp_path):
     import json
-    from server.models import MembershipEvent, ServicePackage
+    from server.models import MembershipEvent, Payment, ServicePackage
+    from server.services.dashboard_service import reports
     from server.services.members_service import membership_action
 
     db = make_session(tmp_path)
@@ -904,21 +905,36 @@ def test_change_membership_to_lower_plan_can_record_external_refund(tmp_path):
             "planId": lower_plan.id,
             "finalPrice": "700000",
             "overpaymentPolicy": "external_refund",
+            "refundAt": "2026-08-12",
+            "refundMethod": "cash",
             "reason": "Hoàn tiền ngoài hệ thống",
         }, None)
         db.refresh(membership)
 
         event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
         details = json.loads(event.details_json)
+        refund = db.query(Payment).filter(Payment.membership_id == membership.id, Payment.channel == "refund").one()
 
         assert membership.package_id == lower_plan.id
         assert membership.final_price == 700000
         assert membership.paid_amount == 700000
         assert membership.deposit_amount == 700000
         assert membership.debt_amount == 0
+        assert refund.payment_no.startswith(f"REF-{membership.id:06d}-")
+        assert refund.amount == -300000
+        assert refund.paid_at == datetime(2026, 8, 11, 17, 0)
+        assert refund.shift_date == date(2026, 8, 12)
+        assert refund.method == "cash"
         assert details["overpaidAmount"] == 300000
         assert details["overpaymentPolicy"] == "external_refund"
         assert details["externalRefundAmount"] == 300000
+        assert details["refundPaymentNo"] == refund.payment_no
+
+        report = reports(db, "2026-08-12", "2026-08-12")
+        assert report["summary"]["revenue"] == -300000
+        assert report["summary"]["membershipRevenue"] == -300000
+        assert report["revenueItems"][0]["paymentNo"] == refund.payment_no
+        assert report["revenueItems"][0]["revenueType"] == "Hoàn tiền gói"
     finally:
         db.close()
 

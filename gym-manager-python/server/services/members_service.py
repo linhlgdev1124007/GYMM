@@ -1383,6 +1383,15 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         overpayment_policy = str(payload.get("overpaymentPolicy") or "keep_credit").strip()
         if overpaid_amount and overpayment_policy not in {"keep_credit", "external_refund", "reduce_paid"}:
             raise HTTPException(422, "Cách xử lý tiền dư không hợp lệ.")
+        refund_payment = None
+        refund_at = None
+        refund_method = None
+        refund_bank_account_id = None
+        if overpaid_amount and overpayment_policy == "external_refund":
+            refund_at = _parse_paid_at(payload.get("refundAt"))
+            refund_method = payload.get("refundMethod") or payload.get("paymentMethod") or "cash"
+            refund_bank_account_id = _int(payload.get("refundBankAccountId") or payload.get("bankAccountId"))
+            _require_bank_account_for_payment(db, refund_method, refund_bank_account_id, overpaid_amount)
         if overpaid_amount and overpayment_policy in {"external_refund", "reduce_paid"}:
             row.paid_amount = new_price
             row.deposit_amount = new_price
@@ -1414,7 +1423,44 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
             "creditAmount": overpaid_amount if overpaid_amount and overpayment_policy == "keep_credit" else 0,
             "externalRefundAmount": overpaid_amount if overpaid_amount and overpayment_policy == "external_refund" else 0,
             "paidAdjustmentAmount": overpaid_amount if overpaid_amount and overpayment_policy == "reduce_paid" else 0,
+            "refundAt": utc_iso(refund_at) if refund_at else None,
+            "refundMethod": refund_method,
         }
+        if overpaid_amount and overpayment_policy == "external_refund":
+            sequence = db.query(Payment).filter(Payment.membership_id == row.id).count() + 1
+            refund_payment = Payment(
+                customer_id=row.customer_id,
+                membership_id=row.id,
+                bank_account_id=refund_bank_account_id,
+                payment_no=f"REF-{row.id:06d}-{sequence:03d}",
+                paid_at=refund_at,
+                amount=-overpaid_amount,
+                method=refund_method,
+                channel="refund",
+                shift_date=utc_vietnam_date(refund_at) or vietnam_today(),
+                note=f"Hoàn tiền đổi gói {old_package_name} sang {plan.name}",
+            )
+            db.add(refund_payment)
+            db.flush()
+            details["refundPaymentId"] = refund_payment.id
+            details["refundPaymentNo"] = refund_payment.payment_no
+            record_audit(
+                db,
+                actor,
+                "refund",
+                "payment",
+                refund_payment.id,
+                f"Hoàn tiền {overpaid_amount:,.0f} ₫ khi đổi gói {old_package_name} sang {plan.name}",
+                customer_id=row.customer_id,
+                details={
+                    "membershipId": row.id,
+                    "paymentNo": refund_payment.payment_no,
+                    "amount": overpaid_amount,
+                    "refundAt": utc_iso(refund_at),
+                    "method": refund_method,
+                    "reason": reason,
+                },
+            )
         new_customer_id, new_package_id = old_customer_id, plan.id
     else:
         if row.status == "cancelled":

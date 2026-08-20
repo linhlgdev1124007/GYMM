@@ -258,6 +258,7 @@ def pt_data(enrollment):
 
 
 def payment_data(payment):
+    is_refund = payment.channel == "refund" or (payment.amount or 0) < 0
     receipts = [
         {
             "id": receipt.id,
@@ -280,7 +281,7 @@ def payment_data(payment):
         "memberId": payment.customer_id,
         "memberName": payment.customer.person.display_name if getattr(payment, "customer", None) else None,
         "membershipId": payment.membership_id,
-        "description": payment.membership.package.name if getattr(payment, "membership", None) and payment.membership.package else payment.note,
+        "description": payment.note if is_refund else payment.membership.package.name if getattr(payment, "membership", None) and payment.membership.package else payment.note,
         "amount": payment.amount or 0,
         "method": payment.method,
         "channel": payment.channel,
@@ -288,7 +289,7 @@ def payment_data(payment):
         "receiptUrl": payment.receipt_image_path,
         "receipts": receipts,
         "receiptCount": len(receipts),
-        "status": "paid",
+        "status": "refund" if is_refund else "paid",
     }
 
 

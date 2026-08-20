@@ -4,6 +4,7 @@ const palettes = {
   active: ["text-emerald-700", "bg-emerald-500"],
   open: ["text-emerald-700", "bg-emerald-500"],
   paid: ["text-emerald-700", "bg-emerald-500"],
+  refund: ["text-red-700", "bg-red-500"],
   converted: ["text-emerald-700", "bg-emerald-500"],
   refunded: ["text-sky-700", "bg-sky-500"],
   online: ["text-emerald-700", "bg-emerald-500"],

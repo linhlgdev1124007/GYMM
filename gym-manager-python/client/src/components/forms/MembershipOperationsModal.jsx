@@ -50,6 +50,9 @@ export function MembershipOperationsModal({ membership, memberships = [], member
       expiresAt: membership?.expiresAt || "",
       debtDueDate: membership?.debtDueDate || "",
       overpaymentPolicy: "keep_credit",
+      refundAt: today(),
+      refundMethod: "cash",
+      refundBankAccountId: "",
       days: "",
       effectiveAt: today(),
       reason: "",
@@ -104,6 +107,9 @@ export function MembershipOperationsModal({ membership, memberships = [], member
               expiresAt: form.expiresAt,
               debtDueDate: form.debtDueDate,
               overpaymentPolicy: form.overpaymentPolicy,
+              refundAt: form.refundAt,
+              refundMethod: form.refundMethod,
+              refundBankAccountId: form.refundBankAccountId,
             }
           : {}),
       },
@@ -119,7 +125,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
     action === "suspend" ||
     (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && Number(form.days || 0) !== 0) ||
     (action === "transfer" && form.targetMemberId) ||
-    ((action === "change" || action === "upgrade") && form.planId && (!projectedDebt || form.debtDueDate) && (!projectedOverpaid || form.overpaymentPolicy)) ||
+    ((action === "change" || action === "upgrade") && form.planId && (!projectedDebt || form.debtDueDate) && (!projectedOverpaid || form.overpaymentPolicy) && (form.overpaymentPolicy !== "external_refund" || (form.refundAt && (form.refundMethod !== "bank_transfer" || form.refundBankAccountId)))) ||
     action === "cancel"
   );
   return (
@@ -219,6 +225,30 @@ export function MembershipOperationsModal({ membership, memberships = [], member
                       <option value="reduce_paid">Điều chỉnh số đã thu về bằng giá gói mới</option>
                     </Select>
                   </Field>
+                )}
+                {projectedOverpaid > 0 && form.overpaymentPolicy === "external_refund" && (
+                  <>
+                    <Field label="Ngày hoàn tiền" required>
+                      <DateInput value={form.refundAt || ""} onChange={(refundAt) => setForm({ ...form, refundAt })} />
+                    </Field>
+                    <Field label="Phương thức hoàn">
+                      <Select value={form.refundMethod || "cash"} onChange={(event) => setForm({ ...form, refundMethod: event.target.value, refundBankAccountId: event.target.value === "cash" ? "" : form.refundBankAccountId })}>
+                        <option value="cash">Tiền mặt</option>
+                        <option value="bank_transfer">Chuyển khoản</option>
+                        <option value="card">Thẻ</option>
+                      </Select>
+                    </Field>
+                    {form.refundMethod !== "cash" && (
+                      <Field className="form-span" label="Tài khoản hoàn" required={form.refundMethod === "bank_transfer"}>
+                        <Select value={form.refundBankAccountId || ""} onChange={(event) => setForm({ ...form, refundBankAccountId: event.target.value })}>
+                          <option value="">Chọn tài khoản</option>
+                          {options?.bankAccounts?.map((row) => (
+                            <option key={row.id} value={row.id}>{row.label}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                  </>
                 )}
               </div>
               {plan && (

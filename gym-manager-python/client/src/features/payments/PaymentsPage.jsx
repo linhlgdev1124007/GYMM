@@ -53,7 +53,7 @@ export function PaymentsPage() {
   const columns = [
     {
       key: "number",
-      label: "Phiếu thu",
+      label: "Giao dịch",
       sortValue: (r) => r.number,
       render: (r) => (
         <div>
@@ -83,7 +83,7 @@ export function PaymentsPage() {
       className: "text-right",
       sortValue: (r) => r.amount,
       render: (r) => (
-        <span className="font-medium text-slate-900">{money(r.amount)}</span>
+        <span className={`font-medium ${Number(r.amount || 0) < 0 ? "text-red-700" : "text-slate-900"}`}>{money(r.amount)}</span>
       ),
     },
     {
@@ -94,15 +94,15 @@ export function PaymentsPage() {
     },
     {
       key: "paidAt",
-      label: "Ngày thu",
+      label: "Ngày giao dịch",
       sortValue: (r) => r.paidAt,
       render: (r) => dateTime(r.paidAt),
     },
     {
       key: "status",
       label: "Trạng thái",
-      sortValue: () => "paid",
-      render: (r) => <StatusBadge status="paid" />,
+      sortValue: (r) => r.status || "paid",
+      render: (r) => <StatusBadge status={r.status || "paid"} />,
     },
     {
       key: "receipt",

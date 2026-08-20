@@ -321,7 +321,7 @@ export function ReportsPage() {
     { key: "package", label: "Gói tập", render: (row) => <span>{row.package || "—"}{row.membershipCode && <span className="cell-secondary block">{row.membershipCode}</span>}</span> },
     { key: "sale", label: "Sale", render: (row) => <span><span className="font-medium text-slate-900">{row.saleName}</span><span className="cell-secondary block">{row.saleTitle || "—"}</span></span> },
     { key: "method", label: "Phương thức", render: (row) => methodLabels[row.method] || row.method },
-    { key: "amount", label: "Số tiền", className: "text-right tabular-nums", render: (row) => <strong className="font-semibold text-slate-950">{money(row.amount)}</strong> },
+    { key: "amount", label: "Số tiền", className: "text-right tabular-nums", render: (row) => <strong className={`font-semibold ${Number(row.amount || 0) < 0 ? "text-red-700" : "text-slate-950"}`}>{money(row.amount)}</strong> },
   ];
   const debtColumnDefinitions = [
     { key: "member", label: "Hội viên", render: (row) => <Link className="cell-primary hover:underline" to={`/members/${row.memberId}`}>{row.member}<span className="cell-secondary block">{[row.memberCode, row.phone].filter(Boolean).join(" · ")}</span></Link> },

@@ -35,6 +35,7 @@ export const statusLabel = {
   open: "Đang ở phòng",
   closed: "Đã rời phòng",
   paid: "Đã thanh toán",
+  refund: "Hoàn tiền",
   converted: "Đã chuyển đổi",
   refunded: "Đã hoàn tiền",
   void: "Đã hủy",

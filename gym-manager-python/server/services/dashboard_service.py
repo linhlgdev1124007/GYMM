@@ -358,7 +358,7 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         by_sale[key]["payments"] += 1
         revenue_items.append({
             "type": "membership",
-            "revenueType": "Gói hội viên",
+            "revenueType": "Hoàn tiền gói" if row.channel == "refund" or (row.amount or 0) < 0 else "Gói hội viên",
             "paymentId": row.id,
             "paymentNo": row.payment_no,
             "paidAt": utc_iso(row.paid_at),
