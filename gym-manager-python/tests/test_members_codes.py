@@ -53,6 +53,30 @@ def test_created_member_uses_next_timesoft_style_customer_code(tmp_path):
         db.close()
 
 
+def test_created_members_can_share_parent_phone(tmp_path):
+    from server.models import Customer
+    from server.services.members_service import create_member
+
+    db = make_session(tmp_path)
+    try:
+        phone = "0900000099"
+        older = create_member(db, {
+            "name": "Anh Nguyen",
+            "phone": phone,
+        })
+        younger = create_member(db, {
+            "name": "Em Nguyen",
+            "phone": phone,
+        })
+
+        assert older["phone"] == phone
+        assert younger["phone"] == phone
+        assert older["id"] != younger["id"]
+        assert db.query(Customer).join(Customer.person).filter_by(phone=phone).count() == 2
+    finally:
+        db.close()
+
+
 def test_newest_sort_uses_customer_code_number(tmp_path):
     from server.services.members_service import list_members
 

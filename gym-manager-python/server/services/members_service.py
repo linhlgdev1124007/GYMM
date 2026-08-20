@@ -557,8 +557,6 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
     phone = str(payload.get("phone", "")).strip()
     if not name or not phone:
         raise HTTPException(status_code=422, detail="Họ tên và số điện thoại là bắt buộc.")
-    if db.query(Person).filter(Person.phone == phone).first():
-        raise HTTPException(status_code=409, detail="Số điện thoại này đã tồn tại.")
     dah_event_id = _int(payload.get("dahEventId"))
     dah_event = db.get(DahWebhookEvent, dah_event_id) if dah_event_id else None
     if dah_event_id:
