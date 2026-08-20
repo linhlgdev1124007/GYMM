@@ -399,6 +399,9 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     latest_debt_due_date = db.query(Membership.debt_due_date).filter(
         Membership.id == current_regular_id
     ).correlate(Customer).scalar_subquery()
+    current_expires_at = db.query(Membership.expires_at).filter(
+        Membership.id == current_regular_id
+    ).correlate(Customer).scalar_subquery()
     debt_due_group = case(
         (and_(latest_debt_amount > 0, latest_debt_due_date != None), 0),
         (latest_debt_amount > 0, 1),
@@ -408,6 +411,18 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         orderings = [Person.display_name.asc(), Customer.id.desc()]
     elif sort == "status":
         orderings = [Customer.status.asc(), Customer.id.desc()]
+    elif sort == "expired_days_asc" or (member_status == "expired" and sort == "newest"):
+        orderings = [
+            current_expires_at.desc(),
+            _customer_code_sort_expression(db).desc(),
+            Customer.id.desc(),
+        ]
+    elif sort == "expired_days_desc":
+        orderings = [
+            current_expires_at.asc(),
+            _customer_code_sort_expression(db).desc(),
+            Customer.id.desc(),
+        ]
     elif sort == "debt_due_asc":
         orderings = [
             debt_due_group.asc(),

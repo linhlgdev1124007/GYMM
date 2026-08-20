@@ -178,7 +178,7 @@ export function MembersPage() {
   const paymentStatus = params.get("paymentStatus") || "all";
   const overdueDays = Number(params.get("overdueDays") || 7);
   const view = params.get("view") || "all";
-  const sort = params.get("sort") || "newest";
+  const sort = params.get("sort") || (status === "expired" ? "expired_days_asc" : "newest");
   const packageId = params.get("packageId") || "";
   const trainerId = params.get("trainerId") || "";
   const page = Number(params.get("page") || 1);
@@ -841,13 +841,20 @@ export function MembersPage() {
             <Select
               className="input w-48"
               value={status}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextStatus = e.target.value;
                 updateParams({
-                  status: e.target.value,
-                  expiringDays: e.target.value === "expiring" ? expiringDays : "",
+                  status: nextStatus,
+                  expiringDays: nextStatus === "expiring" ? expiringDays : "",
+                  sort:
+                    nextStatus === "expired"
+                      ? "expired_days_asc"
+                      : sort.startsWith("expired_days_")
+                        ? ""
+                        : sort,
                   page: "",
-                })
-              }
+                });
+              }}
             >
               <option value="all">Tất cả</option>
               <option value="active">Đang hoạt động</option>
@@ -960,6 +967,8 @@ export function MembersPage() {
               <option value="newest">Mới nhất</option>
               <option value="name">Tên A–Z</option>
               <option value="status">Trạng thái</option>
+              <option value="expired_days_asc">Hết hạn ít ngày nhất</option>
+              <option value="expired_days_desc">Hết hạn lâu nhất</option>
               <option value="debt_due_asc">Hạn công nợ gần nhất</option>
               <option value="debt_due_desc">Hạn công nợ xa nhất</option>
             </Select>

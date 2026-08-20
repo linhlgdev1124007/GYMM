@@ -97,6 +97,84 @@ def test_newest_sort_uses_customer_code_number(tmp_path):
         db.close()
 
 
+def test_expired_member_sort_orders_by_days_expired(tmp_path):
+    from datetime import date
+
+    from server.models import Customer, Membership, ServicePackage
+    from server.services.members_service import list_members
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        set_test_today(date(2026, 8, 21))
+        plan = ServicePackage(
+            code="EXPIRED",
+            name="Expired Plan",
+            category="Gym",
+            duration_days=30,
+            price=1000,
+            is_pt=False,
+        )
+        db.add(plan)
+        db.commit()
+
+        seed_customer(db, "CUS0000001", "Expired Five Days", "0900000101")
+        seed_customer(db, "CUS0000002", "Expired One Day", "0900000102")
+        seed_customer(db, "CUS0000003", "Expired Two Days", "0900000103")
+        customers = {
+            row.customer_code: row
+            for row in db.query(Customer).all()
+        }
+        db.add_all([
+            Membership(
+                customer_id=customers["CUS0000001"].id,
+                package_id=plan.id,
+                code="MS-EXPIRED-5",
+                registered_at=date(2026, 7, 1),
+                starts_at=date(2026, 7, 1),
+                expires_at=date(2026, 8, 16),
+                status="expired",
+            ),
+            Membership(
+                customer_id=customers["CUS0000002"].id,
+                package_id=plan.id,
+                code="MS-EXPIRED-1",
+                registered_at=date(2026, 7, 1),
+                starts_at=date(2026, 7, 1),
+                expires_at=date(2026, 8, 20),
+                status="expired",
+            ),
+            Membership(
+                customer_id=customers["CUS0000003"].id,
+                package_id=plan.id,
+                code="MS-EXPIRED-2",
+                registered_at=date(2026, 7, 1),
+                starts_at=date(2026, 7, 1),
+                expires_at=date(2026, 8, 19),
+                status="expired",
+            ),
+        ])
+        db.commit()
+
+        data = list_members(
+            db,
+            q="",
+            member_status="expired",
+            page=1,
+            page_size=20,
+            sort="expired_days_asc",
+        )
+
+        assert [row["code"] for row in data["items"]] == [
+            "CUS0000002",
+            "CUS0000003",
+            "CUS0000001",
+        ]
+    finally:
+        set_test_today(None)
+        db.close()
+
+
 def test_debt_due_sort_orders_members_before_pagination(tmp_path):
     from datetime import date
 
