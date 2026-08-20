@@ -68,6 +68,7 @@ def _job_public(row: dict) -> dict:
         "completedAt": row.get("completedAt"),
         "agentId": row.get("agentId"),
         "lookbackHours": row.get("lookbackHours"),
+        "workDate": row.get("workDate"),
         "range": row.get("range"),
         "result": row.get("result"),
         "error": row.get("error"),

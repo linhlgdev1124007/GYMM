@@ -187,6 +187,8 @@ export function SettingsPage() {
     mutationFn: (payload = { lookbackHours: 24 }) => api("/api/dah/local-agent/sync-request", { method: "POST", body: payload }),
     onSuccess: (_, payload) => {
       client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      client.invalidateQueries({ queryKey: ["dah-local-agent-pending-batches"] });
+      client.invalidateQueries({ queryKey: ["dah-local-agent-scan-days"] });
       notify.success(payload?.workDate ? `Đã gửi yêu cầu quét lại ngày ${payload.workDate}.` : "Đã gửi yêu cầu sync tới DAH agent.");
     },
     onError: (reason) => notify.error(reason.message),
@@ -231,6 +233,7 @@ export function SettingsPage() {
   const pendingBatches = pendingSyncBatches.data?.items || [];
   const scanDays = dahScanDays.data?.items || [];
   const agent = dahAgentStatus.data?.agent;
+  const recentDahJobs = dahAgentStatus.data?.recentJobs || [];
   const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter(canSyncDahEvent).map((event) => event.eventKey));
   const selectedEventKeys = Object.entries(selectedSyncEvents)
     .filter(([key, checked]) => checked && selectableSyncEventKeys.has(key))
@@ -466,7 +469,15 @@ export function SettingsPage() {
               <p className="text-xs text-slate-400">Heartbeat cuối: {dateTime(agent?.lastSeenAt)} · Agent tự quét mỗi 30 phút từ 19/08/2026</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" onClick={() => pendingSyncBatches.refetch()}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  dahAgentStatus.refetch();
+                  pendingSyncBatches.refetch();
+                  dahScanDays.refetch();
+                }}
+              >
                 <RefreshCw size={14} />
                 Làm mới
               </Button>
@@ -517,6 +528,38 @@ export function SettingsPage() {
             </div>
           )}
           {!pendingBatches.length && <p className="mt-3 text-sm text-slate-400">Chưa có batch sync nào đang chờ duyệt.</p>}
+          {recentDahJobs.length > 0 && (
+            <div className="mt-4 overflow-x-auto rounded-lg border border-slate-100">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2">Job gần đây</th>
+                    <th className="px-3 py-2">Ngày</th>
+                    <th className="px-3 py-2">Trạng thái</th>
+                    <th className="px-3 py-2 text-right">Miss</th>
+                    <th className="px-3 py-2 text-right">Trùng</th>
+                    <th className="px-3 py-2 text-right">Chưa khớp</th>
+                    <th className="px-3 py-2 text-right">Fail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentDahJobs.slice(0, 5).map((job) => (
+                    <tr key={job.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{dateTime(job.createdAt)}</td>
+                      <td className="px-3 py-2">{job.workDate || "24h gần nhất"}</td>
+                      <td className="px-3 py-2">
+                        {job.status === "pending_approval" ? "Chờ duyệt" : job.status === "completed" ? "Đã xong" : job.status === "running" ? "Đang chạy" : job.status === "pending" ? "Đang chờ agent" : job.status}
+                      </td>
+                      <td className="px-3 py-2 text-right text-emerald-700">{job.result?.matched || 0}</td>
+                      <td className="px-3 py-2 text-right">{job.result?.duplicates || 0}</td>
+                      <td className="px-3 py-2 text-right text-amber-700">{job.result?.unknown || 0}</td>
+                      <td className="px-3 py-2 text-right text-red-700">{job.result?.failCount || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {scanDays.length > 0 && (
             <div className="mt-4 overflow-x-auto rounded-lg border border-slate-100">
               <table className="min-w-full text-xs">

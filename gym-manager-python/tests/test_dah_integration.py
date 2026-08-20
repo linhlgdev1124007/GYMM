@@ -280,6 +280,7 @@ def test_dah_manual_day_sync_job_preserves_work_date_for_pending_batch(tmp_path)
         job = dah_local_sync_service.create_sync_job({"workDate": "2026-08-19"})
         next_job = dah_local_sync_service.next_job("test-agent", timeout=0)
 
+        assert job["workDate"] == "2026-08-19"
         assert next_job["id"] == job["id"]
         assert next_job["workDate"] == "2026-08-19"
         assert next_job["range"]["begin"] == "2026-08-19T00:00:00"
