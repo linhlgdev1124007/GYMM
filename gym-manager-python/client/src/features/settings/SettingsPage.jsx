@@ -39,6 +39,10 @@ function accountForm(row) {
     : blankAccount;
 }
 
+function canSyncDahEvent(event) {
+  return event?.willSync === true || event?.status === "matched" || event?.status === "unknown";
+}
+
 export function SettingsPage() {
   const client = useQueryClient();
   const [titleModal, setTitleModal] = useState(null);
@@ -112,7 +116,7 @@ export function SettingsPage() {
   }, [accountModal]);
   useEffect(() => {
     if (!syncDetail?.events) return;
-    setSelectedSyncEvents(Object.fromEntries(syncDetail.events.map((event) => [event.eventKey, event.status === "matched" && event.willSync])));
+    setSelectedSyncEvents(Object.fromEntries(syncDetail.events.map((event) => [event.eventKey, canSyncDahEvent(event)])));
   }, [syncDetail?.id]);
 
   const saveJobTitle = useMutation({
@@ -227,7 +231,7 @@ export function SettingsPage() {
   const pendingBatches = pendingSyncBatches.data?.items || [];
   const scanDays = dahScanDays.data?.items || [];
   const agent = dahAgentStatus.data?.agent;
-  const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter((event) => event.status === "matched").map((event) => event.eventKey));
+  const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter(canSyncDahEvent).map((event) => event.eventKey));
   const selectedEventKeys = Object.entries(selectedSyncEvents)
     .filter(([key, checked]) => checked && selectableSyncEventKeys.has(key))
     .map(([key]) => key);
@@ -618,9 +622,9 @@ export function SettingsPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => setSelectedSyncEvents(Object.fromEntries((syncDetail.events || []).map((event) => [event.eventKey, event.status === "matched"])))}
+                    onClick={() => setSelectedSyncEvents(Object.fromEntries((syncDetail.events || []).map((event) => [event.eventKey, canSyncDahEvent(event)])))}
                   >
-                    Chọn event hợp lệ
+                    Chọn event đồng bộ được
                   </Button>
                   <Button
                     size="sm"
@@ -645,7 +649,7 @@ export function SettingsPage() {
                   </thead>
                   <tbody>
                     {(syncDetail.events || []).map((event) => {
-                      const disabled = event.status !== "matched";
+                      const disabled = !canSyncDahEvent(event);
                       return (
                       <tr key={event.eventKey} className={`border-t border-slate-100 ${disabled ? "bg-slate-50 opacity-55" : ""}`}>
                         <td className="px-3 py-2">
