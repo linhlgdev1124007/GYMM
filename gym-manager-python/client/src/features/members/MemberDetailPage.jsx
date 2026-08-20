@@ -395,6 +395,8 @@ export function MemberDetailPage() {
     client.invalidateQueries({ queryKey: ["members"] });
     client.invalidateQueries({ queryKey: ["memberships"] });
     client.invalidateQueries({ queryKey: ["training"] });
+    client.invalidateQueries({ queryKey: ["payments"] });
+    client.invalidateQueries({ queryKey: ["reports"] });
     client.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const updateMember = useMutation({
@@ -798,7 +800,16 @@ export function MemberDetailPage() {
     },
   ];
   const trainingColumns = [
-    { key: "type", label: "Nhóm PT" },
+    {
+      key: "packageName",
+      label: "Gói PT/BT",
+      render: (r) => (
+        <span>
+          {r.packageName || "Chưa đặt tên gói"}
+          <small className="cell-secondary block">{r.type}</small>
+        </span>
+      ),
+    },
     {
       key: "schedule",
       label: "Lịch tập",
@@ -824,6 +835,18 @@ export function MemberDetailPage() {
       key: "sessions",
       label: "Số buổi",
       render: (r) => `${r.remainingSessions}/${r.totalSessions}`,
+    },
+    {
+      key: "finance",
+      label: "Tài chính PT",
+      render: (r) => (
+        <span>
+          {money(r.paidAmount)} / {money(r.finalPrice)}
+          <small className={`cell-secondary block ${r.debtAmount > 0 ? "text-red-700" : "text-emerald-700"}`}>
+            {r.debtAmount > 0 ? `${money(r.debtAmount)} nợ${r.nextDebtDueDate ? ` · hạn ${shortDate(r.nextDebtDueDate)}` : ""}` : "Đã tất toán"}
+          </small>
+        </span>
+      ),
     },
     {
       key: "status",

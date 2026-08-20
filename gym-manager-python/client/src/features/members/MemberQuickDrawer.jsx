@@ -71,6 +71,8 @@ export function MemberQuickDrawer({
     client.invalidateQueries({ queryKey: ["members"] });
     client.invalidateQueries({ queryKey: ["memberships"] });
     client.invalidateQueries({ queryKey: ["training"] });
+    client.invalidateQueries({ queryKey: ["payments"] });
+    client.invalidateQueries({ queryKey: ["reports"] });
     client.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const update = useMutation({
@@ -467,7 +469,10 @@ export function MemberQuickDrawer({
                   <dt>PT hiện tại</dt>
                   <dd>
                     {training ? (
-                      training.type
+                      <>
+                        {training.packageName || training.type}
+                        <small className="block text-xs text-slate-500">{training.type}</small>
+                      </>
                     ) : canFinancial ? (
                       <button
                         className="text-xs font-medium text-blue-700"
@@ -478,6 +483,17 @@ export function MemberQuickDrawer({
                     ) : "Chưa đăng ký"}
                   </dd>
                 </div>
+                {training && (
+                  <div className="inline-field">
+                    <dt>Tài chính PT</dt>
+                    <dd>
+                      {money(training.paidAmount)} / {money(training.finalPrice)}
+                      <small className={`block text-xs ${training.debtAmount > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                        {training.debtAmount > 0 ? `${money(training.debtAmount)} nợ${training.nextDebtDueDate ? ` · hạn ${shortDate(training.nextDebtDueDate)}` : ""}` : "Đã tất toán"}
+                      </small>
+                    </dd>
+                  </div>
+                )}
                 <div className="inline-field">
                   <dt>Lịch PT</dt>
                   <dd>
