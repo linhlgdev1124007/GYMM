@@ -908,6 +908,50 @@ def test_debt_collection_uses_actual_paid_at(tmp_path):
         db.close()
 
 
+def test_membership_renewal_uses_actual_paid_at_for_revenue(tmp_path):
+    import asyncio
+    from server.models import Payment
+    from server.services.dashboard_service import reports
+    from server.services.members_service import create_membership
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=date(2026, 4, 1),
+            activated_at=date(2026, 4, 1),
+        )
+        membership.expires_at = date(2026, 4, 30)
+        db.commit()
+
+        renewed = asyncio.run(create_membership(db, {
+            "memberId": str(customer.id),
+            "planId": str(membership.package_id),
+            "startsAt": "2026-06-01",
+            "activateNow": "false",
+            "activationDate": "",
+            "expiresAt": "2026-07-01",
+            "finalPrice": "1000000",
+            "paidAmount": "1000000",
+            "paymentMethod": "cash",
+            "paidAt": "2026-05-20",
+        }, [], None))
+
+        payment = db.query(Payment).filter(Payment.membership_id == renewed["id"]).one()
+        assert payment.paid_at == datetime(2026, 5, 19, 17, 0)
+        assert payment.shift_date == date(2026, 5, 20)
+
+        may = reports(db, "2026-05-01", "2026-05-31")
+        assert may["summary"]["revenue"] == 1000000
+        assert may["revenueItems"][0]["paymentNo"] == payment.payment_no
+
+        june = reports(db, "2026-06-01", "2026-06-30")
+        assert june["summary"]["revenue"] == 0
+    finally:
+        db.close()
+
+
 def test_member_status_syncs_after_cancel_and_transfer(tmp_path):
     from server.models import Customer, Membership, Person, ServicePackage
     from server.services.members_service import membership_action

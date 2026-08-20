@@ -667,6 +667,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         method = membership_payload.get("paymentMethod") or "cash"
         bank_account_id = _int(membership_payload.get("bankAccountId"))
         _require_bank_account_for_payment(db, method, bank_account_id, cash_paid)
+        paid_at = _parse_paid_at(membership_payload.get("paidAt")) if cash_paid else None
         membership = Membership(
             customer_id=member.id,
             package_id=plan.id,
@@ -692,15 +693,15 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
                 membership_id=membership.id,
                 bank_account_id=bank_account_id,
                 payment_no=f"PAY-{membership.id:06d}-001",
-                paid_at=utc_now(),
+                paid_at=paid_at,
                 amount=cash_paid,
                 method=method,
                 channel="counter",
-                shift_date=vietnam_today(),
+                shift_date=utc_vietnam_date(paid_at) or vietnam_today(),
                 note="Thanh toán đăng ký gói cùng lúc tạo hội viên",
             )
             db.add(payment); db.flush()
-            record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create"})
+            record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create", "paidAt": utc_iso(paid_at)})
         db.flush()
         _sync_member_status_from_memberships(db, member)
         record_audit(db, actor, "create", "membership", membership.id, f"Đăng ký gói {plan.name} cùng lúc tạo hội viên", customer_id=member.id, details={"startsAt": starts_at, "expiresAt": expires_at, "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
@@ -926,6 +927,7 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     method = form.get("paymentMethod") or "cash"
     bank_account_id = _int(form.get("bankAccountId"))
     _require_bank_account_for_payment(db, method, bank_account_id, cash_paid)
+    paid_at = _parse_paid_at(form.get("paidAt")) if cash_paid else None
     expires_at = None if shifted_by_category else _parse_date(form.get("expiresAt"))
     if expires_at and expires_at < effective_start and plan.duration_days:
         expires_at = effective_start + timedelta(days=plan.duration_days)
@@ -935,13 +937,13 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=vietnam_today(), starts_at=effective_start, expires_at=expires_at, activated_at=scheduled_activation, remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=debt, debt_due_date=debt_due_date, sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status=initial_status)
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if cash_paid:
-        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=bank_account_id, payment_no=f"PAY-{row.id:06d}-001", paid_at=utc_now(), amount=cash_paid, method=method, channel="counter", shift_date=vietnam_today(), note="Thanh toán đăng ký gói")
+        payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=bank_account_id, payment_no=f"PAY-{row.id:06d}-001", paid_at=paid_at, amount=cash_paid, method=method, channel="counter", shift_date=utc_vietnam_date(paid_at) or vietnam_today(), note="Thanh toán đăng ký gói")
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
     record_audit(db, actor, "create", "membership", row.id, f"Đăng ký gói {plan.name}", customer_id=member.id, details={"startsAt": row.starts_at, "expiresAt": row.expires_at, "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
     if cash_paid:
-        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts)})
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at)})
     mark_converted_day_pass(
         db,
         day_pass_id,

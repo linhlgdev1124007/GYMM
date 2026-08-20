@@ -76,6 +76,7 @@ export function MembershipForm({
           paidAmount: membership.paidAmount || 0,
           debtDueDate: membership.debtDueDate || "",
           paymentMethod: membership.payments?.[0]?.method || "cash",
+          paidAt: today,
           bankAccountId: "",
           status: membership.status || "active",
           activationDate: membership.activatedAt || "",
@@ -92,6 +93,7 @@ export function MembershipForm({
           paidAmount: 0,
           debtDueDate: "",
           paymentMethod: "cash",
+          paidAt: today,
           bankAccountId: "",
           saleOnlineEmployeeId: "",
           directSaleEmployeeId: "",
@@ -153,6 +155,11 @@ export function MembershipForm({
       setLocalError("Vui lòng chọn tài khoản nhận tiền khi thanh toán chuyển khoản.");
       return;
     }
+    const paymentDelta = Number(form.paidAmount || 0) - Number(initial.paidAmount || 0);
+    if ((!membership ? Number(form.paidAmount || 0) > 0 : paymentDelta > 0) && !form.paidAt) {
+      setLocalError("Vui lòng chọn ngày thu tiền.");
+      return;
+    }
     const data = new FormData();
     Object.entries(form).forEach(([key, value]) => {
       if (key !== "receipts" && value != null) data.append(key, value);
@@ -178,6 +185,13 @@ export function MembershipForm({
     Number(form.finalPrice) - Number(form.paidAmount),
     0,
   );
+  const paymentDelta = Math.max(
+    Number(form.paidAmount || 0) - Number(initial.paidAmount || 0),
+    0,
+  );
+  const hasNewPayment = !membership
+    ? Number(form.paidAmount || 0) > 0
+    : paymentDelta > 0;
   const memberName = member?.name || membership?.memberName;
   const memberCode = member?.code;
   return (
@@ -362,6 +376,14 @@ export function MembershipForm({
                   <option value="card">Thẻ</option>
                 </Select>
               </Field>
+              {hasNewPayment && (
+                <Field label="Ngày thu tiền" required hint="Dùng để ghi nhận doanh thu đúng kỳ thực thu.">
+                  <DateInput
+                    value={form.paidAt || ""}
+                    onChange={(paidAt) => setForm({ ...form, paidAt })}
+                  />
+                </Field>
+              )}
               {form.paymentMethod !== "cash" && (
                 <Field label="Tài khoản nhận" required={form.paymentMethod === "bank_transfer"}>
                   <Select
@@ -447,6 +469,12 @@ export function MembershipForm({
                   <dt className="text-slate-500">Thanh toán lần này</dt>
                   <dd className="mt-0.5 font-medium text-emerald-700">{money(form.paidAmount)}</dd>
                 </div>
+                {hasNewPayment && (
+                  <div>
+                    <dt className="text-slate-500">Ngày thu tiền</dt>
+                    <dd className="mt-0.5 font-medium text-slate-950">{shortDate(form.paidAt)}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-slate-500">Công nợ mới</dt>
                   <dd className={`mt-0.5 font-medium ${newDebt ? "text-red-700" : "text-emerald-700"}`}>
