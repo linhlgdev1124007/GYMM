@@ -48,6 +48,8 @@ export function MembershipOperationsModal({ membership, memberships = [], member
       planId: "",
       finalPrice: membership?.finalPrice || 0,
       expiresAt: membership?.expiresAt || "",
+      debtDueDate: membership?.debtDueDate || "",
+      overpaymentPolicy: "keep_credit",
       days: "",
       effectiveAt: today(),
       reason: "",
@@ -96,18 +98,28 @@ export function MembershipOperationsModal({ membership, memberships = [], member
         ...(action === "transfer" ? { targetMemberId: form.targetMemberId } : {}),
         ...(action === "adjust_days" ? { days: form.days } : {}),
         ...(action === "change" || action === "upgrade"
-          ? { planId: form.planId, finalPrice: form.finalPrice, expiresAt: form.expiresAt }
+          ? {
+              planId: form.planId,
+              finalPrice: form.finalPrice,
+              expiresAt: form.expiresAt,
+              debtDueDate: form.debtDueDate,
+              overpaymentPolicy: form.overpaymentPolicy,
+            }
           : {}),
       },
     });
   };
+  const paidAmount = Number(membership?.paidAmount || 0);
+  const newPrice = Number(form.finalPrice || 0);
+  const projectedDebt = Math.max(newPrice - paidAmount, 0);
+  const projectedOverpaid = Math.max(paidAmount - newPrice, 0);
   const valid = String(form.reason || "").trim() && (
     (action === "freeze" && enteredFreezeDays > 0) ||
     action === "activate" ||
     action === "suspend" ||
     (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && Number(form.days || 0) !== 0) ||
     (action === "transfer" && form.targetMemberId) ||
-    ((action === "change" || action === "upgrade") && form.planId) ||
+    ((action === "change" || action === "upgrade") && form.planId && (!projectedDebt || form.debtDueDate) && (!projectedOverpaid || form.overpaymentPolicy)) ||
     action === "cancel"
   );
   return (
@@ -184,7 +196,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
           )}
           {(action === "change" || action === "upgrade") && (
             <section className="operation-panel">
-              <div className="operation-heading"><PackageOpen size={17} /><div><strong>{action === "upgrade" ? "Nâng cấp" : "Đổi"} gói tập</strong><span>Tiền đã thu được giữ nguyên và công nợ sẽ tính lại.</span></div></div>
+              <div className="operation-heading"><PackageOpen size={17} /><div><strong>{action === "upgrade" ? "Nâng cấp" : "Đổi"} gói tập</strong><span>Giá gói, công nợ và phần tiền dư sẽ được tính lại theo lựa chọn xử lý bên dưới.</span></div></div>
               <div className="form-grid">
                 <Field className="form-span" label="Gói mới" required>
                   <SearchableSelect value={form.planId} onChange={(planId) => {
@@ -192,10 +204,31 @@ export function MembershipOperationsModal({ membership, memberships = [], member
                     setForm({ ...form, planId, finalPrice: next?.price || 0 });
                   }} options={(options?.plans || []).filter((row) => row.id !== membership.package.id).map((row) => ({ value: row.id, label: row.name, meta: `${row.category} · ${money(row.price)} · ${row.durationDays} ngày` }))} placeholder="Chọn gói thay thế" />
                 </Field>
-                <Field label="Giá gói mới"><MoneyInput min={membership.paidAmount} value={form.finalPrice} onChange={(finalPrice) => setForm({ ...form, finalPrice })} /></Field>
+                <Field label="Giá gói mới"><MoneyInput min={0} value={form.finalPrice} onChange={(finalPrice) => setForm({ ...form, finalPrice })} /></Field>
                 <Field label="Ngày hết hạn"><DateInput value={form.expiresAt} onChange={(expiresAt) => setForm({ ...form, expiresAt })} /></Field>
+                {projectedDebt > 0 && (
+                  <Field label="Hạn công nợ mới" required>
+                    <DateInput value={form.debtDueDate || ""} onChange={(debtDueDate) => setForm({ ...form, debtDueDate })} />
+                  </Field>
+                )}
+                {projectedOverpaid > 0 && (
+                  <Field className="form-span" label="Xử lý tiền dư" required>
+                    <Select value={form.overpaymentPolicy || "keep_credit"} onChange={(event) => setForm({ ...form, overpaymentPolicy: event.target.value })}>
+                      <option value="keep_credit">Giữ dư trên hồ sơ để đối soát sau</option>
+                      <option value="external_refund">Đã/ sẽ hoàn tiền ngoài hệ thống</option>
+                      <option value="reduce_paid">Điều chỉnh số đã thu về bằng giá gói mới</option>
+                    </Select>
+                  </Field>
+                )}
               </div>
-              {plan && <div className="compensation-preview"><span>Gói mới <strong>{plan.name}</strong></span><span>Công nợ dự kiến <strong>{money(Math.max(Number(form.finalPrice) - Number(membership.paidAmount), 0))}</strong></span></div>}
+              {plan && (
+                <div className="compensation-preview">
+                  <span>Gói mới <strong>{plan.name}</strong></span>
+                  <span>Đã thu <strong>{money(paidAmount)}</strong></span>
+                  <span>Công nợ dự kiến <strong>{money(projectedDebt)}</strong></span>
+                  {projectedOverpaid > 0 && <span>Tiền dư <strong>{money(projectedOverpaid)}</strong></span>}
+                </div>
+              )}
             </section>
           )}
           {action === "cancel" && (

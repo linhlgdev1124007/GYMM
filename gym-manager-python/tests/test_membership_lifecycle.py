@@ -751,6 +751,301 @@ def test_cancelled_membership_cannot_adjust_days(tmp_path):
         db.close()
 
 
+def test_change_membership_to_higher_plan_recalculates_debt_with_due_date(tmp_path):
+    import json
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        upgrade_plan = ServicePackage(code="FIT-HIGHER", name="Fitness Higher", category="Fitness", duration_days=30, price=1500000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 500000
+        membership.deposit_amount = 500000
+        membership.debt_amount = 500000
+        membership.debt_due_date = date(2026, 8, 20)
+        db.add(upgrade_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": upgrade_plan.id,
+            "finalPrice": "1500000",
+            "expiresAt": "2026-09-15",
+            "debtDueDate": "2026-08-25",
+            "reason": "Khách đổi lên gói cao hơn",
+        }, None)
+        db.refresh(membership)
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
+        details = json.loads(event.details_json)
+
+        assert membership.package_id == upgrade_plan.id
+        assert membership.final_price == 1500000
+        assert membership.paid_amount == 500000
+        assert membership.debt_amount == 1000000
+        assert membership.debt_due_date == date(2026, 8, 25)
+        assert membership.expires_at == date(2026, 9, 15)
+        assert details["previousDebt"] == 500000
+        assert details["newDebt"] == 1000000
+        assert details["newDebtDueDate"] == "2026-08-25"
+    finally:
+        db.close()
+
+
+def test_change_membership_to_higher_plan_requires_debt_due_date_when_missing(tmp_path):
+    from fastapi import HTTPException
+    from server.models import ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        upgrade_plan = ServicePackage(code="FIT-HIGHER-MISSING-DUE", name="Fitness Higher Missing Due", category="Fitness", duration_days=30, price=1500000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 1000000
+        membership.deposit_amount = 1000000
+        membership.debt_amount = 0
+        membership.debt_due_date = None
+        db.add(upgrade_plan)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="hạn thanh toán"):
+            membership_action(db, membership.id, {
+                "action": "upgrade",
+                "planId": upgrade_plan.id,
+                "finalPrice": "1500000",
+                "reason": "Thiếu hạn công nợ",
+            }, None)
+    finally:
+        db.close()
+
+
+def test_change_membership_to_lower_plan_can_keep_overpayment_as_credit(tmp_path):
+    import json
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        lower_plan = ServicePackage(code="FIT-LOWER-CREDIT", name="Fitness Lower Credit", category="Fitness", duration_days=30, price=700000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 1000000
+        membership.deposit_amount = 1000000
+        membership.debt_amount = 0
+        db.add(lower_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": lower_plan.id,
+            "finalPrice": "700000",
+            "overpaymentPolicy": "keep_credit",
+            "reason": "Giữ phần dư để đối soát sau",
+        }, None)
+        db.refresh(membership)
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
+        details = json.loads(event.details_json)
+
+        assert membership.package_id == lower_plan.id
+        assert membership.final_price == 700000
+        assert membership.paid_amount == 1000000
+        assert membership.deposit_amount == 1000000
+        assert membership.debt_amount == 0
+        assert membership.debt_due_date is None
+        assert details["overpaidAmount"] == 300000
+        assert details["overpaymentPolicy"] == "keep_credit"
+        assert details["creditAmount"] == 300000
+    finally:
+        db.close()
+
+
+def test_change_membership_to_lower_plan_can_record_external_refund(tmp_path):
+    import json
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        lower_plan = ServicePackage(code="FIT-LOWER-REFUND", name="Fitness Lower Refund", category="Fitness", duration_days=30, price=700000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 1000000
+        membership.deposit_amount = 1000000
+        membership.debt_amount = 0
+        db.add(lower_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": lower_plan.id,
+            "finalPrice": "700000",
+            "overpaymentPolicy": "external_refund",
+            "reason": "Hoàn tiền ngoài hệ thống",
+        }, None)
+        db.refresh(membership)
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
+        details = json.loads(event.details_json)
+
+        assert membership.package_id == lower_plan.id
+        assert membership.final_price == 700000
+        assert membership.paid_amount == 700000
+        assert membership.deposit_amount == 700000
+        assert membership.debt_amount == 0
+        assert details["overpaidAmount"] == 300000
+        assert details["overpaymentPolicy"] == "external_refund"
+        assert details["externalRefundAmount"] == 300000
+    finally:
+        db.close()
+
+
+def test_change_membership_to_lower_plan_can_reduce_recorded_paid_amount(tmp_path):
+    import json
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        lower_plan = ServicePackage(code="FIT-LOWER-ADJUST", name="Fitness Lower Adjust", category="Fitness", duration_days=30, price=700000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 1000000
+        membership.deposit_amount = 1000000
+        membership.debt_amount = 0
+        db.add(lower_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": lower_plan.id,
+            "finalPrice": "700000",
+            "overpaymentPolicy": "reduce_paid",
+            "reason": "Điều chỉnh lại số đã thu do nhập sai",
+        }, None)
+        db.refresh(membership)
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
+        details = json.loads(event.details_json)
+
+        assert membership.package_id == lower_plan.id
+        assert membership.final_price == 700000
+        assert membership.paid_amount == 700000
+        assert membership.deposit_amount == 700000
+        assert membership.debt_amount == 0
+        assert details["overpaidAmount"] == 300000
+        assert details["overpaymentPolicy"] == "reduce_paid"
+        assert details["paidAdjustmentAmount"] == 300000
+    finally:
+        db.close()
+
+
+def test_change_membership_to_lower_plan_rejects_invalid_overpayment_policy(tmp_path):
+    from fastapi import HTTPException
+    from server.models import ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        lower_plan = ServicePackage(code="FIT-LOWER-BAD-POLICY", name="Fitness Lower Bad Policy", category="Fitness", duration_days=30, price=700000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 1000000
+        membership.deposit_amount = 1000000
+        membership.debt_amount = 0
+        db.add(lower_plan)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="tiền dư"):
+            membership_action(db, membership.id, {
+                "action": "change",
+                "planId": lower_plan.id,
+                "finalPrice": "700000",
+                "overpaymentPolicy": "bad_policy",
+                "reason": "Policy không hợp lệ",
+            }, None)
+    finally:
+        db.close()
+
+
+def test_change_unpaid_membership_to_lower_plan_reduces_debt(tmp_path):
+    import json
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        lower_plan = ServicePackage(code="FIT-LOWER-UNPAID", name="Fitness Lower Unpaid", category="Fitness", duration_days=30, price=700000, is_pt=False, is_active=True)
+        membership.final_price = 1000000
+        membership.paid_amount = 0
+        membership.deposit_amount = 0
+        membership.debt_amount = 1000000
+        membership.debt_due_date = date(2026, 8, 20)
+        db.add(lower_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": lower_plan.id,
+            "finalPrice": "700000",
+            "reason": "Khách đổi xuống khi chưa thanh toán",
+        }, None)
+        db.refresh(membership)
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="change").one()
+        details = json.loads(event.details_json)
+
+        assert membership.package_id == lower_plan.id
+        assert membership.final_price == 700000
+        assert membership.paid_amount == 0
+        assert membership.debt_amount == 700000
+        assert membership.debt_due_date == date(2026, 8, 20)
+        assert details["previousDebt"] == 1000000
+        assert details["newDebt"] == 700000
+        assert details["overpaidAmount"] == 0
+    finally:
+        db.close()
+
+
 def test_same_category_memberships_are_queued_and_other_categories_overlap(tmp_path):
     import asyncio
     from server.models import Membership, ServicePackage

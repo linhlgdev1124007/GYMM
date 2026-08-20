@@ -1375,16 +1375,46 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         if not plan or plan.id == row.package_id:
             raise HTTPException(422, "Vui lòng chọn một gói tập khác.")
         new_price = _money(payload.get("finalPrice"), plan.price or 0)
-        if new_price < (row.paid_amount or 0):
-            raise HTTPException(422, "Giá gói mới không được thấp hơn số tiền đã thu.")
         previous_price = row.final_price
+        previous_paid = row.paid_amount or 0
+        previous_debt = row.debt_amount or 0
+        previous_debt_due_date = row.debt_due_date
+        overpaid_amount = max(previous_paid - new_price, 0)
+        overpayment_policy = str(payload.get("overpaymentPolicy") or "keep_credit").strip()
+        if overpaid_amount and overpayment_policy not in {"keep_credit", "external_refund", "reduce_paid"}:
+            raise HTTPException(422, "Cách xử lý tiền dư không hợp lệ.")
+        if overpaid_amount and overpayment_policy in {"external_refund", "reduce_paid"}:
+            row.paid_amount = new_price
+            row.deposit_amount = new_price
         row.package_id = plan.id
         row.final_price = new_price
         row.debt_amount = max(new_price - (row.paid_amount or 0), 0)
+        if row.debt_amount:
+            row.debt_due_date = _parse_date(payload.get("debtDueDate")) or row.debt_due_date
+            if not row.debt_due_date:
+                raise HTTPException(422, "Vui lòng chọn hạn thanh toán cho công nợ phát sinh khi đổi gói.")
+        else:
+            row.debt_due_date = None
         if payload.get("expiresAt"):
             row.expires_at = _parse_date(payload.get("expiresAt"))
         summary = f"{'Nâng cấp' if action == 'upgrade' else 'Đổi'} gói {old_package_name} sang {plan.name}"
-        details = {"fromPackage": old_package_name, "toPackage": plan.name, "previousPrice": previous_price, "newPrice": new_price, "newDebt": row.debt_amount}
+        details = {
+            "fromPackage": old_package_name,
+            "toPackage": plan.name,
+            "previousPrice": previous_price,
+            "newPrice": new_price,
+            "previousPaid": previous_paid,
+            "newPaid": row.paid_amount,
+            "previousDebt": previous_debt,
+            "newDebt": row.debt_amount,
+            "previousDebtDueDate": previous_debt_due_date,
+            "newDebtDueDate": row.debt_due_date,
+            "overpaidAmount": overpaid_amount,
+            "overpaymentPolicy": overpayment_policy if overpaid_amount else None,
+            "creditAmount": overpaid_amount if overpaid_amount and overpayment_policy == "keep_credit" else 0,
+            "externalRefundAmount": overpaid_amount if overpaid_amount and overpayment_policy == "external_refund" else 0,
+            "paidAdjustmentAmount": overpaid_amount if overpaid_amount and overpayment_policy == "reduce_paid" else 0,
+        }
         new_customer_id, new_package_id = old_customer_id, plan.id
     else:
         if row.status == "cancelled":
