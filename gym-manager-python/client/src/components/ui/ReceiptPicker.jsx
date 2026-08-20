@@ -30,6 +30,7 @@ export function ReceiptPicker({ files = [], onChange, disabled = false }) {
   };
   const pasteImages = (event) => {
     if (disabled) return;
+    event.stopPropagation();
     const pastedFiles = Array.from(event.clipboardData?.items || [])
       .filter((item) => item.kind === "file" && ACCEPTED_IMAGE_TYPES.has(item.type))
       .map((item, index) => {
@@ -46,7 +47,7 @@ export function ReceiptPicker({ files = [], onChange, disabled = false }) {
     addFiles(pastedFiles, "paste");
   };
   return (
-    <div className="receipt-picker">
+    <div className="receipt-picker" onClick={(event) => event.stopPropagation()}>
       <label className={`receipt-dropzone ${disabled ? "disabled" : ""}`}>
         <Paperclip size={17} />
         <span>
@@ -69,6 +70,11 @@ export function ReceiptPicker({ files = [], onChange, disabled = false }) {
       <div
         className={`receipt-pastezone ${disabled ? "disabled" : ""}`}
         tabIndex={disabled ? -1 : 0}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.focus();
+        }}
         onPaste={pasteImages}
       >
         <ClipboardPaste size={16} />
