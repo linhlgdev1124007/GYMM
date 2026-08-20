@@ -443,13 +443,15 @@ def _rebuild_customer_day(db: Session, customer_id: int, work_date: date) -> int
         )
         .all()
     )
-    existing_ids = [row.id for row in existing]
-    if existing_ids:
-        db.query(DahWebhookEvent).filter(DahWebhookEvent.attendance_session_id.in_(existing_ids)).update(
+    protected_session_ids = {row.id for row in existing if row.processed_at}
+    rebuildable = [row for row in existing if not row.processed_at]
+    rebuildable_ids = [row.id for row in rebuildable]
+    if rebuildable_ids:
+        db.query(DahWebhookEvent).filter(DahWebhookEvent.attendance_session_id.in_(rebuildable_ids)).update(
             {DahWebhookEvent.attendance_session_id: None},
             synchronize_session=False,
         )
-    for row in existing:
+    for row in rebuildable:
         db.delete(row)
     db.flush()
 
@@ -471,6 +473,8 @@ def _rebuild_customer_day(db: Session, customer_id: int, work_date: date) -> int
     changed = 0
     for row in rows:
         if not row.event_time:
+            continue
+        if row.attendance_session_id in protected_session_ids:
             continue
         if last_accepted and abs((row.event_time - last_accepted).total_seconds()) <= dah_service.DUPLICATE_SCAN_SECONDS:
             row.status = "duplicate"
@@ -605,7 +609,7 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
             "registeredName": _clean(item.get("registeredName"), 160),
             "registeredPhone": _clean(item.get("registeredPhone"), 40),
             "mjCardNo": _clean(item.get("mjCardNo"), 80),
-            "willSync": status == "matched",
+            "willSync": status in {"matched", "unknown"},
             "raw": item,
         })
     return {

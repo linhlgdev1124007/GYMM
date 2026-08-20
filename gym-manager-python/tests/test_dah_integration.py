@@ -231,6 +231,47 @@ def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
         db.close()
 
 
+def test_dah_agent_unknown_event_is_committed_as_unknown_after_approval(tmp_path):
+    from server.models import DahWebhookEvent
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        payload = {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "unknown-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "unknown-approval-1",
+                "dahPersonUid": "991122",
+                "profileKey": "dah_profile:0/0/991122",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "UNKNOWN FACE",
+            }],
+        }
+
+        posted = dah_local_sync_service.record_result(db, "unknown-job", payload)
+        batch_id = posted["batch"]["id"]
+        assert posted["batch"]["summary"]["unknown"] == 1
+        assert posted["batch"]["summary"]["failCount"] == 1
+        assert posted["batch"]["eventCount"] == 1
+        assert db.query(DahWebhookEvent).count() == 0
+
+        approved = dah_local_sync_service.approve_batch(db, batch_id, {})
+        event = db.query(DahWebhookEvent).one()
+
+        assert approved["result"]["imported"] == 1
+        assert approved["result"]["unknown"] == 1
+        assert event.status == "unknown"
+        assert event.action == "unknown_identity"
+        assert event.person_uuid == "dah_profile:0/0/991122"
+        assert event.person_id == "991122"
+    finally:
+        db.close()
+
+
 def test_dah_local_sync_matches_by_person_id_only(tmp_path):
     from server.models import DahCustomerIdentity
     from server.services import dah_local_sync_service
@@ -259,6 +300,179 @@ def test_dah_local_sync_matches_by_person_id_only(tmp_path):
         assert preview["matched"] == 1
         assert event["customerId"] == customer_id
         assert event["matchSource"] == "person_id"
+    finally:
+        db.close()
+
+
+def test_local_agent_unknown_member_events_rebuild_after_identity_link_and_show_in_pt_queue(tmp_path):
+    from server.models import AttendanceSession, DahWebhookEvent, PtEnrollment
+    from server.services import dah_local_sync_service, dah_service
+    from server.services.operations_service import member_processing_queue
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid=None)
+        db.add(PtEnrollment(
+            customer_id=customer_id,
+            package_name="PT Test",
+            group_type="1:1",
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 9, 1),
+            total_sessions=10,
+            remaining_sessions=10,
+            status="active",
+        ))
+        db.commit()
+
+        dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "unknown-member-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [
+                {"dahUid": "member-u-1", "dahPersonUid": "771100", "profileKey": "dah_profile:0/0/771100", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "UNKNOWN MEMBER"},
+                {"dahUid": "member-u-2", "dahPersonUid": "771100", "profileKey": "dah_profile:0/0/771100", "eventTime": "2026-08-11T09:00:00", "status": 1, "name": "UNKNOWN MEMBER"},
+            ],
+        })
+        event = db.query(DahWebhookEvent).filter_by(person_id="771100").order_by(DahWebhookEvent.id.asc()).first()
+        assert event.status == "unknown"
+
+        linked = dah_service.assign_identity_to_customer(db, customer_id, event.id)
+        session = db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").one()
+        queue = member_processing_queue(db, day="2026-08-11")
+
+        assert linked["backfill"]["linkedEvents"] == 2
+        assert linked["backfill"]["rebuiltDays"] == 1
+        assert session.checked_in_at == datetime(2026, 8, 11, 7, 0)
+        assert session.checked_out_at == datetime(2026, 8, 11, 9, 0)
+        assert session.processed_at is None
+        assert queue["pagination"]["total"] == 1
+        assert queue["items"][0]["member"]["id"] == customer_id
+        assert queue["items"][0]["ptEnrollments"][0]["remainingSessions"] == 10
+    finally:
+        db.close()
+
+
+def test_member_identity_backfill_preserves_processed_pt_session(tmp_path):
+    from server.models import AttendanceSession, DahWebhookEvent, PtEnrollment, PtSessionLog
+    from server.services import dah_local_sync_service, dah_service
+
+    db = make_session(tmp_path)
+    try:
+        customer_id = seed_member(db, person_uuid=None)
+        enrollment = PtEnrollment(
+            customer_id=customer_id,
+            package_name="PT Protected",
+            group_type="1:1",
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 9, 1),
+            total_sessions=10,
+            remaining_sessions=9,
+            status="active",
+        )
+        db.add(enrollment)
+        db.flush()
+        processed = AttendanceSession(
+            customer_id=customer_id,
+            checked_in_at=datetime(2026, 8, 11, 10, 0),
+            checked_out_at=datetime(2026, 8, 11, 11, 0),
+            source="dah",
+            result="allowed",
+            status="closed",
+            workout_type="pt",
+            pt_enrollment_id=enrollment.id,
+            processed_at=datetime(2026, 8, 11, 11, 5),
+        )
+        db.add(processed)
+        db.flush()
+        log = PtSessionLog(
+            enrollment_id=enrollment.id,
+            attendance_session_id=processed.id,
+            action="pt_checkin",
+            delta_sessions=-1,
+            remaining_before=10,
+            remaining_after=9,
+            training_date=date(2026, 8, 11),
+            started_at=processed.checked_in_at,
+            ended_at=processed.checked_out_at,
+        )
+        db.add(log)
+        db.commit()
+        protected_session_id = processed.id
+        protected_log_id = log.id
+
+        dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "protected-member-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "member-protected-1",
+                "dahPersonUid": "771101",
+                "profileKey": "dah_profile:0/0/771101",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "UNKNOWN MEMBER",
+            }],
+        })
+        event = db.query(DahWebhookEvent).filter_by(person_id="771101").one()
+
+        linked = dah_service.assign_identity_to_customer(db, customer_id, event.id)
+        preserved = db.get(AttendanceSession, protected_session_id)
+        preserved_log = db.get(PtSessionLog, protected_log_id)
+
+        assert linked["backfill"]["linkedEvents"] == 1
+        assert preserved is not None
+        assert preserved.processed_at is not None
+        assert preserved.pt_enrollment_id == enrollment.id
+        assert preserved_log.attendance_session_id == protected_session_id
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").count() == 2
+    finally:
+        db.close()
+
+
+def test_local_agent_unknown_employee_events_rebuild_shift_after_identity_link(tmp_path):
+    from server.models import AttendanceSession, DahWebhookEvent, Employee, EmployeeShiftSchedule, Person
+    from server.services import dah_local_sync_service, dah_service
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="Backfill Coach", phone="0900000191", status="active")
+        db.add(person)
+        db.flush()
+        employee = Employee(person_id=person.id, employee_code="EMP-00191", job_title="Coach", status="active")
+        db.add(employee)
+        db.flush()
+        db.add(EmployeeShiftSchedule(
+            employee_id=employee.id,
+            work_date=date(2026, 8, 11),
+            starts_at=datetime(2026, 8, 11, 7, 0),
+            ends_at=datetime(2026, 8, 11, 10, 0),
+        ))
+        db.commit()
+
+        dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "unknown-employee-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [
+                {"dahUid": "employee-u-1", "dahPersonUid": "881100", "profileKey": "dah_profile:0/0/881100", "eventTime": "2026-08-11T10:00:00", "status": 1, "name": "UNKNOWN EMPLOYEE"},
+                {"dahUid": "employee-u-2", "dahPersonUid": "881100", "profileKey": "dah_profile:0/0/881100", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "UNKNOWN EMPLOYEE"},
+            ],
+        })
+        event = db.query(DahWebhookEvent).filter_by(person_id="881100").order_by(DahWebhookEvent.id.asc()).first()
+        assert event.status == "unknown"
+
+        linked = dah_service.assign_identity_to_employee(db, employee.id, event.id)
+        session = db.query(AttendanceSession).filter_by(employee_id=employee.id, source="dah").one()
+
+        assert linked["backfill"]["linkedEvents"] == 2
+        assert linked["backfill"]["rebuiltDays"] == 1
+        assert session.employee_shift_schedule_id is not None
+        assert session.checked_in_at == datetime(2026, 8, 11, 7, 0)
+        assert session.checked_out_at == datetime(2026, 8, 11, 10, 0)
+        assert session.status == "closed"
     finally:
         db.close()
 
@@ -444,7 +658,8 @@ def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
         assert member["personUuid"] == "732"
         assert customer.avatar_image_data.startswith("data:image/jpeg;base64,")
         assert db.query(DahCustomerIdentity).filter_by(customer_id=customer.id, person_uuid="732").count() == 1
-        assert event.status == "linked"
+        assert event.status == "processed"
+        assert event.action == "checkin"
         assert event.image_data is None
         assert dah_service.identity_candidates(db)["items"] == []
     finally:
@@ -476,7 +691,8 @@ def test_dah_person_id_only_event_can_be_assigned_and_processed(tmp_path):
 
         assert linked["personUuid"] == "person_id:1128"
         assert customer.person_uuid == "person_id:1128"
-        assert event.status == "linked"
+        assert event.status == "processed"
+        assert event.action == "checkin"
         assert db.query(DahCustomerIdentity).filter_by(
             customer_id=customer_id,
             person_uuid="person_id:1128",
@@ -486,9 +702,9 @@ def test_dah_person_id_only_event_can_be_assigned_and_processed(tmp_path):
         checkin = dah_service.verify(db, verify_payload_for_person_id("1128", "2026-08-11T10:30:00", "2"))
 
         assert checkin["status"] == "processed"
-        assert checkin["action"] == "checkin"
+        assert checkin["action"] == "checkout"
         assert checkin["memberId"] == customer_id
-        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="closed").count() == 1
     finally:
         db.close()
 
@@ -511,12 +727,12 @@ def test_dah_person_id_fallback_upgrades_to_real_uuid_without_stale_customer_key
         identity = db.query(DahCustomerIdentity).filter_by(customer_id=customer_id).one()
 
         assert checkin["status"] == "processed"
-        assert checkin["action"] == "checkin"
+        assert checkin["action"] == "checkout"
         assert checkin["memberId"] == customer_id
         assert customer.person_uuid == "real-uuid-1128"
         assert identity.person_uuid == "real-uuid-1128"
         assert identity.person_id == "1128"
-        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="open").count() == 1
+        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, status="closed").count() == 1
     finally:
         db.close()
 
@@ -802,15 +1018,16 @@ def test_dah_identity_can_be_relinked_to_employee_and_toggles_attendance(tmp_pat
         assert linked["personUuid"] == "9001"
         assert db.query(DahCustomerIdentity).filter_by(employee_id=employee.id, person_uuid="9001").count() == 1
 
-        checkin = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:05:00", "301"))
-        assert checkin["action"] == "checkin"
-        assert checkin["employeeId"] == employee.id
-        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="open").count() == 1
-
-        checkout = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:15:00", "302"))
+        checkout = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:05:00", "301"))
         assert checkout["action"] == "checkout"
+        assert checkout["employeeId"] == employee.id
+        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="closed").count() == 1
+
+        next_checkout = dah_service.verify(db, verify_payload_for_uuid("9001", "2026-08-11T11:15:00", "302"))
+        assert next_checkout["action"] == "checkout"
         session = db.query(AttendanceSession).filter_by(employee_id=employee.id).one()
-        assert session.status == "closed"
+        assert session.checked_in_at == datetime(2026, 8, 11, 11, 0)
+        assert session.checked_out_at == datetime(2026, 8, 11, 11, 15)
     finally:
         db.close()
 
@@ -940,18 +1157,18 @@ def test_dah_identity_linked_to_member_and_employee_records_both_attendances(tmp
         assert identity.customer_id == customer.id
         assert identity.employee_id == employee.id
 
-        checkin = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:05:00", "501"))
-        assert checkin["action"] == "checkin"
-        assert checkin["memberId"] == customer.id
-        assert checkin["employeeId"] == employee.id
-        assert checkin["memberSessionId"]
-        assert checkin["employeeSessionId"]
-        assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="open").count() == 1
-        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="open").count() == 1
-
-        checkout = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:15:00", "502"))
+        checkout = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:05:00", "501"))
         assert checkout["action"] == "checkout"
+        assert checkout["memberId"] == customer.id
+        assert checkout["employeeId"] == employee.id
+        assert checkout["memberSessionId"]
+        assert checkout["employeeSessionId"]
         assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="closed").count() == 1
+        assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="closed").count() == 1
+
+        next_checkin = dah_service.verify(db, verify_payload_for_uuid("dual-uuid", "2026-08-11T13:15:00", "502"))
+        assert next_checkin["action"] == "mixed"
+        assert db.query(AttendanceSession).filter_by(customer_id=customer.id, status="open").count() == 1
         assert db.query(AttendanceSession).filter_by(employee_id=employee.id, status="closed").count() == 1
     finally:
         db.close()

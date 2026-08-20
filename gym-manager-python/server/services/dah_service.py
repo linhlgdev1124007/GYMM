@@ -600,7 +600,10 @@ def _event_face_name(event: DahWebhookEvent) -> str | None:
     except (TypeError, ValueError):
         return None
     info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
-    return _clean(info.get("Name"))
+    if info:
+        return _clean(info.get("Name"))
+    local_event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+    return _clean(local_event.get("registeredName") or local_event.get("name"))
 
 
 def _event_customer_name(event: DahWebhookEvent) -> str | None:
@@ -621,6 +624,83 @@ def _event_employee_name(event: DahWebhookEvent) -> str | None:
 
 def _event_employee_code(event: DahWebhookEvent) -> str | None:
     return event.employee.employee_code if getattr(event, "employee", None) else None
+
+
+def _identity_event_filters(identity_key: str | None, person_id: str | None):
+    filters = []
+    if identity_key:
+        filters.append(DahWebhookEvent.person_uuid == identity_key)
+    if person_id:
+        filters.append(DahWebhookEvent.person_id == person_id)
+    if identity_key and identity_key.startswith("person_id:"):
+        synthetic_person_id = identity_key.split(":", 1)[1]
+        if synthetic_person_id:
+            filters.append(DahWebhookEvent.person_id == synthetic_person_id)
+    return filters
+
+
+def _backfill_customer_identity_events(db: Session, customer: Customer, identity: DahCustomerIdentity) -> dict:
+    filters = _identity_event_filters(identity.person_uuid, identity.person_id)
+    if not filters:
+        return {"linkedEvents": 0, "rebuiltDays": 0, "relinkedMembers": 0}
+    rows = (
+        db.query(DahWebhookEvent)
+        .filter(
+            or_(*filters),
+            DahWebhookEvent.operator.in_(("VerifyPush", "LocalPull")),
+            or_(DahWebhookEvent.customer_id == None, DahWebhookEvent.customer_id == customer.id),
+            DahWebhookEvent.event_time.is_not(None),
+        )
+        .order_by(DahWebhookEvent.event_time.asc(), DahWebhookEvent.id.asc())
+        .all()
+    )
+    days: set[date] = set()
+    linked = 0
+    for row in rows:
+        row.customer_id = customer.id
+        if row.verify_status == 1 and row.status not in {"rejected", "denied"}:
+            row.status = "processed"
+            row.action = "local_sync"
+            row.note = "Đã liên kết FaceID và xử lý lại lượt DAH."
+            days.add(row.event_time.date())
+        linked += 1
+    db.flush()
+    from . import dah_local_sync_service
+
+    relinked = sum(dah_local_sync_service._rebuild_customer_day(db, customer.id, work_date) for work_date in days)
+    return {"linkedEvents": linked, "rebuiltDays": len(days), "relinkedMembers": relinked}
+
+
+def _backfill_employee_identity_events(db: Session, employee: Employee, identity: DahCustomerIdentity) -> dict:
+    filters = _identity_event_filters(identity.person_uuid, identity.person_id)
+    if not filters:
+        return {"linkedEvents": 0, "rebuiltDays": 0, "relinkedEmployees": 0}
+    rows = (
+        db.query(DahWebhookEvent)
+        .filter(
+            or_(*filters),
+            DahWebhookEvent.operator.in_(("VerifyPush", "LocalPull")),
+            or_(DahWebhookEvent.employee_id == None, DahWebhookEvent.employee_id == employee.id),
+            DahWebhookEvent.event_time.is_not(None),
+        )
+        .order_by(DahWebhookEvent.event_time.asc(), DahWebhookEvent.id.asc())
+        .all()
+    )
+    days: set[date] = set()
+    linked = 0
+    for row in rows:
+        row.employee_id = employee.id
+        if row.verify_status == 1 and row.status not in {"rejected", "denied"}:
+            row.status = "processed"
+            row.action = "local_sync"
+            row.note = "Đã liên kết FaceID nhân viên và xử lý lại lượt DAH."
+            days.add(row.event_time.date())
+        linked += 1
+    db.flush()
+    from . import dah_local_sync_service
+
+    relinked = sum(dah_local_sync_service._relink_employee_events(db, employee.id, work_date) for work_date in days)
+    return {"linkedEvents": linked, "rebuiltDays": len(days), "relinkedEmployees": relinked}
 
 
 def _event_data(row: DahWebhookEvent):
@@ -699,7 +779,7 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
         db.query(DahWebhookEvent)
         .options(joinedload(DahWebhookEvent.device))
         .filter(
-            DahWebhookEvent.operator == "VerifyPush",
+            DahWebhookEvent.operator.in_(("VerifyPush", "LocalPull")),
             or_(DahWebhookEvent.person_uuid.is_not(None), DahWebhookEvent.person_id.is_not(None)),
         )
         .order_by(DahWebhookEvent.event_time.desc(), DahWebhookEvent.received_at.desc())
@@ -831,7 +911,7 @@ def assign_identity_to_customer(
     if not customer:
         raise HTTPException(404, "Không tìm thấy hội viên.")
     event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
-    if not event or event.operator != "VerifyPush" or not _event_identity_key(event):
+    if not event or event.operator not in {"VerifyPush", "LocalPull"} or not _event_identity_key(event):
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
     identity_key = _event_identity_key(event)
     existing_identity = _identity_query(db, event.person_uuid, event.person_id)
@@ -873,6 +953,7 @@ def assign_identity_to_customer(
     event.note = "Định danh DAH đã được gán thủ công."
     event.image_data = None
     db.add(identity)
+    backfill = _backfill_customer_identity_events(db, customer, identity)
     record_audit(
         db,
         actor,
@@ -895,6 +976,7 @@ def assign_identity_to_customer(
             "avatarUpdated": bool(customer.avatar_image_data and customer.avatar_image_data != old_avatar),
             "personId": identity.person_id,
             "faceName": identity.face_name,
+            "backfill": backfill,
         },
     )
     db.commit()
@@ -902,6 +984,7 @@ def assign_identity_to_customer(
         "memberId": customer.id,
         "personUuid": customer.person_uuid,
         "avatarImageData": customer.avatar_image_data,
+        "backfill": backfill,
     }
 
 
@@ -956,7 +1039,7 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, ac
     if not employee:
         raise HTTPException(404, "Không tìm thấy nhân viên.")
     event = db.query(DahWebhookEvent).filter(DahWebhookEvent.id == event_id).first()
-    if not event or event.operator != "VerifyPush" or not _event_identity_key(event):
+    if not event or event.operator not in {"VerifyPush", "LocalPull"} or not _event_identity_key(event):
         raise HTTPException(422, "Định danh DAH không hợp lệ.")
     identity_key = _event_identity_key(event)
     old_identity_key = None
@@ -988,6 +1071,7 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, ac
     event.note = "Định danh DAH đã được gán cho nhân viên."
     event.image_data = None
     db.add(identity)
+    backfill = _backfill_employee_identity_events(db, employee, identity)
     record_audit(
         db,
         actor,
@@ -1008,6 +1092,7 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, ac
             }],
             "personId": identity.person_id,
             "faceName": identity.face_name,
+            "backfill": backfill,
         },
     )
     db.commit()
@@ -1017,4 +1102,5 @@ def assign_identity_to_employee(db: Session, employee_id: int, event_id: int, ac
         "personUuid": identity.person_uuid,
         "personId": identity.person_id,
         "faceName": identity.face_name,
+        "backfill": backfill,
     }

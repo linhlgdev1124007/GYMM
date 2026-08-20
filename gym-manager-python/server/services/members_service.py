@@ -581,7 +581,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
     dah_event = db.get(DahWebhookEvent, dah_event_id) if dah_event_id else None
     if dah_event_id:
         event_identity_key = dah_service._event_identity_key(dah_event) if dah_event else None
-        if not dah_event or dah_event.operator != "VerifyPush" or not event_identity_key:
+        if not dah_event or dah_event.operator not in {"VerifyPush", "LocalPull"} or not event_identity_key:
             raise HTTPException(status_code=422, detail="Định danh DAH không hợp lệ.")
         if dah_service._identity_query(db, dah_event.person_uuid, dah_event.person_id):
             raise HTTPException(status_code=409, detail="Định danh DAH này đã được gán cho hội viên khác.")
