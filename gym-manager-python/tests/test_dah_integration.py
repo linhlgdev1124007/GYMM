@@ -266,7 +266,7 @@ def test_dah_agent_unknown_event_is_committed_as_unknown_after_approval(tmp_path
         assert approved["result"]["unknown"] == 1
         assert event.status == "unknown"
         assert event.action == "unknown_identity"
-        assert event.person_uuid == "dah_profile:0/0/991122"
+        assert event.person_uuid is None
         assert event.person_id == "991122"
     finally:
         db.close()
@@ -377,6 +377,7 @@ def test_local_agent_unknown_member_events_rebuild_after_identity_link_and_show_
         session = db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").one()
         queue = member_processing_queue(db, day="2026-08-11")
 
+        assert linked["personUuid"] == "person_id:771100"
         assert linked["backfill"]["linkedEvents"] == 2
         assert linked["backfill"]["rebuiltDays"] == 1
         assert session.checked_in_at == datetime(2026, 8, 11, 7, 0)
@@ -610,13 +611,13 @@ def test_dah_agent_duplicate_only_result_does_not_create_pending_batch(tmp_path)
 
 
 def test_dah_local_sync_upserts_one_identity_for_repeated_profile_in_batch(tmp_path):
-    from server.models import DahCustomerIdentity
+    from server.models import Customer, DahCustomerIdentity
     from server.services import dah_local_sync_service
 
     db = make_session(tmp_path)
     try:
-        customer_id = seed_member(db)
-        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="legacy-545", person_id="545"))
+        customer_id = seed_member(db, person_uuid="dah_profile:0/0/35651584")
+        db.add(DahCustomerIdentity(customer_id=customer_id, person_uuid="dah_profile:0/0/35651584", person_id="545"))
         db.commit()
 
         result = dah_local_sync_service.import_agent_result(db, {
@@ -645,10 +646,42 @@ def test_dah_local_sync_upserts_one_identity_for_repeated_profile_in_batch(tmp_p
         })
 
         assert result["imported"] == 2
-        assert db.query(DahCustomerIdentity).filter_by(person_uuid="dah_profile:0/0/35651584").count() == 1
-        identity = db.query(DahCustomerIdentity).filter_by(person_uuid="dah_profile:0/0/35651584").one()
+        assert db.query(DahCustomerIdentity).filter_by(person_uuid="dah_profile:0/0/35651584").count() == 0
+        identity = db.query(DahCustomerIdentity).filter_by(person_uuid="person_id:545").one()
         assert identity.customer_id == customer_id
         assert identity.person_id == "545"
+        assert db.get(Customer, customer_id).person_uuid == "person_id:545"
+    finally:
+        db.close()
+
+
+def test_dah_local_sync_candidates_coalesce_profile_variants_by_person_id(tmp_path):
+    from server.models import DahWebhookEvent
+    from server.services import dah_local_sync_service, dah_service
+
+    db = make_session(tmp_path)
+    try:
+        dah_local_sync_service.import_agent_result(db, {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "profile-variant-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [
+                {"dahUid": "variant-1", "dahPersonUid": "771200", "profileKey": "dah_profile:0/0/771200", "eventTime": "2026-08-11T07:00:00", "status": 1, "name": "PROFILE VARIANT"},
+                {"dahUid": "variant-2", "dahPersonUid": "771200", "profileKey": "dah_profile:0/0/999999", "eventTime": "2026-08-11T08:00:00", "status": 1, "name": "PROFILE VARIANT"},
+            ],
+        })
+
+        rows = db.query(DahWebhookEvent).filter_by(person_id="771200").all()
+        candidates = dah_service.identity_candidates(db, limit=10)["items"]
+        matches = [row for row in candidates if row["personId"] == "771200"]
+
+        assert len(rows) == 2
+        assert all(row.person_uuid is None for row in rows)
+        assert len(matches) == 1
+        assert matches[0]["personUuid"] == "person_id:771200"
+        assert matches[0]["rawPersonUuid"] is None
+        assert matches[0]["profileKey"] == "dah_profile:0/0/999999"
     finally:
         db.close()
 

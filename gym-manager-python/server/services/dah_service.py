@@ -36,16 +36,22 @@ def _synthetic_person_uuid(person_id: str | None) -> str | None:
     return f"person_id:{person_id}" if person_id else None
 
 
+def _is_dah_profile_key(value: str | None) -> bool:
+    return bool(value and str(value).startswith("dah_profile:"))
+
+
 def _dah_identity_key(person_uuid: str | None, person_id: str | None) -> str | None:
     return person_uuid or _synthetic_person_uuid(person_id)
 
 
 def _event_identity_key(event: DahWebhookEvent) -> str | None:
+    if event.operator == "LocalPull" and event.person_id:
+        return _synthetic_person_uuid(event.person_id)
     return _dah_identity_key(event.person_uuid, event.person_id)
 
 
 def _identity_query(db: Session, person_uuid: str | None, person_id: str | None):
-    if person_uuid:
+    if person_uuid and not _is_dah_profile_key(person_uuid):
         exact = db.query(DahCustomerIdentity).filter(DahCustomerIdentity.person_uuid == person_uuid).first()
         if exact:
             return exact
@@ -61,12 +67,30 @@ def _identity_query(db: Session, person_uuid: str | None, person_id: str | None)
             )
         return None
     if person_id:
-        return (
+        synthetic = _synthetic_person_uuid(person_id)
+        exact_synthetic = (
+            db.query(DahCustomerIdentity)
+            .filter(DahCustomerIdentity.person_id == person_id, DahCustomerIdentity.person_uuid == synthetic)
+            .order_by(DahCustomerIdentity.id.desc())
+            .first()
+        )
+        if exact_synthetic:
+            return exact_synthetic
+        by_person_id = (
             db.query(DahCustomerIdentity)
             .filter(DahCustomerIdentity.person_id == person_id)
             .order_by(DahCustomerIdentity.id.desc())
             .first()
         )
+        if by_person_id:
+            return by_person_id
+        if person_uuid:
+            return (
+                db.query(DahCustomerIdentity)
+                .filter(DahCustomerIdentity.person_uuid == person_uuid)
+                .order_by(DahCustomerIdentity.id.desc())
+                .first()
+            )
     return None
 
 
@@ -626,6 +650,22 @@ def _event_employee_code(event: DahWebhookEvent) -> str | None:
     return event.employee.employee_code if getattr(event, "employee", None) else None
 
 
+def _event_profile_key(event: DahWebhookEvent) -> str | None:
+    if _is_dah_profile_key(event.person_uuid):
+        return event.person_uuid
+    if not event.raw_payload:
+        return None
+    try:
+        payload = json.loads(event.raw_payload)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(payload, dict):
+        nested = payload.get("event") if isinstance(payload.get("event"), dict) else payload
+        value = _clean(nested.get("profileKey")) if isinstance(nested, dict) else None
+        return value if _is_dah_profile_key(value) else None
+    return None
+
+
 def _identity_event_filters(identity_key: str | None, person_id: str | None):
     filters = []
     if identity_key:
@@ -811,20 +851,23 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
             .all()
         )
         for identity in identities:
-            key = identity.person_uuid or _synthetic_person_uuid(identity.person_id)
-            bucket = assignment_map.setdefault(key, {"members": [], "employees": []})
-            if identity.customer:
-                bucket["members"].append({
-                    "id": identity.customer.id,
-                    "code": identity.customer.customer_code,
-                    "name": identity.customer.person.display_name if identity.customer.person else None,
-                })
-            if identity.employee:
-                bucket["employees"].append({
-                    "id": identity.employee.id,
-                    "code": identity.employee.employee_code,
-                    "name": identity.employee.person.display_name if identity.employee.person else None,
-                })
+            keys = {identity.person_uuid or _synthetic_person_uuid(identity.person_id)}
+            if identity.person_id:
+                keys.add(_synthetic_person_uuid(identity.person_id))
+            for key in {item for item in keys if item}:
+                bucket = assignment_map.setdefault(key, {"members": [], "employees": []})
+                if identity.customer and not any(item["id"] == identity.customer.id for item in bucket["members"]):
+                    bucket["members"].append({
+                        "id": identity.customer.id,
+                        "code": identity.customer.customer_code,
+                        "name": identity.customer.person.display_name if identity.customer.person else None,
+                    })
+                if identity.employee and not any(item["id"] == identity.employee.id for item in bucket["employees"]):
+                    bucket["employees"].append({
+                        "id": identity.employee.id,
+                        "code": identity.employee.employee_code,
+                        "name": identity.employee.person.display_name if identity.employee.person else None,
+                    })
         direct_customers = (
             db.query(Customer)
             .options(joinedload(Customer.person))
@@ -877,6 +920,7 @@ def identity_candidates(db: Session, limit=12, target_type="member", include_ass
             "personUuid": identity_key,
             "rawPersonUuid": row.person_uuid,
             "personId": row.person_id,
+            "profileKey": _event_profile_key(row),
             "name": _event_face_name(row),
             "device": row.device.code if row.device else None,
             "similarity": row.similarity,

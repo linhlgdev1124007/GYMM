@@ -80,7 +80,7 @@ export function DahIdentityLinkModal({
         row.linkedMembers?.some((member) => Number(member.id) !== Number(memberId)),
     );
   const identityLabel = (row) =>
-    row.rawPersonUuid ? `UUID ${row.rawPersonUuid}` : row.personId ? `PersonID ${row.personId}` : row.personUuid;
+    row.personId ? `PersonID ${row.personId}` : row.rawPersonUuid ? `UUID ${row.rawPersonUuid}` : row.personUuid;
   return (
     <Modal
       open={open}
@@ -154,6 +154,9 @@ export function DahIdentityLinkModal({
                 <div>
                   <strong>{row.name || "Khách vừa quét"}</strong>
                   <span>{identityLabel(row)}</span>
+                  {row.profileKey && (
+                    <small className="font-mono">Profile {row.profileKey}</small>
+                  )}
                   {linkedTags(row).length ? (
                     <div className="identity-tags">
                       {linkedTags(row).map((tag) => (

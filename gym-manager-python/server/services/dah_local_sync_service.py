@@ -353,23 +353,39 @@ def _upsert_identity_for_match(
     event_time: datetime,
     identity_cache: dict[str, DahCustomerIdentity] | None = None,
 ) -> None:
-    profile = _profile_key(event)
     dah_person_uid = _clean(event.get("dahPersonUid"), 80)
-    if not profile or not (customer or employee):
+    if not dah_person_uid or not (customer or employee):
         return
-    identity = identity_cache.get(profile) if identity_cache is not None else None
+    identity_key = dah_service._synthetic_person_uuid(dah_person_uid)
+    identity = identity_cache.get(identity_key) if identity_cache is not None else None
     if not identity:
         identity = (
             db.query(DahCustomerIdentity)
-            .filter(DahCustomerIdentity.person_uuid == profile)
+            .filter(DahCustomerIdentity.person_uuid == identity_key)
             .order_by(DahCustomerIdentity.id.desc())
             .first()
         )
     if not identity:
-        identity = DahCustomerIdentity(person_uuid=profile)
+        identity = (
+            db.query(DahCustomerIdentity)
+            .filter(DahCustomerIdentity.person_id == dah_person_uid)
+            .order_by(DahCustomerIdentity.id.desc())
+            .first()
+        )
+    previous_identity_key = identity.person_uuid if identity else None
+    if identity and dah_service._is_dah_profile_key(identity.person_uuid):
+        existing_canonical = (
+            db.query(DahCustomerIdentity)
+            .filter(DahCustomerIdentity.person_uuid == identity_key, DahCustomerIdentity.id != identity.id)
+            .first()
+        )
+        if not existing_canonical:
+            identity.person_uuid = identity_key
+    if not identity:
+        identity = DahCustomerIdentity(person_uuid=identity_key)
         db.add(identity)
     if identity_cache is not None:
-        identity_cache[profile] = identity
+        identity_cache[identity_key] = identity
     identity.customer_id = customer.id if customer else identity.customer_id
     identity.employee_id = employee.id if employee else identity.employee_id
     identity.device_id = device.id if device else identity.device_id
@@ -377,6 +393,12 @@ def _upsert_identity_for_match(
     identity.face_name = _clean(event.get("registeredName") or event.get("name"), 160) or identity.face_name
     identity.rfid_card = _clean(event.get("mjCardNo"), 80) or identity.rfid_card
     identity.last_seen_at = event_time
+    if customer and (
+        not customer.person_uuid
+        or customer.person_uuid == previous_identity_key
+        or dah_service._is_dah_profile_key(customer.person_uuid)
+    ):
+        customer.person_uuid = identity.person_uuid
 
 
 def _device(db: Session, payload: dict) -> Device | None:
@@ -685,7 +707,7 @@ def import_agent_result(db: Session, payload: dict, selected_event_keys: set[str
             device_id=device.id if device else None,
             customer_id=customer.id if customer else None,
             employee_id=employee.id if employee else None,
-            person_uuid=_profile_key(item),
+            person_uuid=None,
             person_id=person_id,
             verify_status=verify_status,
             similarity=similarity,
