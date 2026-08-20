@@ -44,7 +44,7 @@ export function TrainingPage() {
   });
   const members = useQuery({
     queryKey: ["training-member-options"],
-    queryFn: () => api("/api/members?pageSize=1000&sort=name"),
+    queryFn: () => api("/api/members?view=no_pt&pageSize=2000&sort=name"),
     staleTime: 60000,
     enabled: !coachMode,
   });
