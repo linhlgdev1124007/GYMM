@@ -527,6 +527,52 @@ def test_dah_local_sync_treats_person_id_and_time_as_duplicate(tmp_path):
         db.close()
 
 
+def test_dah_agent_duplicate_only_result_does_not_create_pending_batch(tmp_path):
+    from server.models import DahWebhookEvent
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        db.add(DahWebhookEvent(
+            event_key="webhook-existing-hash",
+            operator="VerifyPush",
+            person_uuid="732",
+            person_id="1149",
+            verify_status=1,
+            event_time=datetime(2026, 8, 11, 7, 0),
+            status="processed",
+            action="checkin",
+            raw_payload="{}",
+        ))
+        db.commit()
+
+        payload = {
+            "ok": True,
+            "agentId": "test-agent",
+            "jobId": "duplicate-only-job",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "24602",
+                "dahPersonUid": "1149",
+                "profileKey": "dah_profile:0/0/75366400",
+                "eventTime": "2026-08-11T07:00:00",
+                "status": 1,
+                "name": "LONG",
+            }],
+        }
+
+        posted = dah_local_sync_service.record_result(db, "duplicate-only-job", payload)
+
+        assert posted["status"] == "completed"
+        assert posted["batch"] is None
+        assert posted["result"]["duplicates"] == 1
+        assert posted["result"]["failCount"] == 0
+        assert posted["result"]["pendingApproval"] is False
+        assert all(batch["jobId"] != "duplicate-only-job" for batch in dah_local_sync_service.pending_batches()["items"])
+    finally:
+        db.close()
+
+
 def test_dah_local_sync_upserts_one_identity_for_repeated_profile_in_batch(tmp_path):
     from server.models import DahCustomerIdentity
     from server.services import dah_local_sync_service

@@ -95,6 +95,13 @@ def _batch_public(row: dict, include_events: bool = False) -> dict:
     return result
 
 
+def _batch_needs_review(row: dict | None) -> bool:
+    if not row:
+        return False
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    return int(row.get("failCount") or summary.get("failCount") or 0) > 0
+
+
 def _prune_jobs(now: datetime | None = None) -> None:
     now = now or utc_now()
     expired = []
@@ -132,7 +139,7 @@ def status() -> dict:
         return {
             "agent": state,
             "pendingCount": len(_pending),
-            "pendingBatchCount": len([row for row in _pending_batches.values() if row.get("status") == "pending"]),
+            "pendingBatchCount": len([row for row in _pending_batches.values() if row.get("status") == "pending" and _batch_needs_review(row)]),
             "recentJobs": [_job_public(row) for row in recent],
         }
 
@@ -171,13 +178,13 @@ def scan_days(db: Session, limit: int = 14) -> dict:
 def pending_batches() -> dict:
     with _lock:
         rows = sorted(_pending_batches.values(), key=lambda row: row.get("createdAt") or "", reverse=True)
-        return {"items": [_batch_public(row) for row in rows if row.get("status") == "pending"]}
+        return {"items": [_batch_public(row) for row in rows if row.get("status") == "pending" and _batch_needs_review(row)]}
 
 
 def pending_batch(batch_id: str) -> dict:
     with _lock:
         row = _pending_batches.get(batch_id)
-        if not row or row.get("status") != "pending":
+        if not row or row.get("status") != "pending" or not _batch_needs_review(row):
             return {"item": None}
         return {"item": _batch_public(row, include_events=True)}
 
@@ -752,26 +759,30 @@ def _upsert_scan_day(db: Session, payload: dict, preview: dict, batch_id: str | 
 def record_result(db: Session, job_id: str, payload: dict) -> dict:
     preview = preview_agent_result(db, payload)
     now = utc_now()
-    batch_id = uuid4().hex
     summary = _summary_with_fail(preview)
-    batch = {
-        "id": batch_id,
-        "jobId": job_id,
-        "agentId": _clean(payload.get("agentId"), 80),
-        "deviceCode": _clean(payload.get("deviceCode"), 80),
-        "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
-        "createdAt": utc_iso(now),
-        "workDate": _clean(payload.get("workDate"), 20),
-        "range": payload.get("range"),
-        "status": "pending" if preview.get("ok") else "failed",
-        "totalCount": payload.get("totalCount"),
-        "failCount": summary["failCount"],
-        "events": preview.get("events") or [],
-        "rawPayload": payload,
-        "summary": summary,
-    }
+    needs_review = bool(preview.get("ok")) and summary["failCount"] > 0
+    batch_id = uuid4().hex if needs_review else None
+    batch = None
+    if batch_id:
+        batch = {
+            "id": batch_id,
+            "jobId": job_id,
+            "agentId": _clean(payload.get("agentId"), 80),
+            "deviceCode": _clean(payload.get("deviceCode"), 80),
+            "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
+            "createdAt": utc_iso(now),
+            "workDate": _clean(payload.get("workDate"), 20),
+            "range": payload.get("range"),
+            "status": "pending",
+            "totalCount": payload.get("totalCount"),
+            "failCount": summary["failCount"],
+            "events": preview.get("events") or [],
+            "rawPayload": payload,
+            "summary": summary,
+        }
     with _lock:
-        _pending_batches[batch_id] = batch
+        if batch:
+            _pending_batches[batch_id] = batch
         job = _jobs.get(job_id)
         if not job:
             job = {
@@ -783,11 +794,11 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             }
             _jobs[job_id] = job
         job.update({
-            "status": "pending_approval" if preview.get("ok") else "failed",
+            "status": "pending_approval" if needs_review else "completed" if preview.get("ok") else "failed",
             "completedAt": utc_iso(now),
             "agentId": _clean(payload.get("agentId"), 80) or job.get("agentId"),
             "range": payload.get("range") or job.get("range"),
-            "result": {**batch["summary"], "batchId": batch_id, "pendingApproval": preview.get("ok")},
+            "result": {**summary, "batchId": batch_id, "pendingApproval": needs_review},
             "error": preview.get("error"),
         })
         _agent_state.update({
@@ -797,7 +808,7 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "lastJobId": job_id,
             "lastError": preview.get("error"),
         })
-        return {**_job_public(job), "batch": _batch_public(batch)}
+        return {**_job_public(job), "batch": _batch_public(batch) if batch else None}
 
 
 def record_day_scan_result(db: Session, payload: dict) -> dict:
