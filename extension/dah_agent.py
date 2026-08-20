@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import json
 import os
 import queue
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -16,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from PIL import Image, ImageDraw
+import pystray
 import requests
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -24,6 +28,7 @@ from tkinter import messagebox, ttk
 APP_NAME = "PulseFit DAH Agent"
 DEFAULT_DAH_USERNAME = "system"
 DEFAULT_DAH_PASSWORD = "admin"
+TASK_NAME = "PulseFitDahAgent"
 
 
 def app_dir() -> Path:
@@ -44,6 +49,107 @@ def log(message: str) -> None:
     except Exception:
         pass
     print(line)
+
+
+def is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def ensure_admin() -> bool:
+    """
+    Tự động xin quyền Administrator thông qua Windows UAC nếu chưa có.
+    """
+    if is_admin():
+        return True
+    try:
+        if getattr(sys, "frozen", False):
+            exe = sys.executable
+            params = " ".join([f'"{arg}"' for arg in sys.argv[1:]]) if len(sys.argv) > 1 else ""
+        else:
+            exe = sys.executable
+            script_path = str(Path(__file__).resolve())
+            extra_args = " ".join([f'"{arg}"' for arg in sys.argv[1:]]) if len(sys.argv) > 1 else ""
+            params = f'"{script_path}" {extra_args}'.strip()
+
+        # Gọi ShellExecuteW với động từ "runas" để mở bảng UAC xác nhận
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params or None, None, 1)
+        if int(ret) > 32:
+            # Đã mở tiến trình quyền Admin mới, kết thúc tiến trình hiện tại
+            sys.exit(0)
+        else:
+            log(f"Người dùng từ chối cấp quyền Admin (mã lỗi: {ret}). Chạy với quyền Standard User.")
+            return False
+    except Exception as exc:
+        log(f"Lỗi khi xin quyền Administrator: {exc}")
+        return False
+
+
+def setup_startup_task(enable: bool = True) -> bool:
+    """
+    Đăng ký tự động khởi chạy cùng Windows thông qua Task Scheduler
+    với quyền Admin cao nhất (/rl highest) khi người dùng logon (/sc onlogon).
+    """
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        if enable:
+            if getattr(sys, "frozen", False):
+                target_exe = str(Path(sys.executable).resolve())
+                target_cmd = f'\\"{target_exe}\\"'
+            else:
+                pythonw = Path(sys.executable).parent / "pythonw.exe"
+                exe_to_use = str(pythonw if pythonw.exists() else Path(sys.executable).resolve())
+                script_path = str(Path(__file__).resolve())
+                target_cmd = f'\\"{exe_to_use}\\" \\"{script_path}\\"'
+
+            cmd = [
+                "schtasks", "/create",
+                "/tn", TASK_NAME,
+                "/tr", target_cmd,
+                "/sc", "onlogon",
+                "/rl", "highest",
+                "/f"
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
+            if res.returncode == 0:
+                log("Đã đăng ký tự khởi động cùng Windows (Task Scheduler - Highest Privileges).")
+                return True
+            else:
+                # Nếu chạy ở quyền thường không đặt được /rl highest, thử quyền thông thường
+                log(f"Thông báo đăng ký Task Scheduler (/rl highest): {res.stderr.strip() or res.stdout.strip()}")
+                cmd_fallback = [
+                    "schtasks", "/create",
+                    "/tn", TASK_NAME,
+                    "/tr", target_cmd,
+                    "/sc", "onlogon",
+                    "/f"
+                ]
+                res2 = subprocess.run(cmd_fallback, capture_output=True, text=True, creationflags=flags)
+                if res2.returncode == 0:
+                    log("Đã đăng ký tự khởi động cùng Windows (Task Scheduler - Standard).")
+                    return True
+                return False
+        else:
+            cmd = ["schtasks", "/delete", "/tn", TASK_NAME, "/f"]
+            subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
+            log("Đã gỡ bỏ tác vụ tự khởi động trong Task Scheduler.")
+            return True
+    except Exception as exc:
+        log(f"Lỗi cấu hình Task Scheduler: {exc}")
+    return False
+
+
+def create_tray_icon_image() -> Image.Image:
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    # Background rounded circle
+    draw.ellipse((2, 2, 62, 62), fill="#1E40AF", outline="#60A5FA", width=3)
+    # Pulse waveform
+    points = [(10, 32), (20, 32), (26, 16), (36, 48), (42, 24), (48, 32), (54, 32)]
+    draw.line(points, fill="#10B981", width=5, joint="round")
+    return img
 
 
 @dataclass
@@ -224,7 +330,6 @@ def parse_dah_time(value: str | None) -> str | None:
     text = clean_null(value)
     if not text:
         return None
-    # DAH format from HAR: 2026-08-19/21:25:18. Treat as Vietnam local time.
     try:
         parsed = datetime.strptime(text, "%Y-%m-%d/%H:%M:%S")
         return parsed.isoformat()
@@ -250,7 +355,7 @@ class DahClient:
         self.config = config
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "PulseFitDahAgent/1.0",
+            "User-Agent": "PulseFitDahAgent/1.1",
             "Content-Type": "text/html; charset=UTF-8",
         })
         basic = base64.b64encode(f"{config.dah_username}:{config.dah_password}".encode()).decode()
@@ -262,8 +367,6 @@ class DahClient:
         try:
             from selenium import webdriver
             from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
         except Exception as exc:
             log(f"Browser warmup skipped: selenium unavailable: {exc}")
             return
@@ -276,8 +379,12 @@ class DahClient:
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--window-size=1280,900")
+            options.add_argument("--log-level=3")
+            options.add_experimental_option("excludeSwitches", ["enable-logging"])
             driver = webdriver.Chrome(options=options)
-            wait = WebDriverWait(driver, 12)
+            driver.set_page_load_timeout(20)
+            driver.implicitly_wait(4)
+
             driver.get(f"{self.config.dah_base_url}/login.asp")
             self._switch_to_element_frame(driver, By.ID, "username")
             self._set_value(driver, By.ID, "username", self.config.dah_username)
@@ -298,7 +405,10 @@ class DahClient:
             log(f"DAH browser warmup failed; continuing direct API pull: {exc}")
         finally:
             if driver:
-                driver.quit()
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
 
     def _switch_to_element_frame(self, driver, by, value: str) -> bool:
         driver.switch_to.default_content()
@@ -431,7 +541,8 @@ class ServerClient:
             "agentId": self.config.agent_id,
             "status": "online",
             "dahBaseUrl": self.config.dah_base_url,
-            "version": "1.0.0",
+            "version": "1.1.0",
+            "isAdmin": is_admin(),
         }
         self.session.post(
             f"{self.config.server_base_url}/api/dah/local-agent/heartbeat",
@@ -510,41 +621,49 @@ class AgentWorker:
     def _run(self) -> None:
         server = ServerClient(self.config)
         next_auto = time.monotonic()
-        self._emit("Agent started")
+        self._emit("PulseFit Worker started")
         while not self.stop_event.is_set():
             try:
+                # 1. Heartbeat
                 try:
                     server.heartbeat()
                     self._emit("Heartbeat sent")
                 except Exception as exc:
                     self._emit(f"Heartbeat failed: {exc}")
 
+                # 2. Long polling next job
+                job = None
                 try:
                     job = server.next_job()
                 except Exception as exc:
                     self._emit(f"Long polling failed: {exc}")
-                    job = None
 
+                # 3. Handle Job / Periodic Sync / Manual Sync
                 should_auto_sync = time.monotonic() >= next_auto
                 should_manual_sync = self.sync_now_event.is_set()
-                if job or should_auto_sync or should_manual_sync:
+
+                if job:
+                    self._run_sync(server, job)
+                elif should_manual_sync or should_auto_sync:
                     self.sync_now_event.clear()
                     if should_auto_sync:
-                        next_auto = time.monotonic() + max(int(self.config.sync_interval_seconds), 1800)
-                    if job:
-                        self._run_sync(server, job)
-                    else:
-                        self._run_day_scans(server)
+                        interval = max(int(self.config.sync_interval_seconds or 1800), 300)
+                        next_auto = time.monotonic() + interval
+                    # Chạy đồng bộ thông thường theo lookback_hours
+                    self._run_sync(server, None)
+                    # Quét bù các ngày còn thiếu nếu có kế hoạch
+                    self._run_day_scans(server)
+
                 self.stop_event.wait(3)
             except Exception:
                 self._emit("Worker loop error:\n" + traceback.format_exc())
                 self.stop_event.wait(10)
-        self._emit("Agent stopped")
+        self._emit("PulseFit Worker stopped")
 
     def _run_sync(self, server: ServerClient, job: dict[str, Any] | None) -> None:
         job_id = str(job.get("id")) if job else f"local-{int(time.time())}"
         lookback = safe_int((job or {}).get("lookbackHours"), self.config.lookback_hours)
-        self._emit(f"Sync started: {job_id}")
+        self._emit(f"Sync started: {job_id} (lookback={lookback}h)")
         try:
             result = DahClient(self.config).fetch_events(lookback_hours=lookback)
             result.update({"agentId": self.config.agent_id, "jobId": job_id, "ok": True})
@@ -558,30 +677,22 @@ class AgentWorker:
                 "traceback": traceback.format_exc(),
             }
             self._emit(f"Sync failed: {exc}")
-        if job:
-            try:
-                server.post_result(job_id, result)
-                self._emit(f"Sync result posted: {job_id}")
-            except Exception as exc:
-                self._emit(f"Post result failed: {exc}")
-        else:
-            # Server may not have job endpoints yet. Try a conventional result endpoint anyway.
-            try:
-                server.post_result(job_id, result)
-                self._emit(f"Local sync result posted: {job_id}")
-            except Exception as exc:
-                self._emit(f"Local sync result not posted: {exc}")
+
+        try:
+            server.post_result(job_id, result)
+            self._emit(f"Sync result posted: {job_id}")
+        except Exception as exc:
+            self._emit(f"Post result failed ({job_id}): {exc}")
 
     def _run_day_scans(self, server: ServerClient) -> None:
-        self._emit("Day scan plan requested")
         try:
             plan = server.scan_plan()
         except Exception as exc:
-            self._emit(f"Day scan plan failed: {exc}")
+            self._emit(f"Day scan plan notice: {exc}")
             return
         if not plan:
-            self._emit("Day scan skipped: no days need scanning")
             return
+
         self._emit(f"Day scan plan: {len(plan)} day(s)")
         client = DahClient(self.config)
         try:
@@ -590,6 +701,7 @@ class AgentWorker:
         except Exception as exc:
             self._emit(f"Day scan setup failed: {exc}")
             return
+
         for item in plan:
             if self.stop_event.is_set():
                 return
@@ -617,22 +729,117 @@ class AgentApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("760x560")
-        self.minsize(720, 520)
+        self.geometry("780x620")
+        self.minsize(740, 560)
         self.config_data = load_config()
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker: AgentWorker | None = None
         self.vars: dict[str, tk.Variable] = {}
+        self.tray_icon: pystray.Icon | None = None
+
         self._build_ui()
         self._load_vars()
+        self._setup_tray()
+
+        # Chặn sự kiện tắt cửa sổ -> Ẩn xuống khay hệ thống (System Tray)
+        self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+
         self.after(300, self._drain_logs)
+
+        # Tự động cấu hình Auto-Startup với Task Scheduler (quyền Admin cao nhất)
+        setup_startup_task(True)
+
+        # Tự động kích hoạt Worker ngay khi bật App
         if self.config_data.auto_start:
             self.start_worker()
+
+    def _setup_tray(self) -> None:
+        try:
+            menu = pystray.Menu(
+                pystray.MenuItem("Mở giao diện PulseFit Agent", self._tray_open, default=True),
+                pystray.MenuItem("Đồng bộ ngay (Sync now)", self._tray_sync),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Trạng thái: Đang bảo vệ & Chạy ngầm", lambda icon, item: None, enabled=False),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Thoát ứng dụng (Yêu cầu xác nhận)", self._tray_exit),
+            )
+            self.tray_icon = pystray.Icon("PulseFitDahAgent", create_tray_icon_image(), APP_NAME, menu)
+            threading.Thread(target=self.tray_icon.run, name="PulseFitTrayThread", daemon=True).start()
+        except Exception as exc:
+            log(f"Không thể khởi tạo khay hệ thống System Tray: {exc}")
+
+    def _tray_open(self, icon=None, item=None) -> None:
+        self.after(0, self.show_from_tray)
+
+    def _tray_sync(self, icon=None, item=None) -> None:
+        self.after(0, self.sync_now)
+
+    def _tray_exit(self, icon=None, item=None) -> None:
+        self.after(0, self.confirm_exit)
+
+    def hide_to_tray(self) -> None:
+        self.withdraw()
+        self._append_log("Ứng dụng đã được ẩn xuống khay hệ thống (System Tray). Tiến trình vẫn hoạt động ngầm.")
+        try:
+            if self.tray_icon and getattr(self.tray_icon, "visible", False):
+                self.tray_icon.notify("PulseFit DAH Agent đang chạy ngầm để tiếp tục đồng bộ máy DAH.", APP_NAME)
+        except Exception:
+            pass
+
+    def show_from_tray(self) -> None:
+        self.deiconify()
+        self.state("normal")
+        self.lift()
+        self.focus_force()
+        self.attributes("-topmost", True)
+        self.attributes("-topmost", False)
+
+    def confirm_exit(self) -> None:
+        self.show_from_tray()
+        confirm = messagebox.askyesno(
+            APP_NAME,
+            "CẢNH BÁO: Tắt ứng dụng sẽ ngắt toàn bộ tiến trình đồng bộ dữ liệu máy chấm công DAH về máy chủ PulseFit!\n\nBạn có chắc chắn muốn thoát hoàn toàn?",
+            icon="warning"
+        )
+        if confirm:
+            if self.worker:
+                self.worker.stop()
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception:
+                    pass
+            self.destroy()
+            sys.exit(0)
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=12)
         root.pack(fill="both", expand=True)
-        form = ttk.LabelFrame(root, text="Settings", padding=10)
+
+        # Header Banner hiển thị quyền Admin & Trạng thái bảo vệ
+        admin_status = "ĐÃ CẤP QUYỀN ADMINISTRATOR (CAO NHẤT)" if is_admin() else "QUYỀN STANDARD USER"
+        admin_color = "#047857" if is_admin() else "#B45309"
+
+        header_frame = tk.Frame(root, bg="#F3F4F6", relief="solid", bd=1, padx=8, pady=6)
+        header_frame.pack(fill="x", pady=(0, 10))
+
+        tk.Label(
+            header_frame,
+            text=f"🛡️ Trạng thái: {admin_status}",
+            font=("Segoe UI", 9, "bold"),
+            fg=admin_color,
+            bg="#F3F4F6"
+        ).pack(side="left")
+
+        tk.Label(
+            header_frame,
+            text="🚀 Tự chạy ngầm (Chống tắt / System Tray)",
+            font=("Segoe UI", 9),
+            fg="#4B5563",
+            bg="#F3F4F6"
+        ).pack(side="right")
+
+        form = ttk.LabelFrame(root, text="Cài đặt kết nối & Đồng bộ", padding=10)
         form.pack(fill="x")
 
         self._add_entry(form, "Server scheme", "server_scheme", 0, width=8)
@@ -649,24 +856,25 @@ class AgentApp(tk.Tk):
         self._add_entry(form, "Scan start date", "scan_start_date", 11, width=12)
 
         self.vars["auto_start"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Auto start worker when app opens", variable=self.vars["auto_start"]).grid(row=12, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Tự động start worker khi mở app (Luôn bật)", variable=self.vars["auto_start"]).grid(row=12, column=1, sticky="w", pady=3)
         self.vars["browser_warmup"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Use hidden browser warmup/login before pulling API", variable=self.vars["browser_warmup"]).grid(row=13, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Sử dụng browser ẩn đăng nhập DAH trước khi kéo API", variable=self.vars["browser_warmup"]).grid(row=13, column=1, sticky="w", pady=3)
 
         actions = ttk.Frame(root)
         actions.pack(fill="x", pady=10)
-        ttk.Button(actions, text="Save", command=self.save).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Start", command=self.start_worker).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Stop", command=self.stop_worker).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Sync now", command=self.sync_now).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Install Startup", command=self.install_startup).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Remove Startup", command=self.remove_startup).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Open log file", command=self.open_log).pack(side="left")
+        ttk.Button(actions, text="Lưu cấu hình", command=self.save).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Bắt đầu", command=self.start_worker).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Tạm dừng", command=self.stop_worker).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Đồng bộ ngay", command=self.sync_now).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Ẩn xuống Tray", command=self.hide_to_tray).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Cài Auto Startup", command=self.install_startup).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Gỡ Auto Startup", command=self.remove_startup).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Xem Log file", command=self.open_log).pack(side="left")
 
-        self.status_var = tk.StringVar(value="Stopped")
-        ttk.Label(root, textvariable=self.status_var).pack(anchor="w", pady=(0, 6))
+        self.status_var = tk.StringVar(value="Đang hoạt động")
+        ttk.Label(root, textvariable=self.status_var, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 6))
 
-        log_frame = ttk.LabelFrame(root, text="Log", padding=8)
+        log_frame = ttk.LabelFrame(root, text="Nhật ký hoạt động (Log)", padding=8)
         log_frame.pack(fill="both", expand=True)
         self.log_text = tk.Text(log_frame, wrap="word", height=12)
         self.log_text.pack(fill="both", expand=True)
@@ -701,7 +909,8 @@ class AgentApp(tk.Tk):
     def save(self) -> None:
         self.config_data = self._read_config_from_vars()
         save_config(self.config_data)
-        self._append_log(f"Saved config to {CONFIG_PATH}")
+        setup_startup_task(True)
+        self._append_log(f"Đã lưu cấu hình vào {CONFIG_PATH} & cập nhật Auto Startup.")
 
     def start_worker(self) -> None:
         self.save()
@@ -709,19 +918,19 @@ class AgentApp(tk.Tk):
             self.worker.stop()
         self.worker = AgentWorker(self.config_data, self.log_queue)
         self.worker.start()
-        self.status_var.set("Running")
+        self.status_var.set("Trạng thái: Đang chạy (Running)")
 
     def stop_worker(self) -> None:
         if self.worker:
             self.worker.stop()
-        self.status_var.set("Stopping")
+        self.status_var.set("Trạng thái: Tạm dừng (Stopped)")
 
     def sync_now(self) -> None:
         if not self.worker:
             self.start_worker()
         if self.worker:
             self.worker.trigger_sync()
-            self._append_log("Manual sync requested")
+            self._append_log("Đã kích hoạt đồng bộ thủ công (Manual sync).")
 
     def open_log(self) -> None:
         try:
@@ -729,35 +938,20 @@ class AgentApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror(APP_NAME, str(exc))
 
-    def startup_script_path(self) -> Path:
-        startup = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-        return startup / "PulseFitDahAgent.cmd"
-
     def install_startup(self) -> None:
-        try:
-            self.save()
-            target = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else Path(__file__).resolve()
-            script = self.startup_script_path()
-            script.parent.mkdir(parents=True, exist_ok=True)
-            if getattr(sys, "frozen", False):
-                content = f'@echo off\r\nstart "" "{target}"\r\n'
-            else:
-                content = f'@echo off\r\nstart "" pythonw "{target}"\r\n'
-            script.write_text(content, encoding="utf-8")
-            self._append_log(f"Installed Windows Startup launcher: {script}")
-            messagebox.showinfo(APP_NAME, "Đã cài khởi chạy cùng Windows.")
-        except Exception as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+        self.save()
+        success = setup_startup_task(True)
+        if success:
+            messagebox.showinfo(APP_NAME, "Đã cài đặt tự khởi động cùng Windows (Task Scheduler).")
+        else:
+            messagebox.showwarning(APP_NAME, "Không thể cài đặt Task Scheduler. Hãy đảm bảo chạy với quyền Administrator.")
 
     def remove_startup(self) -> None:
-        try:
-            script = self.startup_script_path()
-            if script.exists():
-                script.unlink()
-            self._append_log(f"Removed Windows Startup launcher: {script}")
-            messagebox.showinfo(APP_NAME, "Đã gỡ khởi chạy cùng Windows.")
-        except Exception as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+        success = setup_startup_task(False)
+        if success:
+            messagebox.showinfo(APP_NAME, "Đã gỡ bỏ tự khởi động cùng Windows.")
+        else:
+            messagebox.showwarning(APP_NAME, "Không thể gỡ bỏ tác vụ khởi động.")
 
     def _drain_logs(self) -> None:
         while True:
@@ -770,10 +964,17 @@ class AgentApp(tk.Tk):
 
     def _append_log(self, message: str) -> None:
         self.log_text.insert("end", f"{datetime.now().strftime('%H:%M:%S')} {message}\n")
+        try:
+            num_lines = int(self.log_text.index("end-1c").split(".")[0])
+            if num_lines > 1500:
+                self.log_text.delete("1.0", "200.0")
+        except Exception:
+            pass
         self.log_text.see("end")
 
 
 def main() -> None:
+    ensure_admin()
     app = AgentApp()
     app.mainloop()
 
