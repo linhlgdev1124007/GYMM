@@ -1219,6 +1219,47 @@ def test_debt_collection_uses_actual_paid_at(tmp_path):
         db.close()
 
 
+def test_payment_paid_at_can_be_updated_and_moves_revenue_day(tmp_path):
+    import asyncio
+    from server.models import Payment
+    from server.services.dashboard_service import reports
+    from server.services.members_service import update_membership
+    from server.services.operations_service import update_payment
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(db, status="active")
+        membership.final_price = 1_000_000
+        membership.paid_amount = 0
+        membership.debt_amount = 1_000_000
+        db.commit()
+
+        asyncio.run(update_membership(db, membership.id, {
+            "startsAt": "2026-08-01",
+            "expiresAt": "2026-08-31",
+            "finalPrice": "1000000",
+            "paidAmount": "500000",
+            "debtDueDate": "2026-08-31",
+            "paymentMethod": "cash",
+            "paidAt": "2026-08-15",
+            "status": "active",
+        }, [], None))
+        payment = db.query(Payment).filter(Payment.membership_id == membership.id).one()
+
+        assert reports(db, "2026-08-15", "2026-08-15")["summary"]["revenue"] == 500_000
+
+        updated = update_payment(db, payment.id, {"paidAt": "2026-07-30"})
+        db.refresh(payment)
+
+        assert updated["id"] == payment.id
+        assert payment.paid_at == datetime(2026, 7, 29, 17, 0)
+        assert payment.shift_date == date(2026, 7, 30)
+        assert reports(db, "2026-08-15", "2026-08-15")["summary"]["revenue"] == 0
+        assert reports(db, "2026-07-30", "2026-07-30")["summary"]["revenue"] == 500_000
+    finally:
+        db.close()
+
+
 def test_membership_renewal_uses_actual_paid_at_for_revenue(tmp_path):
     import asyncio
     from server.models import Payment

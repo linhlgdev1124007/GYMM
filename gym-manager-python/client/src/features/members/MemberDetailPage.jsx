@@ -24,6 +24,8 @@ import { api } from "../../services/api";
 import { notify } from "../../services/notify";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
+import { DateInput } from "../../components/ui/SmartInputs";
+import { Modal } from "../../components/ui/Modal";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { InlineEditField } from "../../components/ui/InlineEditField";
@@ -67,6 +69,14 @@ const membershipEventLabels = {
   change: "Đổi gói",
   adjust_days: "Cộng / trừ ngày",
   cancel: "Hủy dịch vụ",
+};
+
+const isoDateValue = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 };
 
 const auditFieldLabels = {
@@ -338,6 +348,8 @@ export function MemberDetailPage() {
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedTraining, setSelectedTraining] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
+  const [editingPaymentDate, setEditingPaymentDate] = useState(null);
+  const [paymentPaidAt, setPaymentPaidAt] = useState("");
   const [formError, setFormError] = useState("");
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [identityDeleteOpen, setIdentityDeleteOpen] = useState(false);
@@ -481,6 +493,26 @@ export function MemberDetailPage() {
     },
     onError: (error) => setFormError(error.message),
   });
+  const updatePayment = useMutation({
+    mutationFn: ({ paymentId, paidAt }) =>
+      api(`/api/payments/${paymentId}`, {
+        method: "PATCH",
+        body: { paidAt },
+      }),
+    onSuccess: (payment) => {
+      refresh();
+      setEditingPaymentDate(null);
+      setPaymentPaidAt("");
+      setFormError("");
+      notify.success(`Đã sửa ngày nhận thanh toán cho ${payment.number}.`);
+    },
+    onError: (error) => setFormError(error.message),
+  });
+  useEffect(() => {
+    if (!editingPaymentDate) return;
+    setPaymentPaidAt(isoDateValue(editingPaymentDate.paidAt));
+    setFormError("");
+  }, [editingPaymentDate]);
   const membershipOperation = useMutation({
     mutationFn: ({ action, membershipId, payload }) =>
       api(
@@ -757,7 +789,17 @@ export function MemberDetailPage() {
       render: (row) => (
         <div>
           <span className="cell-primary">{row.number}</span>
-          <div className="cell-secondary">{dateTime(row.paidAt)}</div>
+          <div className="cell-secondary flex items-center gap-2">
+            <span>{dateTime(row.paidAt)}</span>
+            <button
+              className="icon-button"
+              onClick={() => setEditingPaymentDate(row)}
+              aria-label={`Sửa ngày nhận thanh toán ${row.number}`}
+              title="Sửa ngày nhận thanh toán"
+            >
+              <Pencil size={14} />
+            </button>
+          </div>
         </div>
       ),
     },
@@ -1533,6 +1575,61 @@ export function MemberDetailPage() {
         pending={uploadReceipts.isPending}
         error={formError}
       />
+      <Modal
+        open={!!editingPaymentDate}
+        onClose={() => {
+          setEditingPaymentDate(null);
+          setPaymentPaidAt("");
+          setFormError("");
+        }}
+        title="Sửa ngày nhận thanh toán"
+        dirty={paymentPaidAt !== isoDateValue(editingPaymentDate?.paidAt)}
+      >
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!paymentPaidAt) {
+              setFormError("Vui lòng chọn ngày nhận thanh toán.");
+              return;
+            }
+            updatePayment.mutate({
+              paymentId: editingPaymentDate.id,
+              paidAt: paymentPaidAt,
+            });
+          }}
+        >
+          <label>
+            <span>Phiếu thu</span>
+            <input className="input" value={editingPaymentDate?.number || ""} disabled />
+          </label>
+          <label>
+            <span>Số tiền</span>
+            <input className="input" value={money(editingPaymentDate?.amount)} disabled />
+          </label>
+          <label>
+            <span>Ngày nhận thanh toán</span>
+            <DateInput className="input" value={paymentPaidAt} onChange={setPaymentPaidAt} />
+          </label>
+          {formError && <div className="form-error md:col-span-2">{formError}</div>}
+          <div className="form-actions md:col-span-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                setEditingPaymentDate(null);
+                setPaymentPaidAt("");
+                setFormError("");
+              }}
+            >
+              Hủy
+            </Button>
+            <Button type="submit" loading={updatePayment.isPending}>
+              Lưu
+            </Button>
+          </div>
+        </form>
+      </Modal>
       <MembershipOperationsModal
         membership={selectedMembership || current}
         memberships={member.memberships}

@@ -29,6 +29,7 @@ def checkout(db: Session, session_id: int, actor=None): return operations_servic
 def member_processing_queue(db: Session, **params): return operations_service.member_processing_queue(db, **params)
 def process_member_checkin(db: Session, session_id: int, payload: dict, actor=None): return operations_service.process_member_checkin(db, session_id, payload, actor)
 def list_payments(db: Session, **params): return operations_service.list_payments(db, **params)
+def update_payment(db: Session, payment_id: int, payload: dict, actor=None): return operations_service.update_payment(db, payment_id, payload, actor)
 def settings(db: Session): return operations_service.settings(db)
 def create_job_title(db: Session, payload: dict, actor=None): return operations_service.create_job_title(db, payload, actor)
 def update_job_title(db: Session, title_id: int, payload: dict, actor=None): return operations_service.update_job_title(db, title_id, payload, actor)

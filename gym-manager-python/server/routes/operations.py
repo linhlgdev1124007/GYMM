@@ -183,6 +183,11 @@ def payments(q: str = "", method: str = "all", date_from: str = Query("", alias=
     return operations_controller.list_payments(db, q=q, method=method, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
 
 
+@router.patch("/payments/{payment_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+def update_payment(payment_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    return operations_controller.update_payment(db, payment_id, payload, user)
+
+
 @router.get("/settings", dependencies=[Depends(require_roles("admin"))])
 def settings(db: Session = Depends(get_db)):
     return operations_controller.settings(db)

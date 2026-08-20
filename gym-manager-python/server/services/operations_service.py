@@ -1581,6 +1581,47 @@ def list_payments(db: Session, q: str, method: str, date_from: str, date_to: str
     return {"items":[payment_data(row) for row in rows],"pagination":pagination(page,page_size,total)}
 
 
+def update_payment(db: Session, payment_id: int, payload: dict, actor: User | None = None):
+    row = (
+        db.query(Payment)
+        .options(
+            joinedload(Payment.customer).joinedload(Customer.person),
+            joinedload(Payment.membership).joinedload(Membership.package),
+            joinedload(Payment.receipts).joinedload(PaymentReceipt.uploaded_by),
+        )
+        .filter(Payment.id == payment_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Không tìm thấy phiếu thu.")
+    if "paidAt" not in payload:
+        raise HTTPException(422, "Ngày nhận thanh toán là bắt buộc.")
+    old_paid_at = row.paid_at
+    old_shift_date = row.shift_date
+    paid_at = _parse_paid_at(payload.get("paidAt"))
+    row.paid_at = paid_at
+    row.shift_date = utc_vietnam_date(paid_at) or vietnam_today()
+    record_audit(
+        db,
+        actor,
+        "update",
+        "payment",
+        row.id,
+        f"Sửa ngày nhận thanh toán {row.payment_no}",
+        customer_id=row.customer_id,
+        details={
+            "paymentNo": row.payment_no,
+            "oldPaidAt": old_paid_at,
+            "newPaidAt": row.paid_at,
+            "oldShiftDate": old_shift_date,
+            "newShiftDate": row.shift_date,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    return payment_data(row)
+
+
 def settings(db: Session):
     ensure_employee_job_titles(db)
     device = _primary_dah_device(db)

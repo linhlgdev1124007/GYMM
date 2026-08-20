@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ReceiptText } from "lucide-react";
+import { Pencil, ReceiptText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, queryString } from "../../services/api";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -9,6 +9,8 @@ import { SearchInput } from "../../components/common/SearchInput";
 import { DataTable } from "../../components/ui/DataTable";
 import { Select } from "../../components/ui/Form";
 import { DateInput } from "../../components/ui/SmartInputs";
+import { Button } from "../../components/ui/Button";
+import { Modal } from "../../components/ui/Modal";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { dateTime, money } from "../../utils/format";
@@ -21,6 +23,15 @@ const methods = {
   card: "Thẻ",
   apple_pay: "Apple Pay",
 };
+
+const isoDateValue = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+};
+
 export function PaymentsPage() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
@@ -31,6 +42,8 @@ export function PaymentsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedPayment, setSelectedPayment] = useState(null);
+  const [editingPayment, setEditingPayment] = useState(null);
+  const [paidAt, setPaidAt] = useState("");
   const [formError, setFormError] = useState("");
   const query = useQuery({
     queryKey: ["payments", q, method, dateFrom, dateTo, page, pageSize],
@@ -50,6 +63,27 @@ export function PaymentsPage() {
     },
     onError: (error) => setFormError(error.message),
   });
+  const updatePayment = useMutation({
+    mutationFn: ({ id, paidAt: nextPaidAt }) =>
+      api(`/api/payments/${id}`, {
+        method: "PATCH",
+        body: { paidAt: nextPaidAt },
+      }),
+    onSuccess: (payment) => {
+      client.invalidateQueries({ queryKey: ["payments"] });
+      client.invalidateQueries({ queryKey: ["member", payment.memberId] });
+      setEditingPayment(null);
+      setPaidAt("");
+      setFormError("");
+      notify.success(`Đã sửa ngày nhận thanh toán cho ${payment.number}.`);
+    },
+    onError: (error) => setFormError(error.message),
+  });
+  useEffect(() => {
+    if (!editingPayment) return;
+    setPaidAt(isoDateValue(editingPayment.paidAt));
+    setFormError("");
+  }, [editingPayment]);
   const columns = [
     {
       key: "number",
@@ -96,7 +130,19 @@ export function PaymentsPage() {
       key: "paidAt",
       label: "Ngày giao dịch",
       sortValue: (r) => r.paidAt,
-      render: (r) => dateTime(r.paidAt),
+      render: (r) => (
+        <div className="flex items-center gap-2">
+          <span>{dateTime(r.paidAt)}</span>
+          <button
+            className="icon-button"
+            onClick={() => setEditingPayment(r)}
+            aria-label={`Sửa ngày nhận thanh toán ${r.number}`}
+            title="Sửa ngày nhận thanh toán"
+          >
+            <Pencil size={14} />
+          </button>
+        </div>
+      ),
     },
     {
       key: "status",
@@ -195,6 +241,62 @@ export function PaymentsPage() {
         pending={uploadReceipts.isPending}
         error={formError}
       />
+      <Modal
+        open={!!editingPayment}
+        onClose={() => {
+          setEditingPayment(null);
+          setPaidAt("");
+          setFormError("");
+        }}
+        title="Sửa ngày nhận thanh toán"
+        dirty={paidAt !== isoDateValue(editingPayment?.paidAt)}
+      >
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!paidAt) {
+              setFormError("Vui lòng chọn ngày nhận thanh toán.");
+              return;
+            }
+            updatePayment.mutate({ id: editingPayment.id, paidAt });
+          }}
+        >
+          <label>
+            <span>Phiếu thu</span>
+            <input className="input" value={editingPayment?.number || ""} disabled />
+          </label>
+          <label>
+            <span>Hội viên</span>
+            <input className="input" value={editingPayment?.memberName || ""} disabled />
+          </label>
+          <label>
+            <span>Số tiền</span>
+            <input className="input" value={money(editingPayment?.amount)} disabled />
+          </label>
+          <label>
+            <span>Ngày nhận thanh toán</span>
+            <DateInput className="input" value={paidAt} onChange={setPaidAt} />
+          </label>
+          {formError && <div className="form-error md:col-span-2">{formError}</div>}
+          <div className="form-actions md:col-span-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                setEditingPayment(null);
+                setPaidAt("");
+                setFormError("");
+              }}
+            >
+              Hủy
+            </Button>
+            <Button type="submit" loading={updatePayment.isPending}>
+              Lưu
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </>
   );
 }
