@@ -191,11 +191,20 @@ def pending_batch(batch_id: str) -> dict:
 
 def create_sync_job(payload: dict | None = None, actor=None) -> dict:
     payload = payload or {}
-    lookback = int(payload.get("lookbackHours") or DEFAULT_LOOKBACK_HOURS)
-    lookback = max(1, min(lookback, MAX_LOOKBACK_HOURS))
     now = utc_now()
-    end = now
-    begin = now - timedelta(hours=lookback)
+    work_date = _parse_date(payload.get("workDate"))
+    if work_date:
+        if work_date < SCAN_START_DATE:
+            work_date = SCAN_START_DATE
+        if work_date > vietnam_today():
+            work_date = vietnam_today()
+        begin, end = _day_range(work_date)
+        lookback = None
+    else:
+        lookback = int(payload.get("lookbackHours") or DEFAULT_LOOKBACK_HOURS)
+        lookback = max(1, min(lookback, MAX_LOOKBACK_HOURS))
+        end = now
+        begin = now - timedelta(hours=lookback)
     job = {
         "id": uuid4().hex,
         "type": "sync",
@@ -203,6 +212,7 @@ def create_sync_job(payload: dict | None = None, actor=None) -> dict:
         "createdAt": utc_iso(now),
         "createdByUserId": getattr(actor, "id", None),
         "lookbackHours": lookback,
+        "workDate": work_date.isoformat() if work_date else None,
         "range": {"begin": begin.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds")},
     }
     with _lock:
@@ -285,6 +295,7 @@ def next_job(agent_id: str | None, timeout: int = 55) -> dict | None:
                         "type": job["type"],
                         "range": job["range"],
                         "lookbackHours": job["lookbackHours"],
+                        "workDate": job.get("workDate"),
                     }
         if time.monotonic() >= deadline:
             return None
@@ -757,6 +768,14 @@ def _upsert_scan_day(db: Session, payload: dict, preview: dict, batch_id: str | 
 
 
 def record_result(db: Session, job_id: str, payload: dict) -> dict:
+    with _lock:
+        existing_job = _jobs.get(job_id)
+        job_work_date = _clean(payload.get("workDate"), 20) or _clean(existing_job.get("workDate") if existing_job else None, 20)
+        job_range = payload.get("range") or (existing_job.get("range") if existing_job else None)
+    if job_work_date and not payload.get("workDate"):
+        payload = {**payload, "workDate": job_work_date}
+    if job_range and not payload.get("range"):
+        payload = {**payload, "range": job_range}
     preview = preview_agent_result(db, payload)
     now = utc_now()
     summary = _summary_with_fail(preview)
@@ -771,7 +790,7 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "deviceCode": _clean(payload.get("deviceCode"), 80),
             "dahBaseUrl": _clean(payload.get("dahBaseUrl"), 120),
             "createdAt": utc_iso(now),
-            "workDate": _clean(payload.get("workDate"), 20),
+            "workDate": job_work_date,
             "range": payload.get("range"),
             "status": "pending",
             "totalCount": payload.get("totalCount"),
@@ -798,6 +817,7 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "completedAt": utc_iso(now),
             "agentId": _clean(payload.get("agentId"), 80) or job.get("agentId"),
             "range": payload.get("range") or job.get("range"),
+            "workDate": job_work_date or job.get("workDate"),
             "result": {**summary, "batchId": batch_id, "pendingApproval": needs_review},
             "error": preview.get("error"),
         })

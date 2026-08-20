@@ -184,10 +184,10 @@ export function SettingsPage() {
     onError: (reason) => setSpeechError(reason.message),
   });
   const requestDahSync = useMutation({
-    mutationFn: () => api("/api/dah/local-agent/sync-request", { method: "POST", body: { lookbackHours: 24 } }),
-    onSuccess: () => {
+    mutationFn: (payload = { lookbackHours: 24 }) => api("/api/dah/local-agent/sync-request", { method: "POST", body: payload }),
+    onSuccess: (_, payload) => {
       client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
-      notify.success("Đã gửi yêu cầu sync tới DAH agent.");
+      notify.success(payload?.workDate ? `Đã gửi yêu cầu quét lại ngày ${payload.workDate}.` : "Đã gửi yêu cầu sync tới DAH agent.");
     },
     onError: (reason) => notify.error(reason.message),
   });
@@ -470,7 +470,7 @@ export function SettingsPage() {
                 <RefreshCw size={14} />
                 Làm mới
               </Button>
-              <Button size="sm" loading={requestDahSync.isPending} onClick={() => requestDahSync.mutate()}>
+              <Button size="sm" loading={requestDahSync.isPending} onClick={() => requestDahSync.mutate({ lookbackHours: 24 })}>
                 <RefreshCw size={14} />
                 Yêu cầu sync
               </Button>
@@ -529,6 +529,7 @@ export function SettingsPage() {
                     <th className="px-3 py-2 text-right">Miss</th>
                     <th className="px-3 py-2 text-right">Chưa khớp</th>
                     <th className="px-3 py-2 text-right">Fail</th>
+                    <th className="px-3 py-2 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -541,6 +542,17 @@ export function SettingsPage() {
                       <td className="px-3 py-2 text-right text-emerald-700">{day.matchedMissUnapproved || 0}</td>
                       <td className="px-3 py-2 text-right text-amber-700">{day.unknown || 0}</td>
                       <td className="px-3 py-2 text-right text-red-700">{day.failCount || 0}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={requestDahSync.isPending}
+                          onClick={() => requestDahSync.mutate({ workDate: day.workDate })}
+                        >
+                          <RefreshCw size={14} />
+                          Quét lại
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

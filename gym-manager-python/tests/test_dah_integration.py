@@ -272,6 +272,41 @@ def test_dah_agent_unknown_event_is_committed_as_unknown_after_approval(tmp_path
         db.close()
 
 
+def test_dah_manual_day_sync_job_preserves_work_date_for_pending_batch(tmp_path):
+    from server.services import dah_local_sync_service
+
+    db = make_session(tmp_path)
+    try:
+        job = dah_local_sync_service.create_sync_job({"workDate": "2026-08-19"})
+        next_job = dah_local_sync_service.next_job("test-agent", timeout=0)
+
+        assert next_job["id"] == job["id"]
+        assert next_job["workDate"] == "2026-08-19"
+        assert next_job["range"]["begin"] == "2026-08-19T00:00:00"
+        assert next_job["range"]["end"] == "2026-08-20T00:00:00"
+
+        posted = dah_local_sync_service.record_result(db, next_job["id"], {
+            "ok": True,
+            "agentId": "test-agent",
+            "deviceCode": "DAH-192.168.1.60",
+            "events": [{
+                "dahUid": "manual-day-unknown-1",
+                "dahPersonUid": "991122",
+                "profileKey": "dah_profile:0/0/991122",
+                "eventTime": "2026-08-19T07:00:00",
+                "status": 1,
+                "name": "UNKNOWN FACE",
+            }],
+        })
+
+        assert posted["status"] == "pending_approval"
+        assert posted["batch"]["workDate"] == "2026-08-19"
+        assert posted["batch"]["summary"]["unknown"] == 1
+        assert dah_local_sync_service.pending_batches()["items"][0]["workDate"] == "2026-08-19"
+    finally:
+        db.close()
+
+
 def test_dah_local_sync_matches_by_person_id_only(tmp_path):
     from server.models import DahCustomerIdentity
     from server.services import dah_local_sync_service
