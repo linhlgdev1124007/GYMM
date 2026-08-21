@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import json
 import os
 import queue
 import random
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import traceback
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,10 +29,12 @@ from tkinter import messagebox, ttk
 
 
 APP_NAME = "PulseFit DAH Agent"
+APP_VERSION = "1.2.0"
 DEFAULT_DAH_USERNAME = "system"
 DEFAULT_DAH_PASSWORD = "admin"
 TASK_NAME = "PulseFitDahAgent"
 HEARTBEAT_INTERVAL_SECONDS = 60
+UPDATE_CHECK_INTERVAL_SECONDS = 60
 
 
 def app_dir() -> Path:
@@ -169,6 +174,8 @@ class AgentConfig:
     lookback_hours: int = 24
     scan_start_date: str = "2026-08-19"
     browser_warmup: bool = True
+    auto_update: bool = True
+    update_check_interval_seconds: int = UPDATE_CHECK_INTERVAL_SECONDS
 
     @property
     def server_base_url(self) -> str:
@@ -542,7 +549,7 @@ class ServerClient:
             "agentId": self.config.agent_id,
             "status": "online",
             "dahBaseUrl": self.config.dah_base_url,
-            "version": "1.1.0",
+            "version": APP_VERSION,
             "isAdmin": is_admin(),
         }
         self.session.post(
@@ -551,6 +558,17 @@ class ServerClient:
             headers=auth_headers(self.config),
             timeout=15,
         ).raise_for_status()
+
+    def latest_release(self) -> dict[str, Any] | None:
+        response = self.session.get(
+            f"{self.config.server_base_url}/api/dah/local-agent/releases/latest",
+            params={"currentVersion": APP_VERSION},
+            headers=auth_headers(self.config),
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else None
 
     def next_job(self) -> dict[str, Any] | None:
         response = self.session.get(
@@ -593,6 +611,86 @@ class ServerClient:
         ).raise_for_status()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _extract_agent_exe(download_path: Path, staging_dir: Path) -> Path:
+    if download_path.suffix.lower() == ".zip":
+        extract_dir = staging_dir / "extract"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(download_path) as archive:
+            archive.extractall(extract_dir)
+        candidates = list(extract_dir.rglob("PulseFitDahAgent.exe"))
+        if not candidates:
+            raise RuntimeError("Gói update không chứa PulseFitDahAgent.exe")
+        return candidates[0]
+    return download_path
+
+
+def _ps_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def install_update(release: dict[str, Any], config: AgentConfig) -> None:
+    if not getattr(sys, "frozen", False):
+        log("Update skipped: chỉ tự cập nhật khi chạy bản .exe đã build.")
+        return
+    url = clean_null(release.get("url"))
+    expected_sha = clean_null(release.get("sha256"))
+    version = clean_null(release.get("version")) or "unknown"
+    if not url or not expected_sha:
+        raise RuntimeError("Server chưa cấu hình đủ URL hoặc SHA256 cho Agent update.")
+
+    staging_dir = app_dir() / ".update" / f"agent-{version}-{int(time.time())}"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    download_path = staging_dir / ("agent-update.zip" if url.lower().endswith(".zip") else "PulseFitDahAgent.new.exe")
+    headers = auth_headers(config)
+    headers.pop("Content-Type", None)
+    with requests.get(url, headers=headers, stream=True, timeout=120) as response:
+        response.raise_for_status()
+        with download_path.open("wb") as fh:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    fh.write(chunk)
+    actual_sha = _sha256_file(download_path)
+    if actual_sha.lower() != expected_sha.lower():
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise RuntimeError(f"SHA256 update không khớp: {actual_sha}")
+
+    source_exe = _extract_agent_exe(download_path, staging_dir).resolve()
+    current_exe = Path(sys.executable).resolve()
+    script_path = staging_dir / "apply-update.ps1"
+    script_path.write_text(
+        "\n".join([
+            '$ErrorActionPreference = "Stop"',
+            f"$Source = {_ps_single_quote(str(source_exe))}",
+            f"$Target = {_ps_single_quote(str(current_exe))}",
+            f"$Staging = {_ps_single_quote(str(staging_dir))}",
+            f"$PidToWait = {os.getpid()}",
+            "Start-Sleep -Seconds 2",
+            "Wait-Process -Id $PidToWait -Timeout 45 -ErrorAction SilentlyContinue",
+            "Copy-Item -LiteralPath $Source -Destination $Target -Force",
+            "Start-Process -FilePath $Target",
+            "Start-Sleep -Seconds 2",
+            "Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction SilentlyContinue",
+        ]),
+        encoding="utf-8",
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+        creationflags=flags,
+        cwd=str(app_dir()),
+    )
+    log(f"Đã tải Agent {version}; đang khởi động trình cập nhật và restart ứng dụng.")
+    os._exit(0)
+
+
 class AgentWorker:
     def __init__(self, config: AgentConfig, events: queue.Queue[str]):
         self.config = config
@@ -600,6 +698,7 @@ class AgentWorker:
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.heartbeat_thread: threading.Thread | None = None
+        self.update_thread: threading.Thread | None = None
         self.sync_now_event = threading.Event()
 
     def start(self) -> None:
@@ -614,6 +713,13 @@ class AgentWorker:
             daemon=True,
         )
         self.heartbeat_thread.start()
+        if self.config.auto_update:
+            self.update_thread = threading.Thread(
+                target=self._update_loop,
+                name="PulseFitDahAgentUpdater",
+                daemon=True,
+            )
+            self.update_thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -635,6 +741,23 @@ class AgentWorker:
             except Exception as exc:
                 self._emit(f"Heartbeat failed: {exc}")
             self.stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+
+    def _update_loop(self) -> None:
+        server = ServerClient(self.config)
+        self.stop_event.wait(30)
+        while not self.stop_event.is_set():
+            try:
+                release = server.latest_release()
+                if release and release.get("updateAvailable"):
+                    version = release.get("version") or "unknown"
+                    self._emit(f"Agent update available: {APP_VERSION} -> {version}")
+                    install_update(release, self.config)
+                elif release and release.get("configured"):
+                    self._emit(f"Agent version is current: {APP_VERSION}")
+            except Exception as exc:
+                self._emit(f"Update check failed: {exc}")
+            interval = max(int(self.config.update_check_interval_seconds or UPDATE_CHECK_INTERVAL_SECONDS), 60)
+            self.stop_event.wait(interval)
 
     def _run(self) -> None:
         server = ServerClient(self.config)
@@ -678,12 +801,13 @@ class AgentWorker:
         self._emit(f"Sync started: {job_id} (lookback={lookback}h)")
         try:
             result = DahClient(self.config).fetch_events(lookback_hours=lookback)
-            result.update({"agentId": self.config.agent_id, "jobId": job_id, "ok": True})
+            result.update({"agentId": self.config.agent_id, "jobId": job_id, "version": APP_VERSION, "ok": True})
             self._emit(f"Sync pulled {len(result.get('events', []))} events")
         except Exception as exc:
             result = {
                 "agentId": self.config.agent_id,
                 "jobId": job_id,
+                "version": APP_VERSION,
                 "ok": False,
                 "error": str(exc),
                 "traceback": traceback.format_exc(),
@@ -727,6 +851,7 @@ class AgentWorker:
                 result.update({
                     "agentId": self.config.agent_id,
                     "jobId": f"scan-{work_date}-{int(time.time())}",
+                    "version": APP_VERSION,
                     "ok": True,
                     "workDate": work_date,
                     "range": {"begin": begin.isoformat(), "end": end.isoformat()},
@@ -866,11 +991,14 @@ class AgentApp(tk.Tk):
         self._add_entry(form, "Sync interval seconds", "sync_interval_seconds", 9, width=8)
         self._add_entry(form, "Lookback hours", "lookback_hours", 10, width=8)
         self._add_entry(form, "Scan start date", "scan_start_date", 11, width=12)
+        self._add_entry(form, "Update check seconds", "update_check_interval_seconds", 12, width=8)
 
         self.vars["auto_start"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Tự động start worker khi mở app (Luôn bật)", variable=self.vars["auto_start"]).grid(row=12, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Tự động start worker khi mở app (Luôn bật)", variable=self.vars["auto_start"]).grid(row=13, column=1, sticky="w", pady=3)
         self.vars["browser_warmup"] = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Sử dụng browser ẩn đăng nhập DAH trước khi kéo API", variable=self.vars["browser_warmup"]).grid(row=13, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(form, text="Sử dụng browser ẩn đăng nhập DAH trước khi kéo API", variable=self.vars["browser_warmup"]).grid(row=14, column=1, sticky="w", pady=3)
+        self.vars["auto_update"] = tk.BooleanVar()
+        ttk.Checkbutton(form, text=f"Tự động cập nhật Agent (version hiện tại {APP_VERSION})", variable=self.vars["auto_update"]).grid(row=15, column=1, sticky="w", pady=3)
 
         actions = ttk.Frame(root)
         actions.pack(fill="x", pady=10)
@@ -910,9 +1038,9 @@ class AgentApp(tk.Tk):
         data = asdict(self.config_data)
         for key, var in self.vars.items():
             value = var.get()
-            if key in {"server_port", "dah_port", "sync_interval_seconds", "lookback_hours"}:
+            if key in {"server_port", "dah_port", "sync_interval_seconds", "lookback_hours", "update_check_interval_seconds"}:
                 data[key] = safe_int(value, data[key])
-            elif key in {"auto_start", "browser_warmup"}:
+            elif key in {"auto_start", "browser_warmup", "auto_update"}:
                 data[key] = bool(value)
             else:
                 data[key] = str(value).strip()

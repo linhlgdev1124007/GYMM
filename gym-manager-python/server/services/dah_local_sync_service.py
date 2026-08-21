@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import hashlib
 import json
+import os
 import threading
 import time
 import unicodedata
@@ -11,8 +12,10 @@ from uuid import uuid4
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from ..database import ROOT_DIR
 from ..models import AttendanceSession, Customer, DahCustomerIdentity, DahLocalSyncDay, DahWebhookEvent, Device, Employee
 from ..timeutils import VIETNAM_TZ, utc_iso, utc_now, vietnam_today
+from ..config import settings
 from . import dah_service
 from .employee_shift_attendance import rebuild_employee_attendance_for_day
 
@@ -24,6 +27,9 @@ JOB_TTL_SECONDS = 60 * 60 * 24
 AGENT_HEARTBEAT_INTERVAL_SECONDS = 60
 AGENT_OFFLINE_AFTER_SECONDS = 180
 SCAN_START_DATE = date(2026, 8, 19)
+AGENT_RELEASE_DIR = ROOT_DIR / "server" / "uploads" / "agent_updates"
+AGENT_RELEASE_EXE = AGENT_RELEASE_DIR / "PulseFitDahAgent.exe"
+AGENT_RELEASE_METADATA = AGENT_RELEASE_DIR / "latest.json"
 
 _lock = threading.RLock()
 _jobs: dict[str, dict] = {}
@@ -35,8 +41,41 @@ _agent_state: dict = {
     "lastHeartbeat": None,
     "lastError": None,
     "lastJobId": None,
+    "lastSyncAt": None,
+    "lastSyncStatus": None,
+    "lastSyncSummary": None,
 }
 _pending_batches: dict[str, dict] = {}
+
+
+def _agent_download_url(base_url: str | None = None) -> str | None:
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/api/dah/local-agent/releases/download"
+
+
+def _read_uploaded_release(base_url: str | None = None) -> dict | None:
+    if not AGENT_RELEASE_METADATA.exists() or not AGENT_RELEASE_EXE.exists():
+        return None
+    try:
+        metadata = json.loads(AGENT_RELEASE_METADATA.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = _clean(metadata.get("version"), 40)
+    sha256 = _clean(metadata.get("sha256"), 80)
+    if not version or not sha256:
+        return None
+    return {
+        "configured": True,
+        "source": "upload",
+        "version": version,
+        "url": _agent_download_url(base_url),
+        "sha256": sha256,
+        "mandatory": bool(metadata.get("mandatory")),
+        "uploadedAt": metadata.get("uploadedAt"),
+        "uploadedByUserId": metadata.get("uploadedByUserId"),
+        "sizeBytes": metadata.get("sizeBytes"),
+    }
 
 
 def _clean(value, limit: int = 255) -> str | None:
@@ -126,6 +165,7 @@ def heartbeat(payload: dict) -> dict:
             "status": "online",
             "lastSeenAt": utc_iso(now),
             "lastHeartbeat": payload,
+            "version": _clean(payload.get("version"), 40) or _agent_state.get("version"),
             "lastError": None,
         })
         _prune_jobs(now)
@@ -148,7 +188,66 @@ def status() -> dict:
             "pendingCount": len(_pending),
             "pendingBatchCount": len([row for row in _pending_batches.values() if row.get("status") == "pending" and _batch_needs_review(row)]),
             "recentJobs": [_job_public(row) for row in recent],
+            "release": latest_release(state.get("version")),
         }
+
+
+def latest_release(current_version: str | None = None, base_url: str | None = None) -> dict:
+    uploaded = _read_uploaded_release(base_url)
+    if uploaded:
+        latest = uploaded["version"]
+        url = uploaded["url"]
+        sha256 = uploaded["sha256"]
+        configured = bool(latest and sha256)
+        return {
+            **uploaded,
+            "configured": configured,
+            "currentVersion": _clean(current_version, 40),
+            "updateAvailable": bool(configured and current_version and latest != current_version),
+        }
+    latest = _clean(settings.dah_agent_latest_version, 40)
+    url = _clean(settings.dah_agent_download_url, 500)
+    sha256 = _clean(settings.dah_agent_sha256, 80)
+    configured = bool(latest and url and sha256)
+    return {
+        "configured": configured,
+        "source": "env" if configured else None,
+        "version": latest,
+        "url": url,
+        "sha256": sha256,
+        "mandatory": bool(settings.dah_agent_mandatory_update),
+        "currentVersion": _clean(current_version, 40),
+        "updateAvailable": bool(configured and current_version and latest != current_version),
+    }
+
+
+def uploaded_release_file():
+    if not AGENT_RELEASE_EXE.exists():
+        return None
+    return AGENT_RELEASE_EXE
+
+
+def save_uploaded_release(version: str, content: bytes, actor=None, mandatory: bool = False) -> dict:
+    version = _clean(version, 40)
+    if not version:
+        raise ValueError("Version Agent không hợp lệ.")
+    if not content or len(content) < 2 or content[:2] != b"MZ":
+        raise ValueError("File upload không phải Windows EXE hợp lệ.")
+    AGENT_RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = AGENT_RELEASE_DIR / "PulseFitDahAgent.exe.tmp"
+    tmp_path.write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
+    os.replace(tmp_path, AGENT_RELEASE_EXE)
+    metadata = {
+        "version": version,
+        "sha256": digest,
+        "mandatory": bool(mandatory),
+        "uploadedAt": utc_iso(utc_now()),
+        "uploadedByUserId": getattr(actor, "id", None),
+        "sizeBytes": len(content),
+    }
+    AGENT_RELEASE_METADATA.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return latest_release(version)
 
 
 def _scan_day_public(row: DahLocalSyncDay) -> dict:
@@ -269,10 +368,25 @@ def scan_plan(db: Session, payload: dict | None = None) -> dict:
     current = start_date
     while current <= end_date:
         row = existing.get(current)
-        include = row is None or current == now.date() or int(row.fail_count or 0) > 0
+        _, full_day_end = _day_range(current, now)
+        incomplete_day = bool(row and (not row.range_end or row.range_end < full_day_end))
+        include = (
+            row is None
+            or current == now.date()
+            or int(row.fail_count or 0) > 0
+            or incomplete_day
+        )
         if include:
             begin, end = _day_range(current, now)
-            reason = "not_scanned" if row is None else "today" if current == now.date() else "has_failures"
+            reason = (
+                "not_scanned"
+                if row is None
+                else "today"
+                if current == now.date()
+                else "has_failures"
+                if int(row.fail_count or 0) > 0
+                else "incomplete_day"
+            )
             items.append({
                 "workDate": current.isoformat(),
                 "range": {"begin": begin.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds")},
@@ -856,6 +970,10 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "lastSeenAt": utc_iso(now),
             "lastJobId": job_id,
             "lastError": preview.get("error"),
+            "lastSyncAt": utc_iso(now),
+            "lastSyncStatus": job["status"],
+            "lastSyncSummary": {**summary, "batchId": batch_id, "pendingApproval": needs_review},
+            "version": _clean(payload.get("version"), 40) or _agent_state.get("version"),
         })
         return {**_job_public(job), "batch": _batch_public(batch) if batch else None}
 
@@ -898,6 +1016,10 @@ def record_day_scan_result(db: Session, payload: dict) -> dict:
             "status": "online",
             "lastSeenAt": utc_iso(now),
             "lastError": preview.get("error"),
+            "lastSyncAt": utc_iso(now),
+            "lastSyncStatus": "pending_approval" if batch else "completed" if preview.get("ok") else "failed",
+            "lastSyncSummary": summary,
+            "version": _clean(payload.get("version"), 40) or _agent_state.get("version"),
         })
     return {
         "ok": bool(preview.get("ok")),

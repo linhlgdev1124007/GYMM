@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Eye, Pencil, Plus, RefreshCw, Save, Trash2, Volume2, X } from "lucide-react";
+import { Check, Eye, Pencil, Plus, RefreshCw, Save, Trash2, Upload, Volume2, X } from "lucide-react";
 import { api } from "../../services/api";
 import { notify } from "../../services/notify";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -56,6 +56,8 @@ export function SettingsPage() {
   const [speechSampleName, setSpeechSampleName] = useState("Khải Hoàn");
   const [syncModal, setSyncModal] = useState(null);
   const [selectedSyncEvents, setSelectedSyncEvents] = useState({});
+  const [agentReleaseVersion, setAgentReleaseVersion] = useState("");
+  const [agentReleaseFile, setAgentReleaseFile] = useState(null);
   const query = useQuery({
     queryKey: ["settings"],
     queryFn: () => api("/api/settings"),
@@ -193,6 +195,21 @@ export function SettingsPage() {
     },
     onError: (reason) => notify.error(reason.message),
   });
+  const uploadAgentRelease = useMutation({
+    mutationFn: () => {
+      const form = new FormData();
+      form.set("version", agentReleaseVersion.trim());
+      form.set("mandatory", "false");
+      form.set("file", agentReleaseFile);
+      return api("/api/dah/local-agent/releases", { method: "POST", body: form });
+    },
+    onSuccess: (release) => {
+      client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      setAgentReleaseFile(null);
+      notify.success(`Đã upload Agent ${release.version}. Agent sẽ tự cập nhật trong vòng 1 phút.`);
+    },
+    onError: (reason) => notify.error(reason.message),
+  });
   const approveDahSync = useMutation({
     mutationFn: ({ batchId, eventKeys }) =>
       api(`/api/dah/local-agent/pending-batches/${batchId}/approve`, {
@@ -233,6 +250,7 @@ export function SettingsPage() {
   const pendingBatches = pendingSyncBatches.data?.items || [];
   const scanDays = dahScanDays.data?.items || [];
   const agent = dahAgentStatus.data?.agent;
+  const agentRelease = dahAgentStatus.data?.release;
   const recentDahJobs = dahAgentStatus.data?.recentJobs || [];
   const selectableSyncEventKeys = new Set((syncDetail?.events || []).filter(canSyncDahEvent).map((event) => event.eventKey));
   const selectedEventKeys = Object.entries(selectedSyncEvents)
@@ -251,6 +269,7 @@ export function SettingsPage() {
     );
     if (confirmed) deleteAccount.mutate(row);
   };
+  const canUploadAgentRelease = agentReleaseVersion.trim() && agentReleaseFile && !uploadAgentRelease.isPending;
 
   return (
     <>
@@ -464,9 +483,18 @@ export function SettingsPage() {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">DAH local agent</h3>
               <p className="text-sm text-slate-500">
-                Agent: {agent?.agentId || "—"} · Trạng thái: {agent?.status === "online" ? "online" : "offline"} · Batch chờ duyệt: {pendingBatches.length}
+                Agent: {agent?.agentId || "—"} · Version: {agent?.version || agent?.lastHeartbeat?.version || "—"} · Trạng thái: {agent?.status === "online" ? "online" : "offline"} · Batch chờ duyệt: {pendingBatches.length}
               </p>
-              <p className="text-xs text-slate-400">Heartbeat cuối: {dateTime(agent?.lastSeenAt)} · Agent tự quét mỗi 30 phút từ 19/08/2026</p>
+              <p className="text-xs text-slate-400">
+                Heartbeat cuối: {dateTime(agent?.lastSeenAt)} · Sync cuối: {dateTime(agent?.lastSyncAt)}
+                {agent?.lastSyncStatus ? ` · ${agent.lastSyncStatus === "completed" ? "đã đồng bộ" : agent.lastSyncStatus === "pending_approval" ? "chờ duyệt" : agent.lastSyncStatus}` : ""}
+              </p>
+              <p className="text-xs text-slate-400">
+                Kết quả sync cuối: nhận {agent?.lastSyncSummary?.received ?? "—"} · miss {agent?.lastSyncSummary?.matched ?? "—"} · trùng {agent?.lastSyncSummary?.duplicates ?? "—"} · chưa khớp {agent?.lastSyncSummary?.unknown ?? "—"} · fail {agent?.lastSyncSummary?.failCount ?? "—"}
+              </p>
+              <p className={`text-xs ${agentRelease?.updateAvailable ? "text-amber-700" : "text-slate-400"}`}>
+                Cập nhật Agent: {agentRelease?.configured ? (agentRelease.updateAvailable ? `có bản ${agentRelease.version} đang chờ Agent tự cập nhật` : "đang dùng bản mới nhất") : "server chưa cấu hình gói update"}
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -486,6 +514,36 @@ export function SettingsPage() {
                 Yêu cầu sync
               </Button>
             </div>
+          </div>
+          <div className="mt-4 grid gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 md:grid-cols-[160px_1fr_auto]">
+            <Field label="Version mới">
+              <Input
+                value={agentReleaseVersion}
+                onChange={(event) => setAgentReleaseVersion(event.target.value)}
+                placeholder="1.2.1"
+              />
+            </Field>
+            <Field label="File PulseFitDahAgent.exe">
+              <input
+                type="file"
+                accept=".exe,application/x-msdownload,application/vnd.microsoft.portable-executable"
+                className="input"
+                onChange={(event) => setAgentReleaseFile(event.target.files?.[0] || null)}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button
+                loading={uploadAgentRelease.isPending}
+                disabled={!canUploadAgentRelease}
+                onClick={() => uploadAgentRelease.mutate()}
+              >
+                <Upload size={14} />
+                Upload bản mới
+              </Button>
+            </div>
+            <p className="text-xs text-slate-400 md:col-span-3">
+              Server sẽ lưu file, tự tính SHA256 và công bố bản mới cho Agent. Agent đang chạy sẽ kiểm tra mỗi 1 phút, tải file bằng token, verify hash rồi tự restart.
+            </p>
           </div>
           {pendingBatches.length > 0 && (
             <div className="mt-4 overflow-x-auto">

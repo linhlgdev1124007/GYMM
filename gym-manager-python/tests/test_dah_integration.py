@@ -746,6 +746,43 @@ def test_dah_day_scan_tracks_failures_and_refreshes_after_approval(tmp_path):
         db.close()
 
 
+def test_dah_scan_plan_rechecks_clean_partial_previous_day(tmp_path, monkeypatch):
+    from server.models import DahLocalSyncDay
+    from server.services import dah_local_sync_service
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz:
+                return datetime(2026, 8, 20, 18, 0, tzinfo=tz)
+            return datetime(2026, 8, 20, 18, 0)
+
+    monkeypatch.setattr(dah_local_sync_service, "datetime", FrozenDateTime)
+    monkeypatch.setattr(dah_local_sync_service, "vietnam_today", lambda: date(2026, 8, 20))
+
+    db = make_session(tmp_path)
+    try:
+        db.add(DahLocalSyncDay(
+            work_date=date(2026, 8, 19),
+            range_start=datetime(2026, 8, 19, 0, 0),
+            range_end=datetime(2026, 8, 19, 9, 0),
+            status="clean",
+            fail_count=0,
+        ))
+        db.commit()
+
+        plan = dah_local_sync_service.scan_plan(db, {"from": "2026-08-19", "to": "2026-08-20"})
+        yesterday = next(row for row in plan["items"] if row["workDate"] == "2026-08-19")
+
+        assert yesterday["reason"] == "incomplete_day"
+        assert yesterday["range"] == {
+            "begin": "2026-08-19T00:00:00",
+            "end": "2026-08-20T00:00:00",
+        }
+    finally:
+        db.close()
+
+
 def test_dah_candidate_can_be_assigned_when_creating_member(tmp_path):
     from server.models import Customer, DahCustomerIdentity, DahWebhookEvent
     from server.services import dah_service

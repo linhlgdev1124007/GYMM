@@ -1,6 +1,7 @@
 import hmac
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -70,6 +71,22 @@ def local_agent_status():
     return dah_local_sync_service.status()
 
 
+@router.post("/api/dah/local-agent/releases", dependencies=[Depends(require_roles("admin"))])
+async def upload_agent_release(
+    version: str = Form(...),
+    mandatory: bool = Form(False),
+    file: UploadFile = File(...),
+    user: User = Depends(require_roles("admin")),
+):
+    if not file.filename or not file.filename.lower().endswith(".exe"):
+        raise HTTPException(422, "Chỉ hỗ trợ upload file PulseFitDahAgent.exe.")
+    content = await file.read()
+    try:
+        return dah_local_sync_service.save_uploaded_release(version, content, actor=user, mandatory=mandatory)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/api/dah/local-agent/sync-request", dependencies=[Depends(require_roles("admin", "manager"))])
 def local_agent_sync_request(
     payload: dict,
@@ -123,6 +140,22 @@ def local_agent_reject_batch(
 @router.post("/api/dah/local-agent/heartbeat", dependencies=[Depends(_require_agent_token)])
 async def local_agent_heartbeat(request: Request):
     return dah_local_sync_service.heartbeat(await _payload(request))
+
+
+@router.get("/api/dah/local-agent/releases/latest", dependencies=[Depends(_require_agent_token)])
+def local_agent_latest_release(
+    request: Request,
+    currentVersion: str = Query("", alias="currentVersion"),
+):
+    return dah_local_sync_service.latest_release(currentVersion, base_url=str(request.base_url))
+
+
+@router.get("/api/dah/local-agent/releases/download", dependencies=[Depends(_require_agent_token)])
+def local_agent_download_release():
+    target = dah_local_sync_service.uploaded_release_file()
+    if not target:
+        raise HTTPException(404, "Chưa có file Agent release trên server.")
+    return FileResponse(target, filename="PulseFitDahAgent.exe", media_type="application/vnd.microsoft.portable-executable")
 
 
 @router.get("/api/dah/local-agent/jobs/next", dependencies=[Depends(_require_agent_token)])
