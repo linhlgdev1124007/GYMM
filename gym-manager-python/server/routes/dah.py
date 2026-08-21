@@ -65,7 +65,7 @@ def dah_events(
     return dah_service.dah_events(db, view=view, limit=limit, page=page, page_size=page_size)
 
 
-@router.get("/api/dah/local-agent/status", dependencies=[Depends(require_roles("admin", "manager"))])
+@router.get("/api/dah/local-agent/status", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
 def local_agent_status():
     return dah_local_sync_service.status()
 

@@ -21,6 +21,8 @@ DEFAULT_LOOKBACK_HOURS = 24
 MAX_LOOKBACK_HOURS = 24 * 14
 MAX_EVENTS_PER_RESULT = 5000
 JOB_TTL_SECONDS = 60 * 60 * 24
+AGENT_HEARTBEAT_INTERVAL_SECONDS = 60
+AGENT_OFFLINE_AFTER_SECONDS = 180
 SCAN_START_DATE = date(2026, 8, 19)
 
 _lock = threading.RLock()
@@ -133,12 +135,16 @@ def heartbeat(payload: dict) -> dict:
 def status() -> dict:
     with _lock:
         last_seen = _parse_datetime(_agent_state.get("lastSeenAt"))
-        online = bool(last_seen and (utc_now() - last_seen).total_seconds() <= 120)
+        age_seconds = int((utc_now() - last_seen).total_seconds()) if last_seen else None
+        online = bool(last_seen and age_seconds is not None and age_seconds <= AGENT_OFFLINE_AFTER_SECONDS)
         recent = sorted(_jobs.values(), key=lambda row: row.get("createdAt") or "", reverse=True)[:10]
         state = dict(_agent_state)
         state["status"] = "online" if online else "offline"
+        state["lastSeenAgeSeconds"] = age_seconds
         return {
             "agent": state,
+            "heartbeatIntervalSeconds": AGENT_HEARTBEAT_INTERVAL_SECONDS,
+            "offlineAfterSeconds": AGENT_OFFLINE_AFTER_SECONDS,
             "pendingCount": len(_pending),
             "pendingBatchCount": len([row for row in _pending_batches.values() if row.get("status") == "pending" and _batch_needs_review(row)]),
             "recentJobs": [_job_public(row) for row in recent],

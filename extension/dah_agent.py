@@ -29,6 +29,7 @@ APP_NAME = "PulseFit DAH Agent"
 DEFAULT_DAH_USERNAME = "system"
 DEFAULT_DAH_PASSWORD = "admin"
 TASK_NAME = "PulseFitDahAgent"
+HEARTBEAT_INTERVAL_SECONDS = 60
 
 
 def app_dir() -> Path:
@@ -598,6 +599,7 @@ class AgentWorker:
         self.events = events
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+        self.heartbeat_thread: threading.Thread | None = None
         self.sync_now_event = threading.Event()
 
     def start(self) -> None:
@@ -606,6 +608,12 @@ class AgentWorker:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, name="PulseFitDahAgentWorker", daemon=True)
         self.thread.start()
+        self.heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="PulseFitDahAgentHeartbeat",
+            daemon=True,
+        )
+        self.heartbeat_thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -618,27 +626,31 @@ class AgentWorker:
         log(message)
         self.events.put(message)
 
+    def _heartbeat_loop(self) -> None:
+        server = ServerClient(self.config)
+        while not self.stop_event.is_set():
+            try:
+                server.heartbeat()
+                self._emit("Heartbeat sent")
+            except Exception as exc:
+                self._emit(f"Heartbeat failed: {exc}")
+            self.stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+
     def _run(self) -> None:
         server = ServerClient(self.config)
         next_auto = time.monotonic()
         self._emit("PulseFit Worker started")
         while not self.stop_event.is_set():
             try:
-                # 1. Heartbeat
-                try:
-                    server.heartbeat()
-                    self._emit("Heartbeat sent")
-                except Exception as exc:
-                    self._emit(f"Heartbeat failed: {exc}")
-
-                # 2. Long polling next job
+                # 1. Long polling next job. Heartbeat runs on a separate loop so
+                # long syncs do not make the server mark the agent offline.
                 job = None
                 try:
                     job = server.next_job()
                 except Exception as exc:
                     self._emit(f"Long polling failed: {exc}")
 
-                # 3. Handle Job / Periodic Sync / Manual Sync
+                # 2. Handle Job / Periodic Sync / Manual Sync
                 should_auto_sync = time.monotonic() >= next_auto
                 should_manual_sync = self.sync_now_event.is_set()
 

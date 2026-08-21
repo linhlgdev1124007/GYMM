@@ -31,6 +31,7 @@ import { GlobalSearch } from "../common/GlobalSearch";
 import { NetworkStatusBanner } from "../common/NetworkStatusBanner";
 import { AlertCenter } from "../common/AlertCenter";
 import { CheckinSpeechPlayer } from "../common/CheckinSpeechPlayer";
+import { DahAgentWatcher } from "../common/DahAgentWatcher";
 import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
 
 const groups = [
@@ -317,6 +318,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <DahAgentWatcher role={user?.role} />
       <MemberQuickDrawer memberId={quickMember} onClose={closeQuickMember} />
     </div>
   );
