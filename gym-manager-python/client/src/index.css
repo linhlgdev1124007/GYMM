@@ -120,18 +120,34 @@
   .sidebar-status small {
     @apply text-[11px] text-slate-500;
   }
-  .system-clock {
-    @apply col-span-2 mt-1 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2;
+  .auto-sync-button {
+    @apply col-span-2 mt-1 grid min-h-[54px] grid-cols-[auto_1fr_auto] items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-colors hover:border-white/20 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-60;
   }
-  .system-clock strong {
-    @apply text-lg font-semibold leading-none text-white;
+  .auto-sync-button > svg {
+    @apply text-slate-400;
+  }
+  .auto-sync-button span {
+    @apply flex min-w-0 flex-col;
+  }
+  .auto-sync-button strong {
+    @apply text-[13px] font-semibold text-white;
+  }
+  .auto-sync-button small {
+    @apply text-[10px] uppercase tracking-[0.08em] text-slate-500;
+  }
+  .auto-sync-button b {
+    @apply grid h-7 min-w-7 place-items-center rounded-full bg-slate-800 px-2 text-sm font-semibold text-slate-100;
     font-variant-numeric: tabular-nums;
   }
-  .system-clock span {
-    @apply mt-1 text-[11px] font-medium text-slate-400;
+  .auto-sync-button.danger {
+    @apply border-red-400/40 bg-red-500/15;
   }
-  .system-clock small {
-    @apply mt-1 text-[10px] uppercase tracking-[0.08em] text-slate-500;
+  .auto-sync-button.danger > svg,
+  .auto-sync-button.danger small {
+    @apply text-red-200;
+  }
+  .auto-sync-button.danger b {
+    @apply bg-red-500 text-white;
   }
   .sidebar-overlay {
     @apply pointer-events-none fixed inset-0 z-30 bg-slate-950/40 opacity-0 transition-opacity;

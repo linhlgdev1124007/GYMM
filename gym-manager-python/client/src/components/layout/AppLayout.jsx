@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   NavLink,
   Outlet,
@@ -16,6 +17,7 @@ import {
   Menu,
   Package,
   ClipboardCheck,
+  RefreshCw,
   Warehouse,
   ScrollText,
   Settings,
@@ -26,6 +28,8 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../../app/AuthContext";
+import { api } from "../../services/api";
+import { notify } from "../../services/notify";
 import { initials } from "../../utils/format";
 import { GlobalSearch } from "../common/GlobalSearch";
 import { NetworkStatusBanner } from "../common/NetworkStatusBanner";
@@ -105,73 +109,46 @@ const groups = [
   },
 ];
 
-const clockFormatter = new Intl.DateTimeFormat("vi-VN", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-  timeZone: "Asia/Ho_Chi_Minh",
-});
+const AUTO_SYNC_ROLES = new Set(["admin", "manager", "receptionist"]);
 
-const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  timeZone: "Asia/Ho_Chi_Minh",
-});
-
-function SystemClock() {
-  const [tick, setTick] = useState(() => Date.now());
-  const [sync, setSync] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    let refreshTimer;
-
-    const loadHealth = async () => {
-      try {
-        const response = await fetch("/api/health", { credentials: "include" });
-        const data = await response.json();
-        if (!active || !data?.serverTime) return;
-        setSync({
-          baseClientMs: Date.now(),
-          baseServerMs: Date.parse(data.serverTime),
-          autoCheckoutTime: data.autoCheckout?.time || "23:58",
-          nextRunAt: data.autoCheckout?.nextRunAt || null,
-          status: data.status,
-        });
-      } catch {
-        if (active) {
-          setSync((current) => current && { ...current, status: "offline" });
-        }
-      } finally {
-        if (active) refreshTimer = window.setTimeout(loadHealth, 30000);
-      }
-    };
-
-    loadHealth();
-    return () => {
-      active = false;
-      window.clearTimeout(refreshTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setTick(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  const serverNow = useMemo(() => {
-    if (!sync?.baseServerMs) return new Date(tick);
-    return new Date(sync.baseServerMs + (tick - sync.baseClientMs));
-  }, [sync, tick]);
-
+function AutoSyncControl({ role }) {
+  const client = useQueryClient();
+  const enabled = AUTO_SYNC_ROLES.has(role);
+  const status = useQuery({
+    queryKey: ["dah-local-agent-status"],
+    queryFn: () => api("/api/dah/local-agent/status"),
+    enabled,
+    refetchInterval: 60_000,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const requestSync = useMutation({
+    mutationFn: () => api("/api/dah/local-agent/sync-request", { method: "POST", body: { lookbackHours: 24 } }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["dah-local-agent-status"] });
+      notify.success("Đã gửi yêu cầu auto sync tới DAH Agent.");
+    },
+    onError: (error) => notify.errorFrom(error, "Không thể gửi yêu cầu auto sync."),
+  });
+  const summary = status.data?.agent?.lastSyncSummary || {};
+  const remaining = summary.remaining || summary;
+  const issueCount = Number(remaining.failCount ?? (Number(remaining.matched || 0) + Number(remaining.unknown || 0) + Number(remaining.rejected || 0)));
+  const online = status.data?.agent?.status === "online";
   return (
-    <div className="system-clock">
-      <strong>{clockFormatter.format(serverNow)}</strong>
-      <span>{dateFormatter.format(serverNow)}</span>
-      <small>Auto checkout {sync?.autoCheckoutTime || "23:58"}</small>
-    </div>
+    <button
+      type="button"
+      className={`auto-sync-button ${issueCount > 0 ? "danger" : ""}`}
+      onClick={() => requestSync.mutate()}
+      disabled={!enabled || requestSync.isPending}
+      title={enabled ? "Yêu cầu Agent sync 24 giờ gần nhất" : "Tài khoản hiện tại không có quyền sync DAH"}
+    >
+      <RefreshCw size={15} className={requestSync.isPending ? "animate-spin" : ""} />
+      <span>
+        <strong>Auto sync</strong>
+        <small>{online ? "Agent online" : "Agent offline"}</small>
+      </span>
+      <b>{issueCount}</b>
+    </button>
   );
 }
 
@@ -230,7 +207,7 @@ function Sidebar({ open, close, role }) {
             <strong>Hệ thống hoạt động</strong>
             <small>MySQL · Local server</small>
           </div>
-          <SystemClock />
+          <AutoSyncControl role={role} />
         </div>
       </aside>
     </>

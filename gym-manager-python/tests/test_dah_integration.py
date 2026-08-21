@@ -194,7 +194,7 @@ def test_dah_local_sync_backfilled_member_event_rebuilds_checkin_checkout(tmp_pa
         db.close()
 
 
-def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
+def test_dah_agent_result_auto_syncs_matched_events(tmp_path):
     from server.models import AttendanceSession, DahCustomerIdentity
     from server.services import dah_local_sync_service
 
@@ -219,19 +219,18 @@ def test_dah_agent_result_requires_manual_approval_before_commit(tmp_path):
         }
 
         posted = dah_local_sync_service.record_result(db, "approval-job", payload)
-        batch_id = posted["batch"]["id"]
-        assert posted["status"] == "pending_approval"
-        assert posted["batch"]["summary"]["matched"] == 1
-        assert db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").count() == 0
-
-        approved = dah_local_sync_service.approve_batch(db, batch_id, {})
-        assert approved["result"]["imported"] == 1
+        assert posted["status"] == "completed"
+        assert posted["batch"] is None
+        assert posted["result"]["matched"] == 1
+        assert posted["result"]["autoSynced"]["imported"] == 1
+        assert posted["result"]["remaining"]["matched"] == 0
+        assert posted["result"]["pendingApproval"] is False
         assert db.query(AttendanceSession).filter_by(customer_id=customer_id, source="dah").count() == 1
     finally:
         db.close()
 
 
-def test_dah_agent_unknown_event_is_committed_as_unknown_after_approval(tmp_path):
+def test_dah_agent_unknown_event_stays_pending_without_auto_sync(tmp_path):
     from server.models import DahWebhookEvent
     from server.services import dah_local_sync_service
 
@@ -257,17 +256,14 @@ def test_dah_agent_unknown_event_is_committed_as_unknown_after_approval(tmp_path
         assert posted["batch"]["summary"]["unknown"] == 1
         assert posted["batch"]["summary"]["failCount"] == 1
         assert posted["batch"]["eventCount"] == 1
+        detail = dah_local_sync_service.pending_batch(batch_id)["item"]
+        assert detail["events"][0]["willSync"] is False
+        assert posted["result"]["autoSynced"] is None
         assert db.query(DahWebhookEvent).count() == 0
 
         approved = dah_local_sync_service.approve_batch(db, batch_id, {})
-        event = db.query(DahWebhookEvent).one()
-
-        assert approved["result"]["imported"] == 1
-        assert approved["result"]["unknown"] == 1
-        assert event.status == "unknown"
-        assert event.action == "unknown_identity"
-        assert event.person_uuid is None
-        assert event.person_id == "991122"
+        assert approved["result"]["imported"] == 0
+        assert db.query(DahWebhookEvent).count() == 0
     finally:
         db.close()
 
@@ -686,7 +682,7 @@ def test_dah_local_sync_candidates_coalesce_profile_variants_by_person_id(tmp_pa
         db.close()
 
 
-def test_dah_day_scan_tracks_failures_and_refreshes_after_approval(tmp_path):
+def test_dah_day_scan_auto_syncs_matched_and_tracks_remaining_failures(tmp_path):
     from server.models import DahCustomerIdentity, DahLocalSyncDay
     from server.services import dah_local_sync_service
 
@@ -729,15 +725,20 @@ def test_dah_day_scan_tracks_failures_and_refreshes_after_approval(tmp_path):
         assert recorded["summary"]["matchedMissUnapproved"] == 1
         assert recorded["summary"]["unknown"] == 1
         assert recorded["summary"]["failCount"] == 2
-        assert day.fail_count == 2
+        assert recorded["summary"]["autoSynced"]["imported"] == 1
+        assert recorded["summary"]["remaining"]["matchedMissUnapproved"] == 0
+        assert recorded["summary"]["remaining"]["unknown"] == 1
+        assert day.matched_miss_count == 0
+        assert day.unknown_count == 1
+        assert day.fail_count == 1
         assert day.pending_batch_id == batch_id
 
         detail = dah_local_sync_service.pending_batch(batch_id)["item"]
-        event_key = next(row["eventKey"] for row in detail["events"] if row["status"] == "matched")
-        approved = dah_local_sync_service.approve_batch(db, batch_id, {"eventKeys": [event_key]})
+        assert all(row["status"] != "matched" for row in detail["events"])
+        approved = dah_local_sync_service.approve_batch(db, batch_id, {})
         day = db.query(DahLocalSyncDay).filter_by(work_date=date(2026, 8, 11)).one()
 
-        assert approved["result"]["imported"] == 1
+        assert approved["result"]["imported"] == 0
         assert day.matched_miss_count == 0
         assert day.unknown_count == 1
         assert day.fail_count == 1

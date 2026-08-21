@@ -40,7 +40,7 @@ function accountForm(row) {
 }
 
 function canSyncDahEvent(event) {
-  return event?.willSync === true || event?.status === "matched" || event?.status === "unknown";
+  return event?.willSync === true || event?.status === "matched";
 }
 
 export function SettingsPage() {
@@ -491,6 +491,8 @@ export function SettingsPage() {
               </p>
               <p className="text-xs text-slate-400">
                 Kết quả sync cuối: nhận {agent?.lastSyncSummary?.received ?? "—"} · miss {agent?.lastSyncSummary?.matched ?? "—"} · trùng {agent?.lastSyncSummary?.duplicates ?? "—"} · chưa khớp {agent?.lastSyncSummary?.unknown ?? "—"} · fail {agent?.lastSyncSummary?.failCount ?? "—"}
+                {agent?.lastSyncSummary?.autoSynced ? ` · auto sync nhập ${agent.lastSyncSummary.autoSynced.imported ?? 0}` : ""}
+                {agent?.lastSyncSummary?.remaining ? ` · còn lỗi ${agent.lastSyncSummary.remaining.failCount ?? 0}` : ""}
               </p>
               <p className={`text-xs ${agentRelease?.updateAvailable ? "text-amber-700" : "text-slate-400"}`}>
                 Cập nhật Agent: {agentRelease?.configured ? (agentRelease.updateAvailable ? `có bản ${agentRelease.version} đang chờ Agent tự cập nhật` : "đang dùng bản mới nhất") : "server chưa cấu hình gói update"}

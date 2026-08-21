@@ -770,7 +770,7 @@ def preview_agent_result(db: Session, payload: dict) -> dict:
             "registeredName": _clean(item.get("registeredName"), 160),
             "registeredPhone": _clean(item.get("registeredPhone"), 40),
             "mjCardNo": _clean(item.get("mjCardNo"), 80),
-            "willSync": status in {"matched", "unknown"},
+            "willSync": status == "matched",
             "raw": item,
         })
     return {
@@ -879,6 +879,20 @@ def _summary_with_fail(preview: dict) -> dict:
     }
 
 
+def _matched_event_keys(preview: dict) -> set[str]:
+    return {
+        str(row["eventKey"])
+        for row in preview.get("events") or []
+        if row.get("status") == "matched" and row.get("eventKey")
+    }
+
+
+def _unresolved_preview_for_payload(db: Session, payload: dict) -> dict:
+    refreshed = preview_agent_result(db, payload)
+    refreshed["autoSynced"] = True
+    return refreshed
+
+
 def _upsert_scan_day(db: Session, payload: dict, preview: dict, batch_id: str | None = None) -> DahLocalSyncDay | None:
     work_date = _parse_date(payload.get("workDate"))
     if not work_date:
@@ -920,9 +934,15 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
     if job_range and not payload.get("range"):
         payload = {**payload, "range": job_range}
     preview = preview_agent_result(db, payload)
+    original_summary = _summary_with_fail(preview)
+    auto_sync_keys = _matched_event_keys(preview)
+    auto_sync_result = None
+    if auto_sync_keys:
+        auto_sync_result = import_agent_result(db, payload, selected_event_keys=auto_sync_keys)
+        preview = _unresolved_preview_for_payload(db, payload)
     now = utc_now()
     summary = _summary_with_fail(preview)
-    needs_review = bool(preview.get("ok")) and summary["failCount"] > 0
+    needs_review = bool(preview.get("ok")) and (int(summary.get("unknown") or 0) + int(summary.get("rejected") or 0)) > 0
     batch_id = uuid4().hex if needs_review else None
     batch = None
     if batch_id:
@@ -961,7 +981,13 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "agentId": _clean(payload.get("agentId"), 80) or job.get("agentId"),
             "range": payload.get("range") or job.get("range"),
             "workDate": job_work_date or job.get("workDate"),
-            "result": {**summary, "batchId": batch_id, "pendingApproval": needs_review},
+            "result": {
+                **original_summary,
+                "batchId": batch_id,
+                "pendingApproval": needs_review,
+                "autoSynced": auto_sync_result,
+                "remaining": summary,
+            },
             "error": preview.get("error"),
         })
         _agent_state.update({
@@ -972,7 +998,13 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
             "lastError": preview.get("error"),
             "lastSyncAt": utc_iso(now),
             "lastSyncStatus": job["status"],
-            "lastSyncSummary": {**summary, "batchId": batch_id, "pendingApproval": needs_review},
+            "lastSyncSummary": {
+                **original_summary,
+                "batchId": batch_id,
+                "pendingApproval": needs_review,
+                "autoSynced": auto_sync_result,
+                "remaining": summary,
+            },
             "version": _clean(payload.get("version"), 40) or _agent_state.get("version"),
         })
         return {**_job_public(job), "batch": _batch_public(batch) if batch else None}
@@ -980,9 +1012,15 @@ def record_result(db: Session, job_id: str, payload: dict) -> dict:
 
 def record_day_scan_result(db: Session, payload: dict) -> dict:
     preview = preview_agent_result(db, payload)
+    auto_sync_keys = _matched_event_keys(preview)
+    auto_sync_result = None
+    original_summary = _summary_with_fail(preview)
+    if auto_sync_keys:
+        auto_sync_result = import_agent_result(db, payload, selected_event_keys=auto_sync_keys)
+        preview = _unresolved_preview_for_payload(db, payload)
     now = utc_now()
     summary = _summary_with_fail(preview)
-    batch_id = uuid4().hex if summary["failCount"] > 0 and preview.get("ok") else None
+    batch_id = uuid4().hex if (int(summary.get("unknown") or 0) + int(summary.get("rejected") or 0)) > 0 and preview.get("ok") else None
     work_date = _clean(payload.get("workDate"), 20)
     batch = None
     if batch_id:
@@ -1001,6 +1039,8 @@ def record_day_scan_result(db: Session, payload: dict) -> dict:
             "events": preview.get("events") or [],
             "rawPayload": payload,
             "summary": summary,
+            "autoSynced": auto_sync_result,
+            "originalSummary": original_summary,
         }
     scan_day = _upsert_scan_day(db, payload, preview, batch_id=batch_id)
     with _lock:
@@ -1018,14 +1058,22 @@ def record_day_scan_result(db: Session, payload: dict) -> dict:
             "lastError": preview.get("error"),
             "lastSyncAt": utc_iso(now),
             "lastSyncStatus": "pending_approval" if batch else "completed" if preview.get("ok") else "failed",
-            "lastSyncSummary": summary,
+            "lastSyncSummary": {
+                **original_summary,
+                "autoSynced": auto_sync_result,
+                "remaining": summary,
+            },
             "version": _clean(payload.get("version"), 40) or _agent_state.get("version"),
         })
     return {
         "ok": bool(preview.get("ok")),
         "scanDay": _scan_day_public(scan_day) if scan_day else None,
         "batch": _batch_public(batch) if batch else None,
-        "summary": summary,
+        "summary": {
+            **original_summary,
+            "autoSynced": auto_sync_result,
+            "remaining": summary,
+        },
     }
 
 
