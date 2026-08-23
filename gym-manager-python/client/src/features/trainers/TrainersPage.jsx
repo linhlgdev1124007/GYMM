@@ -155,14 +155,41 @@ function shiftEventLabel(event) {
 
 function DahEventList({ events = [] }) {
   if (!events.length) return <span className="text-xs text-slate-400">—</span>;
+  const first = events[0];
+  const last = events.length > 1 ? events[events.length - 1] : null;
   return (
-    <span className="shift-dah-events" title={events.map(shiftEventLabel).join("\n")}>
-      {events.map((event) => (
-        <span key={event.id}>
-          <strong>{timeOnly(event.eventTime)}</strong>
-          <small>{event.action || "DAH"}</small>
+    <span className="shift-dah-events">
+      <span className="shift-dah-summary" aria-label={events.map(shiftEventLabel).join(", ")}>
+        <span>
+          <small>Đầu</small>
+          <strong>{timeOnly(first.eventTime)}</strong>
         </span>
-      ))}
+        <i />
+        <span>
+          <small>Cuối</small>
+          <strong>{last ? timeOnly(last.eventTime) : "—"}</strong>
+        </span>
+      </span>
+      <span className="shift-dah-detail">
+        <button type="button" onClick={(event) => event.stopPropagation()}>
+          Chi tiết
+        </button>
+        <span className="shift-dah-popover" role="tooltip">
+          <span className="shift-dah-popover-title">Event DAH trong ngày</span>
+          <span className="shift-dah-popover-table">
+            <span className="head">Giờ</span>
+            <span className="head">Action</span>
+            <span className="head">Trạng thái</span>
+            {events.map((event) => (
+              <span className="contents" key={event.id}>
+                <span>{timeOnly(event.eventTime)}</span>
+                <span>{event.action || "DAH"}</span>
+                <span>{event.status || "—"}</span>
+              </span>
+            ))}
+          </span>
+        </span>
+      </span>
     </span>
   );
 }

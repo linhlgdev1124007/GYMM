@@ -2154,10 +2154,23 @@ thead .shift-employee-col { z-index: 18; background: #f8fafc; }
 .shift-actual-cell > span small { color: #94a3b8; font-size: 9px; font-weight: 600; text-transform: uppercase; }
 .shift-actual-cell > span strong { margin-top: 1px; color: #0f172a; font-size: 12px; font-variant-numeric: tabular-nums; }
 .shift-actual-cell > i { height: 1px; background: #cbd5e1; }
-.shift-dah-events { display: flex; max-width: 210px; flex-wrap: wrap; gap: 4px; }
-.shift-dah-events > span { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid #dbeafe; border-radius: 4px; background: #eff6ff; color: #1d4ed8; }
-.shift-dah-events strong { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.shift-dah-events small { max-width: 72px; overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.shift-dah-events { display: inline-flex; width: 176px; align-items: center; gap: 6px; white-space: nowrap; }
+.shift-dah-summary { display: grid; height: 30px; flex: 1; grid-template-columns: minmax(44px,1fr) 8px minmax(44px,1fr); align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #dbeafe; border-radius: 5px; background: #eff6ff; color: #1d4ed8; }
+.shift-dah-summary > span { display: flex; min-width: 0; flex-direction: column; }
+.shift-dah-summary small { color: #64748b; font-size: 8px; font-weight: 700; line-height: 1; text-transform: uppercase; }
+.shift-dah-summary strong { margin-top: 2px; color: #1d4ed8; font-size: 11px; font-weight: 750; line-height: 1; font-variant-numeric: tabular-nums; }
+.shift-dah-summary > i { height: 1px; background: #bfdbfe; }
+.shift-dah-detail { position: relative; display: inline-flex; flex: 0 0 auto; }
+.shift-dah-detail > button { height: 30px; padding: 0 7px; border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: #475569; font-size: 10px; font-weight: 700; }
+.shift-dah-detail > button:hover, .shift-dah-detail > button:focus-visible { border-color: #93c5fd; color: #1d4ed8; }
+.shift-dah-popover { position: absolute; right: 0; bottom: calc(100% + 7px); z-index: 80; display: none; width: 260px; max-height: 260px; overflow: auto; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; box-shadow: 0 18px 42px rgba(15,23,42,.18); color: #334155; white-space: normal; }
+.shift-dah-detail:hover .shift-dah-popover, .shift-dah-detail:focus-within .shift-dah-popover { display: block; }
+.shift-dah-popover-title { display: block; margin-bottom: 7px; color: #0f172a; font-size: 11px; font-weight: 750; }
+.shift-dah-popover-table { display: grid; grid-template-columns: 48px minmax(72px,1fr) minmax(78px,1fr); overflow: hidden; border: 1px solid #e2e8f0; border-radius: 5px; font-size: 10px; }
+.shift-dah-popover-table > span { min-width: 0; padding: 6px 7px; border-bottom: 1px solid #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shift-dah-popover-table > .head { background: #f8fafc; color: #64748b; font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.shift-dah-popover-table > .contents > span { min-width: 0; padding: 6px 7px; border-bottom: 1px solid #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shift-dah-popover-table > .contents:last-child > span { border-bottom: 0; }
 .shift-variance { gap: 2px; }
 .shift-variance strong, .shift-variance small { font-size: 10px; font-weight: 600; }
 .shift-variance strong.warning { color: #b45309; }
