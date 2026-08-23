@@ -8,8 +8,8 @@ export function LoginPage() {
   const { login, loginPending } = useAuth();
   const [error, setError] = useState("");
   const [form, setForm] = useState({
-    username: "admin",
-    password: "PulseFit@2026",
+    username: "",
+    password: "",
   });
   const submit = async (event) => {
     event.preventDefault();

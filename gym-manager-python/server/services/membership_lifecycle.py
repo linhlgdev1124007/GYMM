@@ -99,7 +99,7 @@ def freeze_affects_day(membership: Membership, starts_at: date, ends_at: date, d
     if not membership.starts_at or not membership.expires_at:
         return False
     return (
-        starts_at <= day <= ends_at
+        starts_at <= day < ends_at
         and day >= membership.starts_at
         and starts_at < membership.expires_at
     )
@@ -294,7 +294,7 @@ def refresh_membership_lifecycle(db: Session, today: date | None = None):
     touched_customer_ids = set()
     for row in rows:
         freeze = _freeze_for_day(row, day)
-        if freeze and freeze.ends_at < day:
+        if freeze and freeze.ends_at <= day:
             changed += 1 if _complete_freeze(db, row, freeze, freeze.ends_at, reason="Tự động kết thúc bảo lưu") else 0
         elif freeze and freeze_affects_day(row, freeze.starts_at, freeze.ends_at, day) and row.status == "active":
             row.status = "frozen"

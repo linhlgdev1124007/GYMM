@@ -167,3 +167,44 @@ def test_day_pass_conversion_can_record_deduction_policy(tmp_path):
         assert sorted(item["revenueType"] for item in data["revenueItems"]) == ["Gói hội viên", "Khách tập ngày"]
     finally:
         db.close()
+
+
+def test_day_pass_summary_respects_visible_filters(tmp_path):
+    from server.services.day_passes_service import create_day_pass, list_day_passes
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        create_day_pass(db, {
+            "guestName": "Cash Guest",
+            "visitDate": today.isoformat(),
+            "chargedAmount": 79000,
+            "paymentMethod": "cash",
+        }, None)
+        create_day_pass(db, {
+            "guestName": "Card Guest",
+            "visitDate": today.isoformat(),
+            "chargedAmount": 99000,
+            "paymentMethod": "card",
+        }, None)
+        create_day_pass(db, {
+            "guestName": "Other Cash",
+            "visitDate": today.isoformat(),
+            "chargedAmount": 59000,
+            "paymentMethod": "cash",
+        }, None)
+
+        data = list_day_passes(
+            db,
+            q="Cash Guest",
+            status="active",
+            method="cash",
+            date_from=today.isoformat(),
+            date_to=today.isoformat(),
+        )
+
+        assert data["pagination"]["total"] == 1
+        assert data["summary"] == {"activeVisits": 1, "netRevenue": 79000.0}
+    finally:
+        db.close()

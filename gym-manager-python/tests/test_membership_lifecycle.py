@@ -336,6 +336,45 @@ def test_freeze_compensation_uses_business_rule_without_period_limits(tmp_path):
         db.close()
 
 
+def test_freeze_end_date_is_exclusive_for_status_refresh(tmp_path):
+    from server.models import MembershipFreeze
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+            code="CUS0000199",
+        )
+        customer.status = "active"
+        membership.expires_at = date(2026, 9, 1)
+        db.add(MembershipFreeze(
+            membership_id=membership.id,
+            starts_at=date(2026, 8, 10),
+            ends_at=date(2026, 8, 12),
+            reason="Bảo lưu 2 ngày",
+            compensated_days=0,
+        ))
+        db.commit()
+
+        refresh_membership_lifecycle(db, today=date(2026, 8, 10))
+        db.refresh(membership)
+        db.refresh(customer)
+        assert membership.status == "frozen"
+        assert customer.status == "lead"
+
+        refresh_membership_lifecycle(db, today=date(2026, 8, 12))
+        db.refresh(membership)
+        db.refresh(customer)
+        assert membership.status == "active"
+        assert customer.status == "active"
+    finally:
+        db.close()
+
+
 def test_completed_freeze_beyond_expiry_adds_full_allowed_days(tmp_path):
     from server.models import MembershipFreeze
     from server.services.members_service import freeze_membership

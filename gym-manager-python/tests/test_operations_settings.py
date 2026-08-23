@@ -103,6 +103,37 @@ def test_settings_returns_single_dah1017_with_heartbeat_status(tmp_path):
         db.close()
 
 
+def test_manual_checkout_preserves_dah_local_time(tmp_path, monkeypatch):
+    from server.models import AttendanceSession
+    from server.services import operations_service
+    from server.timeutils import VIETNAM_TZ
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 8, 23, 21, 30)
+            return value.replace(tzinfo=tz) if tz else value
+
+    db = make_session(tmp_path)
+    try:
+        row = AttendanceSession(
+            checked_in_at=datetime(2026, 8, 23, 9, 0),
+            source="dah",
+            status="open",
+        )
+        db.add(row)
+        db.commit()
+
+        monkeypatch.setattr(operations_service, "datetime", FrozenDateTime)
+        operations_service.checkout(db, row.id)
+        db.refresh(row)
+
+        assert row.status == "closed"
+        assert row.checked_out_at == FrozenDateTime.now(VIETNAM_TZ).replace(tzinfo=None)
+    finally:
+        db.close()
+
+
 def test_trainers_show_pt_client_status_counts_only_for_pt_roles(tmp_path):
     from server.models import Customer, Employee, Person, PtEnrollment, PtEnrollmentCoach
     from server.services.operations_service import ensure_employee_job_titles, list_trainers

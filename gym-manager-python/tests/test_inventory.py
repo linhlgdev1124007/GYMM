@@ -87,11 +87,43 @@ def test_inventory_rejects_negative_stock_and_reversal_is_auditable(tmp_path):
         outbound = create_transaction(db, {"productId": product["id"], "type": "OUT", "quantity": 2}, actor)
         reversal = reverse_transaction(db, outbound["id"], {"note": "Nhập nhầm số lượng"}, actor)
         original = db.get(InventoryTransaction, outbound["id"])
+        db.refresh(original.product)
 
         assert reversal["type"] == "IN"
         assert reversal["stockAfter"] == 5
+        assert float(original.product.average_cost) == 10000
         assert reversal["reversedTransactionId"] == outbound["id"]
         assert original.status == "REVERSED"
         assert db.query(AuditLog).filter(AuditLog.action == "reverse", AuditLog.entity_type == "inventory_transaction").count() == 1
+    finally:
+        db.close()
+
+
+def test_reversing_inbound_restores_current_average_cost(tmp_path):
+    from server.models import InventoryProduct
+    from server.services.inventory_service import create_product, create_transaction, reverse_transaction
+
+    db = make_session(tmp_path)
+    try:
+        actor = admin(db)
+        product = create_product(db, {
+            "name": "Whey lon", "category": "Bổ sung", "unit": "Lon",
+            "initialStock": 0, "initialCost": 0,
+        }, actor)
+        create_transaction(db, {
+            "productId": product["id"], "type": "IN", "quantity": 10,
+            "unitCost": 400000, "occurredAt": "2026-08-16T08:00:00",
+        }, actor)
+        inbound = create_transaction(db, {
+            "productId": product["id"], "type": "IN", "quantity": 10,
+            "unitCost": 600000, "occurredAt": "2026-08-16T09:00:00",
+        }, actor)
+
+        reversal = reverse_transaction(db, inbound["id"], {"note": "Nhập sai đơn"}, actor)
+        saved = db.get(InventoryProduct, product["id"])
+
+        assert reversal["type"] == "OUT"
+        assert reversal["stockAfter"] == 10
+        assert float(saved.average_cost) == 400000
     finally:
         db.close()

@@ -156,11 +156,21 @@ function shiftEventLabel(event) {
 
 function DahEventList({ events = [] }) {
   const detailRef = useRef(null);
+  const hideTimerRef = useRef(null);
   const [popoverStyle, setPopoverStyle] = useState(null);
+  useEffect(() => () => {
+    if (hideTimerRef.current) {
+      window.clearTimeout(hideTimerRef.current);
+    }
+  }, []);
   if (!events.length) return <span className="text-xs text-slate-400">—</span>;
   const first = events[0];
   const last = events.length > 1 ? events[events.length - 1] : null;
   const showDetails = () => {
+    if (hideTimerRef.current) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
     const rect = detailRef.current?.getBoundingClientRect();
     if (!rect) return;
     const popoverWidth = 260;
@@ -175,7 +185,22 @@ function DahEventList({ events = [] }) {
     );
     setPopoverStyle({ top, left, width: popoverWidth });
   };
-  const hideDetails = () => setPopoverStyle(null);
+  const hideDetails = () => {
+    if (hideTimerRef.current) {
+      window.clearTimeout(hideTimerRef.current);
+    }
+    hideTimerRef.current = window.setTimeout(() => {
+      setPopoverStyle(null);
+      hideTimerRef.current = null;
+    }, 120);
+  };
+  const hideDetailsNow = () => {
+    if (hideTimerRef.current) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setPopoverStyle(null);
+  };
   const popover = popoverStyle
     ? createPortal(
         <span
@@ -221,7 +246,7 @@ function DahEventList({ events = [] }) {
           type="button"
           onClick={(event) => event.stopPropagation()}
           onFocus={showDetails}
-          onBlur={hideDetails}
+          onBlur={hideDetailsNow}
           onMouseEnter={showDetails}
           onMouseLeave={hideDetails}
         >

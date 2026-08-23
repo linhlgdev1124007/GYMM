@@ -139,14 +139,21 @@ def list_day_passes(
     end = _parse_date(date_to, today)
     if start > end:
         start, end = end, start
-    query = _query_with_options(db).filter(DayPassVisit.visit_date >= start, DayPassVisit.visit_date <= end)
+    filters = [DayPassVisit.visit_date >= start, DayPassVisit.visit_date <= end]
+    query = _query_with_options(db).filter(*filters)
     if q.strip():
         term = q.strip()
-        query = query.filter(or_(DayPassVisit.guest_name.contains(term), DayPassVisit.guest_phone.contains(term)))
+        search_filter = or_(DayPassVisit.guest_name.contains(term), DayPassVisit.guest_phone.contains(term))
+        filters.append(search_filter)
+        query = query.filter(search_filter)
     if status != "all":
-        query = query.filter(DayPassVisit.status == status)
+        status_filter = DayPassVisit.status == status
+        filters.append(status_filter)
+        query = query.filter(status_filter)
     if method != "all":
-        query = query.filter(DayPassVisit.payment_method == method)
+        method_filter = DayPassVisit.payment_method == method
+        filters.append(method_filter)
+        query = query.filter(method_filter)
     total = query.count()
     rows = query.order_by(DayPassVisit.visit_date.desc(), DayPassVisit.paid_at.desc(), DayPassVisit.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     summary_query = db.query(
@@ -154,7 +161,7 @@ def list_day_passes(
         func.sum(
             DayPassVisit.charged_amount
         ),
-    ).filter(DayPassVisit.visit_date >= start, DayPassVisit.visit_date <= end, _net_revenue_filter())
+    ).filter(*filters, _net_revenue_filter())
     count, amount = summary_query.first()
     return {
         "items": [day_pass_data(row) for row in rows],

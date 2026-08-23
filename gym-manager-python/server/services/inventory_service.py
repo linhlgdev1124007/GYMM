@@ -117,7 +117,7 @@ def list_products(db: Session, q: str = "", category: str = "all", stock_status:
     return {"items": [_product_data(row) for row in rows], "summary": _product_summary(db), "filters": {"categories": categories}, "pagination": pagination(page, page_size, total)}
 
 
-def _post_transaction(db: Session, product: InventoryProduct, transaction_type: str, quantity: Decimal, unit_cost: Decimal, occurred_at: datetime, note: str | None, actor: User, reversed_id: int | None = None):
+def _post_transaction(db: Session, product: InventoryProduct, transaction_type: str, quantity: Decimal, unit_cost: Decimal, occurred_at: datetime, note: str | None, actor: User, reversed_id: int | None = None, update_average_cost: bool = True):
     before = Decimal(str(product.current_stock or 0))
     average = Decimal(str(product.average_cost or 0))
     if transaction_type == "OUT":
@@ -128,7 +128,7 @@ def _post_transaction(db: Session, product: InventoryProduct, transaction_type: 
     else:
         after = before + quantity
         effective_cost = unit_cost
-        if transaction_type == "IN":
+        if transaction_type == "IN" and update_average_cost:
             product.average_cost = ((before * average) + (quantity * unit_cost)) / after if after > 0 else ZERO
     row = InventoryTransaction(
         product_id=product.id,
@@ -261,7 +261,15 @@ def reverse_transaction(db: Session, transaction_id: int, payload: dict, actor: 
     note = str(payload.get("note") or "").strip()
     if not note:
         raise HTTPException(422, "Cần nhập lý do hoàn giao dịch.")
-    row = _post_transaction(db, original.product, reverse_type, Decimal(str(original.quantity)), Decimal(str(original.unit_cost)), utc_now(), f"Hoàn giao dịch #{original.id}: {note}", actor, original.id)
+    product = original.product
+    quantity = Decimal(str(original.quantity))
+    unit_cost = Decimal(str(original.unit_cost))
+    current_stock = Decimal(str(product.current_stock or 0))
+    current_average = Decimal(str(product.average_cost or 0))
+    row = _post_transaction(db, product, reverse_type, quantity, unit_cost, utc_now(), f"Hoàn giao dịch #{original.id}: {note}", actor, original.id, update_average_cost=False)
+    if original.transaction_type == "IN":
+        remaining_value = (current_stock * current_average) - (quantity * unit_cost)
+        product.average_cost = (remaining_value / product.current_stock) if product.current_stock and product.current_stock > 0 else ZERO
     original.status = "REVERSED"
     record_audit(db, actor, "reverse", "inventory_transaction", original.id, f"Hoàn giao dịch kho #{original.id}", details={"reversalId": row.id, "reason": note})
     db.commit()

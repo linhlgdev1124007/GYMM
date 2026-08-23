@@ -1566,7 +1566,7 @@ def checkout(db: Session, session_id: int, actor: User | None = None):
     row=db.get(AttendanceSession,session_id)
     if not row: raise HTTPException(404,"Không tìm thấy phiên check-in.")
     if row.status!="open": raise HTTPException(409,"Phiên này đã được check-out.")
-    row.checked_out_at=utc_now();row.status="closed"
+    row.checked_out_at=datetime.now(VIETNAM_TZ).replace(tzinfo=None) if row.source=="dah" else utc_now();row.status="closed"
     record_audit(db, actor, "checkout", "attendance", row.id, "Check-out nhân viên" if row.employee_id else "Check-out hội viên", customer_id=row.customer_id)
     db.commit();return {"ok":True}
 
