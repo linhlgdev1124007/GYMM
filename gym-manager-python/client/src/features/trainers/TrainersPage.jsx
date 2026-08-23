@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock3, Download, Eye, FileSpreadsheet, Filter, LayoutGrid, Link2, LogOut, Pencil, Plus, Rows3, Save, Search, Trash2, UserX, X } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -154,9 +155,53 @@ function shiftEventLabel(event) {
 }
 
 function DahEventList({ events = [] }) {
+  const detailRef = useRef(null);
+  const [popoverStyle, setPopoverStyle] = useState(null);
   if (!events.length) return <span className="text-xs text-slate-400">—</span>;
   const first = events[0];
   const last = events.length > 1 ? events[events.length - 1] : null;
+  const showDetails = () => {
+    const rect = detailRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const popoverWidth = 260;
+    const popoverHeight = Math.min(260, 54 + events.length * 27);
+    const gap = 8;
+    const top = rect.bottom + gap + popoverHeight <= window.innerHeight
+      ? rect.bottom + gap
+      : Math.max(8, rect.top - popoverHeight - gap);
+    const left = Math.min(
+      Math.max(8, rect.right - popoverWidth),
+      window.innerWidth - popoverWidth - 8,
+    );
+    setPopoverStyle({ top, left, width: popoverWidth });
+  };
+  const hideDetails = () => setPopoverStyle(null);
+  const popover = popoverStyle
+    ? createPortal(
+        <span
+          className="shift-dah-popover"
+          role="tooltip"
+          style={popoverStyle}
+          onMouseEnter={showDetails}
+          onMouseLeave={hideDetails}
+        >
+          <span className="shift-dah-popover-title">Event DAH trong ngày</span>
+          <span className="shift-dah-popover-table">
+            <span className="head">Giờ</span>
+            <span className="head">Action</span>
+            <span className="head">Trạng thái</span>
+            {events.map((event) => (
+              <span className="contents" key={event.id}>
+                <span>{timeOnly(event.eventTime)}</span>
+                <span>{event.action || "DAH"}</span>
+                <span>{event.status || "—"}</span>
+              </span>
+            ))}
+          </span>
+        </span>,
+        document.body,
+      )
+    : null;
   return (
     <span className="shift-dah-events">
       <span className="shift-dah-summary" aria-label={events.map(shiftEventLabel).join(", ")}>
@@ -171,24 +216,18 @@ function DahEventList({ events = [] }) {
         </span>
       </span>
       <span className="shift-dah-detail">
-        <button type="button" onClick={(event) => event.stopPropagation()}>
+        <button
+          ref={detailRef}
+          type="button"
+          onClick={(event) => event.stopPropagation()}
+          onFocus={showDetails}
+          onBlur={hideDetails}
+          onMouseEnter={showDetails}
+          onMouseLeave={hideDetails}
+        >
           Chi tiết
         </button>
-        <span className="shift-dah-popover" role="tooltip">
-          <span className="shift-dah-popover-title">Event DAH trong ngày</span>
-          <span className="shift-dah-popover-table">
-            <span className="head">Giờ</span>
-            <span className="head">Action</span>
-            <span className="head">Trạng thái</span>
-            {events.map((event) => (
-              <span className="contents" key={event.id}>
-                <span>{timeOnly(event.eventTime)}</span>
-                <span>{event.action || "DAH"}</span>
-                <span>{event.status || "—"}</span>
-              </span>
-            ))}
-          </span>
-        </span>
+        {popover}
       </span>
     </span>
   );
