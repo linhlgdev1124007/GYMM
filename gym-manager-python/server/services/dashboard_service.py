@@ -331,10 +331,24 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         DayPassVisit.paid_at < end_dt,
         _net_day_pass_revenue_filter(),
     ).order_by(DayPassVisit.paid_at.desc(), DayPassVisit.id.desc()).all()
+    adjusted_memberships = db.query(Membership).options(
+        joinedload(Membership.customer).joinedload(Customer.person),
+        joinedload(Membership.customer).joinedload(Customer.sales_employee).joinedload(Employee.person),
+        joinedload(Membership.package),
+        joinedload(Membership.direct_sales_employee).joinedload(Employee.person),
+        joinedload(Membership.sale_online_employee).joinedload(Employee.person),
+    ).filter(
+        Membership.registered_at >= start,
+        Membership.registered_at <= end,
+    ).order_by(Membership.registered_at.desc(), Membership.id.desc()).all()
     membership_revenue = sum(row.amount or 0 for row in payments if not row.pt_enrollment_id)
     pt_revenue = sum(row.amount or 0 for row in payments if row.pt_enrollment_id)
     day_pass_revenue = sum(row.charged_amount or 0 for row in day_passes)
     revenue = membership_revenue + pt_revenue + day_pass_revenue
+    membership_base_value = sum(row.base_price or row.final_price or 0 for row in adjusted_memberships)
+    membership_discount_amount = sum(row.discount_amount or 0 for row in adjusted_memberships)
+    membership_surcharge_amount = sum(row.surcharge_amount or 0 for row in adjusted_memberships)
+    membership_adjusted_value = sum(row.final_price or 0 for row in adjusted_memberships)
     previous_revenue = _sum(db.query(func.sum(Payment.amount)).filter(
         Payment.paid_at >= previous_start_dt,
         Payment.paid_at < previous_end_dt,
@@ -370,6 +384,13 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "ptEnrollmentId": row.pt_enrollment_id,
             "membershipCode": row.membership.code if row.membership else None,
             "package": row.membership.package.name if row.membership and row.membership.package else row.note,
+            "basePrice": row.membership.base_price if row.membership else 0,
+            "discountType": row.membership.discount_type if row.membership else "none",
+            "discountValue": row.membership.discount_value if row.membership else 0,
+            "discountAmount": row.membership.discount_amount if row.membership else 0,
+            "surchargeAmount": row.membership.surcharge_amount if row.membership else 0,
+            "finalPrice": row.membership.final_price if row.membership else 0,
+            "pricingNote": row.membership.pricing_note if row.membership else None,
             "saleEmployeeId": sale_id,
             "saleName": sale_name,
             "saleTitle": sale_title,
@@ -403,6 +424,13 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "membershipId": None,
             "membershipCode": None,
             "package": "Khách tập ngày",
+            "basePrice": 0,
+            "discountType": "none",
+            "discountValue": 0,
+            "discountAmount": 0,
+            "surchargeAmount": 0,
+            "finalPrice": row.charged_amount or 0,
+            "pricingNote": None,
             "saleEmployeeId": sale_id,
             "saleName": sale_name,
             "saleTitle": sale_title,
@@ -413,6 +441,28 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         })
     revenue_items.sort(key=lambda item: (item["paidAt"] or "", str(item["paymentId"])), reverse=True)
     revenue_by_sale = sorted(by_sale.values(), key=lambda item: (-item["amount"], item["saleName"] or ""))
+    pricing_adjustment_items = []
+    for row in adjusted_memberships:
+        sale_id, sale_name, sale_title = _sale_owner(row)
+        pricing_adjustment_items.append({
+            "membershipId": row.id,
+            "membershipCode": row.code,
+            "registeredAt": row.registered_at.isoformat() if row.registered_at else None,
+            "memberId": row.customer_id,
+            "member": row.customer.person.display_name if row.customer and row.customer.person else None,
+            "memberCode": row.customer.customer_code if row.customer else None,
+            "package": row.package.name if row.package else None,
+            "saleEmployeeId": sale_id,
+            "saleName": sale_name,
+            "saleTitle": sale_title,
+            "basePrice": row.base_price or row.final_price or 0,
+            "discountType": row.discount_type or "none",
+            "discountValue": row.discount_value or 0,
+            "discountAmount": row.discount_amount or 0,
+            "surchargeAmount": row.surcharge_amount or 0,
+            "finalPrice": row.final_price or 0,
+            "pricingNote": row.pricing_note,
+        })
     attendance_rows = db.query(AttendanceSession.checked_in_at, AttendanceSession.source).filter(
         _attendance_range_filter(start, end),
     ).all()
@@ -448,7 +498,7 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "dueDate": row.debt_due_date.isoformat() if row.debt_due_date else None,
             "overdue": bool(row.debt_due_date and row.debt_due_date < today),
         })
-    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "membershipAmount": 0, "ptAmount": 0, "dayPassAmount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
+    revenue_daily = {start + timedelta(days=offset): {"amount": 0, "membershipAmount": 0, "ptAmount": 0, "dayPassAmount": 0, "discountAmount": 0, "surchargeAmount": 0, "payments": 0, "checkins": 0} for offset in range(period_days)}
     for row in payments:
         local_day = utc_vietnam_date(row.paid_at)
         if local_day in revenue_daily:
@@ -464,6 +514,10 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             revenue_daily[local_day]["amount"] += float(row.charged_amount or 0)
             revenue_daily[local_day]["dayPassAmount"] += float(row.charged_amount or 0)
             revenue_daily[local_day]["payments"] += 1
+    for row in adjusted_memberships:
+        if row.registered_at in revenue_daily:
+            revenue_daily[row.registered_at]["discountAmount"] += float(row.discount_amount or 0)
+            revenue_daily[row.registered_at]["surchargeAmount"] += float(row.surcharge_amount or 0)
     for checked_in_at, source in attendance_rows:
         local_day = attendance_vietnam_datetime(checked_in_at, source).date()
         if local_day in revenue_daily:
@@ -485,6 +539,11 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
             "membershipRevenue": membership_revenue,
             "ptRevenue": pt_revenue,
             "dayPassRevenue": day_pass_revenue,
+            "membershipBaseValue": membership_base_value,
+            "membershipDiscountAmount": membership_discount_amount,
+            "membershipSurchargeAmount": membership_surcharge_amount,
+            "membershipAdjustedValue": membership_adjusted_value,
+            "membershipAdjustmentCount": len(adjusted_memberships),
             "previousRevenue": previous_revenue,
             "payments": len(revenue_items),
             "activeMembers": active,
@@ -530,5 +589,6 @@ def reports(db: Session, date_from: str | None, date_to: str | None):
         ],
         "revenueBySale": revenue_by_sale,
         "revenueItems": revenue_items,
+        "pricingAdjustments": pricing_adjustment_items,
         "debts": debt_items,
     }

@@ -1216,6 +1216,7 @@ def test_membership_payment_validation_is_enforced_by_backend(tmp_path):
 def test_create_membership_applies_discount_before_surcharge(tmp_path):
     import asyncio
     from server.models import Membership
+    from server.services.dashboard_service import reports
     from server.services.members_service import create_membership
 
     db = make_session(tmp_path)
@@ -1254,6 +1255,18 @@ def test_create_membership_applies_discount_before_surcharge(tmp_path):
         assert row.final_price == 1219100
         assert row.debt_amount == 219100
         assert row.pricing_note == "Ưu đãi hội viên cũ"
+        row.registered_at = date(2026, 8, 12)
+        db.commit()
+
+        report = reports(db, "2026-08-12", "2026-08-12")
+        assert report["summary"]["membershipBaseValue"] == 1299000
+        assert report["summary"]["membershipDiscountAmount"] == 129900
+        assert report["summary"]["membershipSurchargeAmount"] == 50000
+        assert report["summary"]["membershipAdjustedValue"] == 1219100
+        assert report["summary"]["membershipRevenue"] == 1000000
+        assert report["revenueItems"][0]["discountAmount"] == 129900
+        assert report["revenueItems"][0]["surchargeAmount"] == 50000
+        assert report["pricingAdjustments"][0]["pricingNote"] == "Ưu đãi hội viên cũ"
     finally:
         db.close()
 
