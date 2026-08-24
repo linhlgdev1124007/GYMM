@@ -34,7 +34,7 @@ npm run dev
 
 - React: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:8100/api`
-- API docs: `http://127.0.0.1:8100/api/docs`
+- API docs: set `GYM_ENABLE_API_DOCS=1`, then open `http://127.0.0.1:8100/api/docs`
 
 ## Production
 

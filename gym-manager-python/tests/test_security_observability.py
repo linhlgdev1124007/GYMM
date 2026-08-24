@@ -81,6 +81,14 @@ def test_health_request_id_metrics_and_security_headers(client):
     assert "pulsefit_http_request_duration_seconds" in metrics.text
 
 
+def test_api_docs_are_disabled_by_default(client, monkeypatch):
+    assert client.get("/api/docs").status_code == 404
+    assert client.get("/api/openapi.json").status_code == 404
+
+    monkeypatch.setenv("GYM_ENABLE_API_DOCS", "1")
+    assert load_settings().enable_api_docs is True
+
+
 def test_login_issues_session_and_csrf_and_audits_mutations(client):
     response = login(client)
     assert response.status_code == 200

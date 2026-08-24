@@ -157,8 +157,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="PulseFit Gym Management API",
     version="2.0.0",
-    docs_url=None if settings.production else "/api/docs",
-    openapi_url=None if settings.production else "/api/openapi.json",
+    docs_url="/api/docs" if settings.enable_api_docs else None,
+    openapi_url="/api/openapi.json" if settings.enable_api_docs else None,
     lifespan=lifespan,
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)

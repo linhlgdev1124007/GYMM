@@ -39,6 +39,7 @@ class Settings:
     dah_agent_download_url: str
     dah_agent_sha256: str
     dah_agent_mandatory_update: bool
+    enable_api_docs: bool
     log_level: str
     otel_exporter_endpoint: str
     otel_service_name: str
@@ -73,6 +74,7 @@ def load_settings() -> Settings:
         dah_agent_download_url=os.getenv("GYM_DAH_AGENT_DOWNLOAD_URL", "").strip(),
         dah_agent_sha256=os.getenv("GYM_DAH_AGENT_SHA256", "").strip().lower(),
         dah_agent_mandatory_update=_bool("GYM_DAH_AGENT_MANDATORY_UPDATE"),
+        enable_api_docs=_bool("GYM_ENABLE_API_DOCS"),
         log_level=os.getenv("GYM_LOG_LEVEL", "INFO").strip().upper(),
         otel_exporter_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip(),
         otel_service_name=os.getenv("OTEL_SERVICE_NAME", "pulsefit-api").strip() or "pulsefit-api",
