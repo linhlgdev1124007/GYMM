@@ -353,6 +353,7 @@ export function MemberDetailPage() {
   const [formError, setFormError] = useState("");
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [identityDeleteOpen, setIdentityDeleteOpen] = useState(false);
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
   const [activityFilter, setActivityFilter] = useState("all");
   const workspaceHeaderRef = useRef(null);
   const [showStickyHeader, setShowStickyHeader] = useState(false);
@@ -979,11 +980,18 @@ export function MemberDetailPage() {
       <header ref={workspaceHeaderRef} className="member-workspace-header member-command-center">
         <div className="member-identity-row">
           <div className="member-identity">
-            <div className="avatar member-avatar">
+            <button
+              type="button"
+              className="avatar member-avatar"
+              onClick={() => member.avatarImageData && setAvatarPreviewOpen(true)}
+              disabled={!member.avatarImageData}
+              title={member.avatarImageData ? "Xem ảnh đại diện kích thước lớn" : undefined}
+              aria-label={member.avatarImageData ? `Xem ảnh đại diện của ${member.name}` : undefined}
+            >
               {member.avatarImageData ? (
                 <img src={member.avatarImageData} alt={`Ảnh ${member.name}`} />
               ) : initials(member.name)}
-            </div>
+            </button>
             <div className="member-identity-copy">
               <div className="member-name-row">
                 <h1>{member.name}</h1>
@@ -1510,6 +1518,17 @@ export function MemberDetailPage() {
         pending={updateMember.isPending}
         error={formError}
       />
+      <Modal
+        open={avatarPreviewOpen}
+        onClose={() => setAvatarPreviewOpen(false)}
+        title={`Ảnh đại diện ${member.name}`}
+        size="full"
+        className="avatar-preview-modal"
+      >
+        <div className="modal-body avatar-preview-body">
+          <img src={member.avatarImageData} alt={`Ảnh đại diện ${member.name}`} />
+        </div>
+      </Modal>
       <MembershipForm
         memberId={memberId}
         member={member}
