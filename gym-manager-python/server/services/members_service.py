@@ -41,6 +41,12 @@ MEMBER_AUDIT_FIELD_LABELS = {
 MEMBERSHIP_AUDIT_FIELD_LABELS = {
     "startsAt": "Ngày bắt đầu",
     "expiresAt": "Ngày hết hạn",
+    "basePrice": "Giá gốc",
+    "discountType": "Loại ưu đãi",
+    "discountValue": "Giá trị ưu đãi",
+    "discountAmount": "Tiền ưu đãi",
+    "surchargeAmount": "Phụ thu",
+    "pricingNote": "Ghi chú giá",
     "finalPrice": "Giá gói",
     "paidAmount": "Đã thanh toán",
     "debtDueDate": "Hạn thanh toán",
@@ -98,6 +104,73 @@ def _money(value, default=0):
         return max(float(value), 0) if value not in (None, "") else default
     except (TypeError, ValueError):
         return default
+
+
+def _pricing_payload(source: dict, plan: ServicePackage | None = None, current: Membership | None = None):
+    has_adjustment_fields = any(
+        key in source
+        for key in ("basePrice", "discountType", "discountValue", "surchargeAmount")
+    )
+    legacy_final_price = source.get("finalPrice")
+    if current and not has_adjustment_fields:
+        legacy_price = _money(legacy_final_price, current.final_price or 0)
+        if legacy_final_price in (None, "") or legacy_price == (current.final_price or 0):
+            return {
+                "base_price": current.base_price or current.final_price or 0,
+                "discount_type": current.discount_type or "none",
+                "discount_value": current.discount_value or 0,
+                "discount_amount": current.discount_amount or 0,
+                "surcharge_amount": current.surcharge_amount or 0,
+                "pricing_note": _text(source.get("pricingNote"), 255)
+                if "pricingNote" in source
+                else current.pricing_note,
+                "final_price": current.final_price or 0,
+            }
+        return {
+            "base_price": legacy_price,
+            "discount_type": "none",
+            "discount_value": 0,
+            "discount_amount": 0,
+            "surcharge_amount": 0,
+            "pricing_note": _text(source.get("pricingNote"), 255)
+            if "pricingNote" in source
+            else current.pricing_note,
+            "final_price": legacy_price,
+        }
+    base_default = (
+        current.base_price
+        if current and current.base_price is not None and current.base_price > 0
+        else _money(legacy_final_price, None)
+        if legacy_final_price not in (None, "") and not has_adjustment_fields
+        else plan.price if plan else 0
+    )
+    base_price = _money(source.get("basePrice"), base_default or 0)
+    raw_type = str(source.get("discountType") or (current.discount_type if current else "none") or "none").strip().lower()
+    discount_type = raw_type if raw_type in {"none", "percent", "amount"} else "none"
+    discount_value = _money(source.get("discountValue"), current.discount_value if current else 0)
+    surcharge_amount = _money(source.get("surchargeAmount"), current.surcharge_amount if current else 0)
+    if discount_type == "percent":
+        if discount_value > 100:
+            raise HTTPException(status_code=422, detail="Ưu đãi phần trăm không được vượt quá 100%.")
+        discount_amount = round(base_price * discount_value / 100, 2)
+    elif discount_type == "amount":
+        discount_amount = min(discount_value, base_price)
+    else:
+        discount_type = "none"
+        discount_value = 0
+        discount_amount = 0
+    final_price = max(base_price - discount_amount + surcharge_amount, 0)
+    return {
+        "base_price": base_price,
+        "discount_type": discount_type,
+        "discount_value": discount_value,
+        "discount_amount": discount_amount,
+        "surcharge_amount": surcharge_amount,
+        "pricing_note": _text(source.get("pricingNote"), 255)
+        if "pricingNote" in source
+        else (current.pricing_note if current else None),
+        "final_price": final_price,
+    }
 
 
 def _day_pass_conversion_context(db: Session, day_pass_id: int | None, policy: str):
@@ -657,7 +730,8 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
         )
         if expires_at and expires_at < effective_start:
             raise HTTPException(status_code=422, detail="Ngày hết hạn gói phải sau ngày bắt đầu.")
-        final_price = _money(membership_payload.get("finalPrice"), plan.price or 0)
+        pricing = _pricing_payload(membership_payload, plan)
+        final_price = pricing["final_price"]
         day_pass_id = _int(payload.get("sourceDayPassId"))
         conversion_policy = payload.get("sourceDayPassConversionPolicy") or "refunded"
         conversion_credit = _day_pass_conversion_context(db, day_pass_id, conversion_policy)
@@ -682,6 +756,12 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
             expires_at=expires_at,
             activated_at=scheduled_activation,
             remaining_sessions=None,
+            base_price=pricing["base_price"],
+            discount_type=pricing["discount_type"],
+            discount_value=pricing["discount_value"],
+            discount_amount=pricing["discount_amount"],
+            surcharge_amount=pricing["surcharge_amount"],
+            pricing_note=pricing["pricing_note"],
             final_price=final_price,
             deposit_amount=paid,
             paid_amount=paid,
@@ -709,7 +789,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
             record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create", "paidAt": utc_iso(paid_at)})
         db.flush()
         _sync_member_status_from_memberships(db, member)
-        record_audit(db, actor, "create", "membership", membership.id, f"Đăng ký gói {plan.name} cùng lúc tạo hội viên", customer_id=member.id, details={"startsAt": starts_at, "expiresAt": expires_at, "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
+        record_audit(db, actor, "create", "membership", membership.id, f"Đăng ký gói {plan.name} cùng lúc tạo hội viên", customer_id=member.id, details={"startsAt": starts_at, "expiresAt": expires_at, "basePrice": pricing["base_price"], "discountType": pricing["discount_type"], "discountValue": pricing["discount_value"], "discountAmount": pricing["discount_amount"], "surchargeAmount": pricing["surcharge_amount"], "pricingNote": pricing["pricing_note"], "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
         mark_converted_day_pass(
             db,
             day_pass_id,
@@ -917,7 +997,8 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
         activate_now,
         activation_date,
     )
-    final_price = _money(form.get("finalPrice"), plan.price or 0)
+    pricing = _pricing_payload(form, plan)
+    final_price = pricing["final_price"]
     day_pass_id = _int(form.get("dayPassId") or form.get("sourceDayPassId"))
     conversion_policy = form.get("dayPassConversionPolicy") or form.get("sourceDayPassConversionPolicy") or "refunded"
     conversion_credit = _day_pass_conversion_context(db, day_pass_id, conversion_policy)
@@ -939,14 +1020,14 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
     expires_at = expires_at or (effective_start + timedelta(days=plan.duration_days) if plan.duration_days else None)
     if expires_at and expires_at < effective_start:
         raise HTTPException(status_code=422, detail="Ngày hết hạn gói phải sau ngày bắt đầu.")
-    row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=vietnam_today(), starts_at=effective_start, expires_at=expires_at, activated_at=scheduled_activation, remaining_sessions=None, final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=debt, debt_due_date=debt_due_date, sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status=initial_status)
+    row = Membership(customer_id=member.id, package_id=plan.id, code=f"TMP-{secrets.token_hex(6)}", registered_at=vietnam_today(), starts_at=effective_start, expires_at=expires_at, activated_at=scheduled_activation, remaining_sessions=None, base_price=pricing["base_price"], discount_type=pricing["discount_type"], discount_value=pricing["discount_value"], discount_amount=pricing["discount_amount"], surcharge_amount=pricing["surcharge_amount"], pricing_note=pricing["pricing_note"], final_price=final_price, deposit_amount=paid, paid_amount=paid, debt_amount=debt, debt_due_date=debt_due_date, sale_online_employee_id=_int(form.get("saleOnlineEmployeeId")), direct_sales_employee_id=_int(form.get("directSaleEmployeeId")), status=initial_status)
     db.add(row); db.flush(); row.code = f"MS-{row.id:06d}"
     if cash_paid:
         payment = Payment(customer_id=member.id, membership_id=row.id, bank_account_id=bank_account_id, payment_no=f"PAY-{row.id:06d}-001", paid_at=paid_at, amount=cash_paid, method=method, channel="counter", shift_date=utc_vietnam_date(paid_at) or vietnam_today(), note="Thanh toán đăng ký gói")
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
-    record_audit(db, actor, "create", "membership", row.id, f"Đăng ký gói {plan.name}", customer_id=member.id, details={"startsAt": row.starts_at, "expiresAt": row.expires_at, "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
+    record_audit(db, actor, "create", "membership", row.id, f"Đăng ký gói {plan.name}", customer_id=member.id, details={"startsAt": row.starts_at, "expiresAt": row.expires_at, "basePrice": pricing["base_price"], "discountType": pricing["discount_type"], "discountValue": pricing["discount_value"], "discountAmount": pricing["discount_amount"], "surchargeAmount": pricing["surcharge_amount"], "pricingNote": pricing["pricing_note"], "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
     if cash_paid:
         record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at)})
     mark_converted_day_pass(
@@ -970,6 +1051,12 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     old_values = {
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,
+        "basePrice": row.base_price,
+        "discountType": row.discount_type,
+        "discountValue": row.discount_value,
+        "discountAmount": row.discount_amount,
+        "surchargeAmount": row.surcharge_amount,
+        "pricingNote": row.pricing_note,
         "finalPrice": row.final_price,
         "paidAmount": row.paid_amount,
         "debtAmount": row.debt_amount,
@@ -979,7 +1066,14 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     }
     row.starts_at = _parse_date(form.get("startsAt")) or row.starts_at
     row.expires_at = _parse_date(form.get("expiresAt"))
-    row.final_price = _money(form.get("finalPrice"), row.final_price)
+    pricing = _pricing_payload(form, row.package, row)
+    row.base_price = pricing["base_price"]
+    row.discount_type = pricing["discount_type"]
+    row.discount_value = pricing["discount_value"]
+    row.discount_amount = pricing["discount_amount"]
+    row.surcharge_amount = pricing["surcharge_amount"]
+    row.pricing_note = pricing["pricing_note"]
+    row.final_price = pricing["final_price"]
     previous_paid = row.paid_amount or 0
     next_paid = _money(form.get("paidAmount"), previous_paid)
     if next_paid < previous_paid:
@@ -1011,6 +1105,12 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     new_values = {
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,
+        "basePrice": row.base_price,
+        "discountType": row.discount_type,
+        "discountValue": row.discount_value,
+        "discountAmount": row.discount_amount,
+        "surchargeAmount": row.surcharge_amount,
+        "pricingNote": row.pricing_note,
         "finalPrice": row.final_price,
         "paidAmount": row.paid_amount,
         "debtAmount": row.debt_amount,
@@ -1020,7 +1120,12 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
     }
     fields = []
     changes = []
-    for field in form.keys():
+    audit_candidate_fields = [
+        *form.keys(),
+        "discountAmount",
+        "finalPrice",
+    ]
+    for field in audit_candidate_fields:
         if field not in MEMBERSHIP_AUDIT_FIELD_LABELS or field in fields:
             continue
         if old_values.get(field) == new_values.get(field):

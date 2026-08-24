@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -1208,6 +1209,111 @@ def test_membership_payment_validation_is_enforced_by_backend(tmp_path):
                 "paidAmount": "50000",
                 "paymentMethod": "cash",
             }, [], None))
+    finally:
+        db.close()
+
+
+def test_create_membership_applies_discount_before_surcharge(tmp_path):
+    import asyncio
+    from server.models import Membership
+    from server.services.members_service import create_membership
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=date(2026, 7, 1),
+            activated_at=date(2026, 7, 1),
+        )
+        membership.expires_at = date(2026, 7, 31)
+        db.commit()
+
+        created = asyncio.run(create_membership(db, {
+            "memberId": str(customer.id),
+            "planId": str(membership.package_id),
+            "startsAt": "2026-08-12",
+            "activateNow": "true",
+            "basePrice": "1299000",
+            "discountType": "percent",
+            "discountValue": "10",
+            "surchargeAmount": "50000",
+            "pricingNote": "Ưu đãi hội viên cũ",
+            "paidAmount": "1000000",
+            "debtDueDate": "2026-08-20",
+            "paymentMethod": "cash",
+            "paidAt": "2026-08-12",
+        }, [], None))
+
+        row = db.query(Membership).filter_by(id=created["id"]).one()
+        assert row.base_price == 1299000
+        assert row.discount_type == "percent"
+        assert row.discount_value == 10
+        assert row.discount_amount == 129900
+        assert row.surcharge_amount == 50000
+        assert row.final_price == 1219100
+        assert row.debt_amount == 219100
+        assert row.pricing_note == "Ưu đãi hội viên cũ"
+    finally:
+        db.close()
+
+
+def test_update_membership_pricing_writes_clear_audit(tmp_path):
+    import asyncio
+    from server.models import AuditLog
+    from server.services.members_service import update_membership
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.base_price = 1000000
+        membership.discount_type = "none"
+        membership.discount_value = 0
+        membership.discount_amount = 0
+        membership.surcharge_amount = 0
+        membership.final_price = 1000000
+        membership.paid_amount = 600000
+        membership.debt_amount = 400000
+        membership.debt_due_date = date(2026, 8, 20)
+        db.commit()
+
+        asyncio.run(update_membership(db, membership.id, {
+            "startsAt": "2026-08-01",
+            "expiresAt": "2026-08-31",
+            "basePrice": "1000000",
+            "discountType": "amount",
+            "discountValue": "150000",
+            "surchargeAmount": "30000",
+            "pricingNote": "Giảm giữ chân, phụ thu thẻ",
+            "paidAmount": "600000",
+            "debtDueDate": "2026-08-25",
+            "paymentMethod": "cash",
+            "status": "active",
+        }, [], None))
+
+        db.refresh(membership)
+        assert membership.discount_type == "amount"
+        assert membership.discount_value == 150000
+        assert membership.discount_amount == 150000
+        assert membership.surcharge_amount == 30000
+        assert membership.final_price == 880000
+        assert membership.debt_amount == 280000
+
+        audit = db.query(AuditLog).filter_by(entity_type="membership", entity_id=membership.id).order_by(AuditLog.id.desc()).first()
+        details = json.loads(audit.details_json)
+        assert "discountType" in details["fields"]
+        assert "discountValue" in details["fields"]
+        assert "discountAmount" in details["fields"]
+        assert "surchargeAmount" in details["fields"]
+        assert "finalPrice" in details["fields"]
+        assert "debtAmount" in details["fields"]
+        assert "Tiền ưu đãi" in details["fieldLabels"]
+        assert "Phụ thu" in details["fieldLabels"]
     finally:
         db.close()
 

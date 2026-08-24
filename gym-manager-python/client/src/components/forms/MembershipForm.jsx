@@ -10,7 +10,7 @@ import {
   shortDate,
   statusLabel,
 } from "../../utils/format";
-import { DateInput, MoneyInput } from "../ui/SmartInputs";
+import { DateInput, MoneyInput, NumberUnitInput } from "../ui/SmartInputs";
 import { ReceiptPicker } from "../ui/ReceiptPicker";
 
 const planCollator = new Intl.Collator("vi", {
@@ -31,6 +31,34 @@ function groupedPlanOptions(plans = []) {
       group: row.category || "Chưa phân loại",
       meta: `${money(row.price)} · ${row.durationDays} ngày`,
     }));
+}
+
+const toMoneyNumber = (value) => Math.max(Number(value || 0), 0);
+
+function pricingFor(draft = {}) {
+  const basePrice = toMoneyNumber(draft.basePrice);
+  const surchargeAmount = toMoneyNumber(draft.surchargeAmount);
+  const discountType = ["percent", "amount"].includes(draft.discountType)
+    ? draft.discountType
+    : "none";
+  const discountValue =
+    discountType === "percent"
+      ? Math.min(toMoneyNumber(draft.discountValue), 100)
+      : toMoneyNumber(draft.discountValue);
+  const discountAmount =
+    discountType === "percent"
+      ? Math.round(basePrice * discountValue) / 100
+      : discountType === "amount"
+        ? Math.min(discountValue, basePrice)
+        : 0;
+  return {
+    basePrice,
+    discountType,
+    discountValue,
+    discountAmount,
+    surchargeAmount,
+    finalPrice: Math.max(basePrice - discountAmount + surchargeAmount, 0),
+  };
 }
 
 export function MembershipForm({
@@ -72,7 +100,13 @@ export function MembershipForm({
       ? {
           startsAt: membership.startsAt || today,
           expiresAt: membership.expiresAt || "",
-          finalPrice: membership.finalPrice || 0,
+          basePrice: membership.basePrice || membership.package?.price || membership.finalPrice || 0,
+          discountType: membership.discountType || "none",
+          discountValue: membership.discountValue || 0,
+          discountAmount: membership.discountAmount || 0,
+          surchargeAmount: membership.surchargeAmount || 0,
+          pricingNote: membership.pricingNote || "",
+          finalPrice: membership.finalPrice || membership.package?.price || 0,
           paidAmount: membership.paidAmount || 0,
           debtDueDate: membership.debtDueDate || "",
           paymentMethod: membership.payments?.[0]?.method || "cash",
@@ -89,6 +123,12 @@ export function MembershipForm({
           activateNow: true,
           activationDate: "",
           expiresAt: expiryFor({ startsAt: renewalStart, activateNow: true }, renewalPlan),
+          basePrice: renewalPlan?.price || 0,
+          discountType: "none",
+          discountValue: 0,
+          discountAmount: 0,
+          surchargeAmount: 0,
+          pricingNote: "",
           finalPrice: renewalPlan?.price || 0,
           paidAmount: 0,
           debtDueDate: "",
@@ -105,7 +145,16 @@ export function MembershipForm({
   }, [membership, currentMembership, memberId, options, open, today]);
   const planChange = (id) => {
     const plan = options?.plans?.find((row) => String(row.id) === String(id));
-    const next = { ...form, planId: id, finalPrice: plan?.price || 0 };
+    const next = {
+      ...form,
+      planId: id,
+      basePrice: plan?.price || 0,
+      discountType: "none",
+      discountValue: 0,
+      discountAmount: 0,
+      surchargeAmount: 0,
+      finalPrice: plan?.price || 0,
+    };
     setForm({
       ...next,
       expiresAt: expiryFor(next, plan),
@@ -130,7 +179,8 @@ export function MembershipForm({
   };
   const submit = (event) => {
     event.preventDefault();
-    if (Number(form.paidAmount) > Number(form.finalPrice)) {
+    const pricing = pricingFor(form);
+    if (Number(form.paidAmount) > pricing.finalPrice) {
       setLocalError(
         "Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.",
       );
@@ -141,7 +191,7 @@ export function MembershipForm({
       return;
     }
     if (
-      Number(form.finalPrice) - Number(form.paidAmount) > 0 &&
+      pricing.finalPrice - Number(form.paidAmount) > 0 &&
       !form.debtDueDate
     ) {
       setLocalError("Vui lòng chọn hạn thanh toán cho phần công nợ mới.");
@@ -161,7 +211,16 @@ export function MembershipForm({
       return;
     }
     const data = new FormData();
-    Object.entries(form).forEach(([key, value]) => {
+    const payload = {
+      ...form,
+      basePrice: pricing.basePrice,
+      discountType: pricing.discountType,
+      discountValue: pricing.discountValue,
+      discountAmount: pricing.discountAmount,
+      surchargeAmount: pricing.surchargeAmount,
+      finalPrice: pricing.finalPrice,
+    };
+    Object.entries(payload).forEach(([key, value]) => {
       if (key !== "receipts" && value != null) data.append(key, value);
     });
     form.receipts.forEach((file) => data.append("receipts", file));
@@ -181,8 +240,9 @@ export function MembershipForm({
     () => groupedPlanOptions(options?.plans || []),
     [options?.plans],
   );
+  const pricing = pricingFor(form);
   const newDebt = Math.max(
-    Number(form.finalPrice) - Number(form.paidAmount),
+    pricing.finalPrice - Number(form.paidAmount),
     0,
   );
   const paymentDelta = Math.max(
@@ -318,38 +378,97 @@ export function MembershipForm({
             <h3 className="form-section-title">Thanh toán</h3>
             <div className="form-grid">
               <Field label="Tổng tiền">
+                <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <span className="text-[11px] text-slate-500">Giá gốc gói</span>
+                  <strong className="text-sm tabular-nums text-slate-950">{money(pricing.basePrice)}</strong>
+                </div>
+              </Field>
+              <Field label="Ưu đãi">
+                <div className="grid grid-cols-[104px_minmax(0,1fr)] gap-2">
+                  <Select
+                    value={form.discountType || "none"}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        discountType: event.target.value,
+                        discountValue: 0,
+                      })
+                    }
+                  >
+                    <option value="none">Không</option>
+                    <option value="percent">%</option>
+                    <option value="amount">VND</option>
+                  </Select>
+                  {form.discountType === "percent" ? (
+                    <NumberUnitInput
+                      value={form.discountValue || ""}
+                      onChange={(discountValue) => setForm({ ...form, discountValue })}
+                      unit="%"
+                      allowDecimal
+                      disabled={(form.discountType || "none") === "none"}
+                    />
+                  ) : (
+                    <MoneyInput
+                      min="0"
+                      max={pricing.basePrice}
+                      value={form.discountType === "amount" ? form.discountValue || 0 : 0}
+                      onChange={(discountValue) => setForm({ ...form, discountValue })}
+                      disabled={(form.discountType || "none") === "none"}
+                    />
+                  )}
+                </div>
+              </Field>
+              <Field label="Phụ thu">
                 <MoneyInput
                   min="0"
-                  value={form.finalPrice || 0}
-                  onChange={(finalPrice) => setForm({ ...form, finalPrice })}
+                  value={form.surchargeAmount || 0}
+                  onChange={(surchargeAmount) => setForm({ ...form, surchargeAmount })}
                 />
               </Field>
               <Field label={membership ? "Đã thanh toán" : "Thanh toán lần này"}>
                 <MoneyInput
                   min="0"
-                  max={Number(form.finalPrice) || 0}
+                  max={pricing.finalPrice}
                   value={form.paidAmount || 0}
                   onChange={(paidAmount) => setForm({ ...form, paidAmount })}
                 />
               </Field>
+              <Field label="Ghi chú giá" className="form-span">
+                <input
+                  className="input"
+                  value={form.pricingNote || ""}
+                  onChange={(event) => setForm({ ...form, pricingNote: event.target.value })}
+                  placeholder="Lý do ưu đãi hoặc phụ thu"
+                />
+              </Field>
+              <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
+                <span className="text-[11px] text-slate-500">Ưu đãi</span>
+                <strong className={pricing.discountAmount > 0 ? "mt-0.5 text-sm text-emerald-700" : "mt-0.5 text-sm text-slate-700"}>
+                  -{money(pricing.discountAmount)}
+                </strong>
+              </div>
+              <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
+                <span className="text-[11px] text-slate-500">Tổng tiền sau điều chỉnh</span>
+                <strong className="mt-0.5 text-sm text-slate-950">{money(pricing.finalPrice)}</strong>
+              </div>
               <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
                 <span className="text-[11px] text-slate-500">Còn lại</span>
                 <strong
                   className={
-                    Number(form.finalPrice) - Number(form.paidAmount) > 0
+                    pricing.finalPrice - Number(form.paidAmount) > 0
                       ? "mt-0.5 text-sm text-red-700"
                       : "mt-0.5 text-sm text-emerald-700"
                   }
                 >
                   {money(
                     Math.max(
-                      Number(form.finalPrice) - Number(form.paidAmount),
+                      pricing.finalPrice - Number(form.paidAmount),
                       0,
                     ),
                   )}
                 </strong>
               </div>
-              {Number(form.finalPrice) - Number(form.paidAmount) > 0 && (
+              {pricing.finalPrice - Number(form.paidAmount) > 0 && (
                 <Field label="Hạn công nợ">
                   <DateInput
                     value={form.debtDueDate || ""}
@@ -463,7 +582,7 @@ export function MembershipForm({
                 </div>
                 <div>
                   <dt className="text-slate-500">Tổng giá trị</dt>
-                  <dd className="mt-0.5 font-medium text-slate-950">{money(form.finalPrice)}</dd>
+                  <dd className="mt-0.5 font-medium text-slate-950">{money(pricing.finalPrice)}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Thanh toán lần này</dt>

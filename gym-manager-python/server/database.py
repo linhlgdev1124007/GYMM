@@ -381,6 +381,36 @@ def migrate_membership_activation():
         )
 
 
+def migrate_membership_pricing_adjustments():
+    inspector = inspect(engine)
+    if "memberships" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("memberships")}
+    quote = engine.dialect.identifier_preparer.quote
+    definitions = {
+        "base_price": "FLOAT NOT NULL DEFAULT 0",
+        "discount_type": "VARCHAR(20) NOT NULL DEFAULT 'none'",
+        "discount_value": "FLOAT NOT NULL DEFAULT 0",
+        "discount_amount": "FLOAT NOT NULL DEFAULT 0",
+        "surcharge_amount": "FLOAT NOT NULL DEFAULT 0",
+        "pricing_note": "VARCHAR(255) NULL",
+    }
+    added_base_price = False
+    with engine.begin() as connection:
+        for column, definition in definitions.items():
+            if column not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('memberships')} ADD COLUMN {quote(column)} {definition}"
+                )
+                if column == "base_price":
+                    added_base_price = True
+        if added_base_price:
+            connection.exec_driver_sql(
+                f"UPDATE {quote('memberships')} "
+                f"SET {quote('base_price')} = COALESCE({quote('final_price')}, 0)"
+            )
+
+
 def migrate_membership_freeze_completion():
     inspector = inspect(engine)
     if "membership_freezes" not in inspector.get_table_names():

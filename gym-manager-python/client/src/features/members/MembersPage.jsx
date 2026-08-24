@@ -21,7 +21,7 @@ import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { Field, Input, Select, Textarea } from "../../components/ui/Form";
 import { Modal } from "../../components/ui/Modal";
-import { DateInput, DateOfBirthInput, MoneyInput, PhoneInput } from "../../components/ui/SmartInputs";
+import { DateInput, DateOfBirthInput, MoneyInput, NumberUnitInput, PhoneInput } from "../../components/ui/SmartInputs";
 import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -62,6 +62,12 @@ const createInitialForm = () => ({
     expiresAt: "",
     activateNow: true,
     activationDate: "",
+    basePrice: 0,
+    discountType: "none",
+    discountValue: 0,
+    discountAmount: 0,
+    surchargeAmount: 0,
+    pricingNote: "",
     finalPrice: 0,
     paidAmount: 0,
     debtDueDate: "",
@@ -116,6 +122,35 @@ function groupedPlanOptions(plans = []) {
       meta: `${money(row.price)} · ${row.durationDays} ngày`,
     }));
 }
+
+const toMoneyNumber = (value) => Math.max(Number(value || 0), 0);
+
+function membershipPricingFor(draft = {}) {
+  const basePrice = toMoneyNumber(draft.basePrice);
+  const surchargeAmount = toMoneyNumber(draft.surchargeAmount);
+  const discountType = ["percent", "amount"].includes(draft.discountType)
+    ? draft.discountType
+    : "none";
+  const discountValue =
+    discountType === "percent"
+      ? Math.min(toMoneyNumber(draft.discountValue), 100)
+      : toMoneyNumber(draft.discountValue);
+  const discountAmount =
+    discountType === "percent"
+      ? Math.round(basePrice * discountValue) / 100
+      : discountType === "amount"
+        ? Math.min(discountValue, basePrice)
+        : 0;
+  return {
+    basePrice,
+    discountType,
+    discountValue,
+    discountAmount,
+    surchargeAmount,
+    finalPrice: Math.max(basePrice - discountAmount + surchargeAmount, 0),
+  };
+}
+
 const paramDefaults = {
   view: "all",
   status: "all",
@@ -680,18 +715,24 @@ export function MembersPage() {
         : startsAt;
     updateMembershipDraft({
       planId,
+      basePrice: plan?.price || 0,
+      discountType: "none",
+      discountValue: 0,
+      discountAmount: 0,
+      surchargeAmount: 0,
       finalPrice: plan?.price || 0,
       expiresAt: plan?.durationDays
         ? format(addDays(new Date(`${effectiveStart}T00:00:00`), plan.durationDays), "yyyy-MM-dd")
         : "",
     });
   };
+  const membershipPricing = membershipPricingFor(form.membership);
   const sourceDayPassCredit =
     form.sourceDayPassId && form.sourceDayPassConversionPolicy === "deducted"
       ? Number(form.sourceDayPassAmount || 0)
       : 0;
   const membershipDebtAfterCredit = Math.max(
-    Number(form.membership.finalPrice || 0) -
+    membershipPricing.finalPrice -
       Number(form.membership.paidAmount || 0) -
       sourceDayPassCredit,
     0,
@@ -1193,6 +1234,10 @@ export function MembersPage() {
                 setError("Vui lòng chọn gói tập.");
                 return;
               }
+              if (Number(form.membership.paidAmount || 0) > membershipPricing.finalPrice) {
+                setError("Số tiền đã thanh toán không thể lớn hơn tổng tiền của gói.");
+                return;
+              }
               if (debt > 0 && !form.membership.debtDueDate) {
                 setError("Vui lòng chọn hạn thanh toán cho phần công nợ.");
                 return;
@@ -1220,7 +1265,17 @@ export function MembersPage() {
               name: form.name.trim(),
               phone: normalizePhone(form.phone),
               email: form.email.trim(),
-              membership: registerMembership ? membership : undefined,
+              membership: registerMembership
+                ? {
+                    ...membership,
+                    basePrice: membershipPricing.basePrice,
+                    discountType: membershipPricing.discountType,
+                    discountValue: membershipPricing.discountValue,
+                    discountAmount: membershipPricing.discountAmount,
+                    surchargeAmount: membershipPricing.surchargeAmount,
+                    finalPrice: membershipPricing.finalPrice,
+                  }
+                : undefined,
             });
           }}
         >
@@ -1464,18 +1519,89 @@ export function MembersPage() {
                       </Field>
                     )}
                     <Field label="Tổng tiền">
+                      <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                        <span className="text-[11px] text-slate-500">Giá gốc gói</span>
+                        <strong className="text-sm tabular-nums text-slate-950">
+                          {money(membershipPricing.basePrice)}
+                        </strong>
+                      </div>
+                    </Field>
+                    <Field label="Ưu đãi">
+                      <div className="grid grid-cols-[104px_minmax(0,1fr)] gap-2">
+                        <Select
+                          value={form.membership.discountType || "none"}
+                          onChange={(event) =>
+                            updateMembershipDraft({
+                              discountType: event.target.value,
+                              discountValue: 0,
+                            })
+                          }
+                        >
+                          <option value="none">Không</option>
+                          <option value="percent">%</option>
+                          <option value="amount">VND</option>
+                        </Select>
+                        {form.membership.discountType === "percent" ? (
+                          <NumberUnitInput
+                            value={form.membership.discountValue || ""}
+                            onChange={(discountValue) => updateMembershipDraft({ discountValue })}
+                            unit="%"
+                            allowDecimal
+                          />
+                        ) : (
+                          <MoneyInput
+                            min={0}
+                            max={membershipPricing.basePrice}
+                            value={
+                              form.membership.discountType === "amount"
+                                ? form.membership.discountValue || 0
+                                : 0
+                            }
+                            onChange={(discountValue) => updateMembershipDraft({ discountValue })}
+                            disabled={(form.membership.discountType || "none") === "none"}
+                          />
+                        )}
+                      </div>
+                    </Field>
+                    <Field label="Phụ thu">
                       <MoneyInput
-                        value={form.membership.finalPrice}
-                        onChange={(finalPrice) => updateMembershipDraft({ finalPrice })}
+                        min={0}
+                        value={form.membership.surchargeAmount || 0}
+                        onChange={(surchargeAmount) => updateMembershipDraft({ surchargeAmount })}
                       />
                     </Field>
                     <Field label="Thanh toán lần này">
                       <MoneyInput
                         value={form.membership.paidAmount}
-                        max={Math.max(Number(form.membership.finalPrice || 0) - sourceDayPassCredit, 0)}
+                        max={Math.max(membershipPricing.finalPrice - sourceDayPassCredit, 0)}
                         onChange={(paidAmount) => updateMembershipDraft({ paidAmount })}
                       />
                     </Field>
+                    <Field label="Ghi chú giá" className="form-span">
+                      <Input
+                        value={form.membership.pricingNote || ""}
+                        onChange={(event) => updateMembershipDraft({ pricingNote: event.target.value })}
+                        placeholder="Lý do ưu đãi hoặc phụ thu"
+                      />
+                    </Field>
+                    <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
+                      <span className="text-[11px] text-slate-500">Ưu đãi</span>
+                      <strong
+                        className={
+                          membershipPricing.discountAmount > 0
+                            ? "mt-0.5 text-sm text-emerald-700"
+                            : "mt-0.5 text-sm text-slate-700"
+                        }
+                      >
+                        -{money(membershipPricing.discountAmount)}
+                      </strong>
+                    </div>
+                    <div className="flex flex-col justify-center rounded-md bg-slate-50 px-3 py-2">
+                      <span className="text-[11px] text-slate-500">Tổng tiền sau điều chỉnh</span>
+                      <strong className="mt-0.5 text-sm text-slate-950">
+                        {money(membershipPricing.finalPrice)}
+                      </strong>
+                    </div>
                     {sourceDayPassCredit > 0 && (
                       <div className="flex flex-col justify-center rounded-md bg-sky-50 px-3 py-2">
                         <span className="text-[11px] text-sky-600">Khấu trừ tập ngày</span>
