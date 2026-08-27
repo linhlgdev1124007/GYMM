@@ -1399,12 +1399,26 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         return {"membershipId": row.id, "customerId": row.customer_id, "action": action, "summary": summary}
     if action == "suspend":
         suspended_at = _parse_date(payload.get("suspendedAt")) or vietnam_today()
-        if suspended_at < vietnam_today():
-            raise HTTPException(422, "Ngày tạm dừng không được ở quá khứ.")
+        if row.status == "cancelled":
+            raise HTTPException(422, "Gói đã hủy không thể tạm dừng.")
+        if not row.expires_at:
+            raise HTTPException(422, "Gói không có ngày hết hạn nên không thể tạm dừng tự động.")
+        suspend_floor = row.starts_at or row.registered_at or suspended_at
+        effective_suspended_at = max(suspended_at, suspend_floor)
+        remaining_days = max((row.expires_at - effective_suspended_at).days, 0)
+        if effective_suspended_at >= row.expires_at:
+            raise HTTPException(422, "Ngày tạm dừng phải còn nằm trong thời hạn gói.")
         row.status = "suspended"
         row.customer.status = "lead"
         summary = f"Tạm dừng gói {old_package_name} của {old_customer_name}"
-        details = {"suspendedAt": str(suspended_at), "previousActivatedAt": str(row.activated_at) if row.activated_at else None}
+        details = {
+            "suspendedAt": str(suspended_at),
+            "effectiveSuspendedAt": str(effective_suspended_at),
+            "previousActivatedAt": str(row.activated_at) if row.activated_at else None,
+            "previousStartsAt": str(row.starts_at) if row.starts_at else None,
+            "previousExpiry": str(row.expires_at),
+            "remainingDays": remaining_days,
+        }
         event = MembershipEvent(
             membership_id=row.id,
             action=action,

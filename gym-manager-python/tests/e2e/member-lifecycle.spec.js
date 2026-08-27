@@ -371,25 +371,37 @@ test("freeze supports reconciliation, validates ranges and compensates actual fr
   });
 });
 
-test("suspend validates dates and reactivation recalculates from the reactivation day", async () => {
+test("suspend accepts past dates and reactivation recalculates from the effective suspend day", async () => {
   await setToday("2026-08-01");
   const plan = await createPlan("E2E Suspend");
 
-  const invalid = await createMember("E2E Suspend Invalid", "0901000010");
-  const invalidMembership = await registerMembership(invalid.id, plan.id, { activateNow: "true" });
+  const past = await createMember("E2E Suspend Past", "0901000010");
+  const pastMembership = await registerMembership(past.id, plan.id, { startsAt: "2026-08-01", activateNow: "true" });
   await setToday("2026-08-10");
-  await expectError(
-    await post(`/api/memberships/${invalidMembership.id}/actions`, {
-      action: "suspend",
-      suspendedAt: "2026-08-09",
-      reason: "Ngày quá khứ",
-    }),
-    "quá khứ",
-  );
+  let response = await post(`/api/memberships/${pastMembership.id}/actions`, {
+    action: "suspend",
+    suspendedAt: "2026-08-09",
+    reason: "Ngày quá khứ",
+  });
+  expect(response.ok()).toBeTruthy();
+  await setToday("2026-08-15");
+  response = await post(`/api/memberships/${pastMembership.id}/actions`, {
+    action: "activate",
+    activatedAt: "2026-08-15",
+    reason: "Kích hoạt lại",
+  });
+  expect(response.ok()).toBeTruthy();
+  let state = await memberState(past.code);
+  expect(state.memberships[0]).toMatchObject({
+    status: "active",
+    startsAt: "2026-08-15",
+    activatedAt: "2026-08-15",
+    expiresAt: "2026-09-06",
+  });
 
   const sameDay = await createMember("E2E Suspend Same Day", "0901000011");
   const sameDayMembership = await registerMembership(sameDay.id, plan.id, { startsAt: "2026-08-01", activateNow: "true" });
-  let response = await post(`/api/memberships/${sameDayMembership.id}/actions`, {
+  response = await post(`/api/memberships/${sameDayMembership.id}/actions`, {
     action: "suspend",
     suspendedAt: "2026-08-10",
     reason: "Tạm dừng",
@@ -401,7 +413,7 @@ test("suspend validates dates and reactivation recalculates from the reactivatio
     reason: "Kích hoạt lại trong ngày",
   });
   expect(response.ok()).toBeTruthy();
-  let state = await memberState(sameDay.code);
+  state = await memberState(sameDay.code);
   expect(state.memberships[0]).toMatchObject({
     status: "active",
     startsAt: "2026-08-10",

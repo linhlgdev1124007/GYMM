@@ -266,7 +266,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
           )}
           {action !== "freeze" && action !== "adjust_days" && (
             <Field label={action === "activate" ? "Ngày kích hoạt" : action === "suspend" ? "Ngày tạm dừng" : "Ngày hiệu lực"}>
-              <DateInput min={action === "suspend" ? today() : undefined} value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
+              <DateInput value={form.effectiveAt} onChange={(effectiveAt) => setForm({ ...form, effectiveAt })} />
             </Field>
           )}
           <Field label="Lý do / căn cứ" required hint="Được lưu trong lịch sử gói và Audit Log">

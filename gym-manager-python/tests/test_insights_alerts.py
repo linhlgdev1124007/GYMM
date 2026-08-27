@@ -181,6 +181,8 @@ def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
             "membershipAmount": 700000.0,
             "ptAmount": 0,
             "dayPassAmount": 0,
+            "discountAmount": 0,
+            "surchargeAmount": 0,
             "payments": 1,
             "checkins": 0,
         }]

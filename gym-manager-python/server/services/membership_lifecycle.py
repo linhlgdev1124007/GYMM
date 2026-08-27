@@ -56,7 +56,7 @@ def _latest_suspend_event(membership: Membership):
     return sorted(events, key=lambda row: row.created_at, reverse=True)[0] if events else None
 
 
-def _suspended_at(event) -> date | None:
+def _suspend_calculation_date(event) -> date | None:
     if not event:
         return None
     try:
@@ -64,7 +64,7 @@ def _suspended_at(event) -> date | None:
     except (TypeError, ValueError):
         return None
     try:
-        return date.fromisoformat(details.get("suspendedAt") or "")
+        return date.fromisoformat(details.get("effectiveSuspendedAt") or details.get("suspendedAt") or "")
     except (TypeError, ValueError):
         return None
 
@@ -183,7 +183,7 @@ def activate_membership(
     previous_starts_at = membership.starts_at
     previous_expires_at = membership.expires_at
     suspended_event = _latest_suspend_event(membership)
-    suspended_at = _suspended_at(suspended_event)
+    suspended_at = _suspend_calculation_date(suspended_event)
     remaining_days = None
     compensated_days = 0
 

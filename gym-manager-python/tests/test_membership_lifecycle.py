@@ -153,6 +153,186 @@ def test_suspended_membership_gets_compensated_when_reactivated(tmp_path):
         db.close()
 
 
+def test_past_suspend_uses_effective_start_for_reactivation(tmp_path):
+    from server.models import MembershipEvent
+    from server.services.members_service import membership_action
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=10),
+            activated_at=today - timedelta(days=10),
+        )
+        membership.expires_at = today + timedelta(days=20)
+        customer.status = "active"
+        db.commit()
+
+        suspended_at = today - timedelta(days=5)
+        reactivated_at = today + timedelta(days=3)
+        membership_action(db, membership.id, {
+            "action": "suspend",
+            "suspendedAt": suspended_at.isoformat(),
+            "reason": "Nhập bù ngày tạm dừng",
+        }, actor=None)
+        db.refresh(membership)
+        db.refresh(customer)
+        assert membership.status == "suspended"
+        assert customer.status == "lead"
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="suspend").one()
+        details = json.loads(event.details_json)
+        assert details["suspendedAt"] == suspended_at.isoformat()
+        assert details["effectiveSuspendedAt"] == suspended_at.isoformat()
+        assert details["remainingDays"] == 25
+
+        membership_action(db, membership.id, {
+            "action": "activate",
+            "activatedAt": reactivated_at.isoformat(),
+            "reason": "Khách tập lại",
+        }, actor=None)
+        db.refresh(membership)
+        db.refresh(customer)
+        assert membership.status == "active"
+        assert membership.starts_at == reactivated_at
+        assert membership.expires_at == reactivated_at + timedelta(days=25)
+        assert customer.status == "active"
+    finally:
+        db.close()
+
+
+def test_suspend_before_membership_start_is_saved_but_calculated_from_start(tmp_path):
+    from server.models import MembershipEvent
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 10),
+            activated_at=date(2026, 8, 10),
+        )
+        membership.expires_at = date(2026, 9, 10)
+        customer.status = "active"
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "suspend",
+            "suspendedAt": "2026-08-01",
+            "reason": "Nhập ngày trước khi gói bắt đầu",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership.status == "suspended"
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="suspend").one()
+        details = json.loads(event.details_json)
+        assert details["suspendedAt"] == "2026-08-01"
+        assert details["effectiveSuspendedAt"] == "2026-08-10"
+        assert details["remainingDays"] == 31
+
+        membership_action(db, membership.id, {
+            "action": "activate",
+            "activatedAt": "2026-09-20",
+            "reason": "Kích hoạt lại",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership.expires_at == date(2026, 10, 21)
+    finally:
+        db.close()
+
+
+def test_suspend_rejects_dates_without_remaining_package_time(tmp_path):
+    from fastapi import HTTPException
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 9, 1)
+        db.commit()
+
+        with pytest.raises(HTTPException, match="trong thời hạn gói"):
+            membership_action(db, membership.id, {
+                "action": "suspend",
+                "suspendedAt": "2026-09-01",
+                "reason": "Ngay ngày hết hạn",
+            }, actor=None)
+
+        with pytest.raises(HTTPException, match="trong thời hạn gói"):
+            membership_action(db, membership.id, {
+                "action": "suspend",
+                "suspendedAt": "2026-09-10",
+                "reason": "Sau ngày hết hạn",
+            }, actor=None)
+    finally:
+        db.close()
+
+
+def test_suspend_validation_rejects_cancelled_missing_expiry_and_missing_reason(tmp_path):
+    from fastapi import HTTPException
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, cancelled = seed_member_with_plan(
+            db,
+            status="cancelled",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        cancelled.expires_at = date(2026, 9, 1)
+        db.commit()
+        with pytest.raises(HTTPException, match="đã hủy"):
+            membership_action(db, cancelled.id, {
+                "action": "suspend",
+                "suspendedAt": "2026-08-10",
+                "reason": "Gói hủy",
+            }, actor=None)
+
+        _customer, no_expiry = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+            code="CUS0000002",
+        )
+        no_expiry.expires_at = None
+        db.commit()
+        with pytest.raises(HTTPException, match="không có ngày hết hạn"):
+            membership_action(db, no_expiry.id, {
+                "action": "suspend",
+                "suspendedAt": "2026-08-10",
+                "reason": "Không có hạn",
+            }, actor=None)
+
+        _customer, missing_reason = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+            code="CUS0000003",
+        )
+        missing_reason.expires_at = date(2026, 9, 1)
+        db.commit()
+        with pytest.raises(HTTPException, match="lý do"):
+            membership_action(db, missing_reason.id, {
+                "action": "suspend",
+                "suspendedAt": "2026-08-10",
+                "reason": "",
+            }, actor=None)
+    finally:
+        db.close()
+
+
 def test_freeze_does_not_extend_until_reactivated_and_counts_actual_days(tmp_path):
     from server.models import MembershipFreeze
     from server.services.members_service import freeze_membership, membership_action
@@ -257,7 +437,7 @@ def test_same_day_suspend_or_freeze_reactivation_does_not_add_day(tmp_path):
         db.close()
 
 
-def test_suspend_cannot_be_past_and_freeze_accepts_past_start(tmp_path):
+def test_suspend_accepts_past_and_freeze_accepts_past_start(tmp_path):
     from fastapi import HTTPException
     from server.services.members_service import freeze_membership, membership_action
     from server.timeutils import vietnam_today
@@ -274,12 +454,15 @@ def test_suspend_cannot_be_past_and_freeze_accepts_past_start(tmp_path):
         membership.expires_at = today + timedelta(days=20)
         db.commit()
 
-        with pytest.raises(HTTPException, match="Ngày tạm dừng"):
-            membership_action(db, membership.id, {
-                "action": "suspend",
-                "suspendedAt": (today - timedelta(days=1)).isoformat(),
-                "reason": "Ngày cũ",
-            }, actor=None)
+        membership_action(db, membership.id, {
+            "action": "suspend",
+            "suspendedAt": (today - timedelta(days=1)).isoformat(),
+            "reason": "Ngày cũ",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership.status == "suspended"
+        membership.status = "active"
+        db.commit()
 
         freeze_membership(db, membership.id, {
             "startsAt": (today - timedelta(days=1)).isoformat(),
