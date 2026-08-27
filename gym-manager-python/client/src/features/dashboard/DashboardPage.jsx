@@ -359,7 +359,7 @@ export function DashboardPage() {
     queryKey: ["dashboard-audit-logs", auditScope, auditPage, auditPageSize],
     queryFn: () =>
       api(
-        `/api/audit-logs?${queryString({ scope: auditScope, page: auditPage, pageSize: auditPageSize })}`,
+        `/api/audit-logs?${queryString({ scope: auditScope, page: auditPage, pageSize: auditPageSize, includeActors: false })}`,
       ),
     enabled: user.role === "admin",
     placeholderData: keepPreviousData,

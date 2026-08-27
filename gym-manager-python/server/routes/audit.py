@@ -17,6 +17,7 @@ def logs(
     scope: str = "all",
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=5, le=100, alias="pageSize"),
+    include_actors: bool = Query(True, alias="includeActors"),
     db: Session = Depends(get_db),
 ):
     return audit_controller.list_logs(
@@ -28,4 +29,5 @@ def logs(
         scope=scope,
         page=page,
         page_size=page_size,
+        include_actors=include_actors,
     )

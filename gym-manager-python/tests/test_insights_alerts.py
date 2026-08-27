@@ -147,6 +147,67 @@ def test_dashboard_context_metrics_and_debt_aging(tmp_path):
         db.close()
 
 
+def test_audit_logs_filter_and_optional_actor_options(tmp_path):
+    from datetime import UTC, datetime, time
+
+    from server.models import AuditLog, Customer, Person, User
+    from server.services.audit_service import list_audit_logs
+    from server.timeutils import VIETNAM_TZ, vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        admin = User(username="admin-audit", display_name="Admin Audit", password_hash="x", role="admin")
+        manager = User(username="manager-audit", display_name="Manager Audit", password_hash="x", role="manager")
+        person = Person(display_name="Audit Member", phone="0900000000", status="active")
+        db.add_all([admin, manager, person])
+        db.flush()
+        customer = Customer(person_id=person.id, customer_code="AUD001", status="active")
+        db.add(customer)
+        db.flush()
+
+        today_start = datetime.combine(vietnam_today(), time(hour=9), tzinfo=VIETNAM_TZ).astimezone(UTC).replace(tzinfo=None)
+        old_time = today_start - timedelta(days=1)
+        db.add_all(
+            [
+                AuditLog(
+                    actor_user_id=admin.id,
+                    action="update",
+                    entity_type="member",
+                    entity_id=customer.id,
+                    customer_id=customer.id,
+                    summary="Cập nhật hội viên Audit Member",
+                    details_json='{"fields":["name"]}',
+                    created_at=today_start,
+                ),
+                AuditLog(
+                    actor_user_id=manager.id,
+                    action="create",
+                    entity_type="plan",
+                    entity_id=10,
+                    summary="Tạo gói test",
+                    created_at=old_time,
+                ),
+            ]
+        )
+        db.commit()
+
+        without_actors = list_audit_logs(db, scope="today", page=1, page_size=5, include_actors=False)
+        assert without_actors["actors"] == []
+        assert without_actors["pagination"]["total"] == 1
+        assert without_actors["items"][0]["customer"]["code"] == "AUD001"
+
+        by_actor = list_audit_logs(db, actor_id=manager.id, page=1, page_size=5)
+        assert by_actor["pagination"]["total"] == 1
+        assert by_actor["items"][0]["actor"]["username"] == "manager-audit"
+        assert {row["username"] for row in by_actor["actors"]} == {"admin-audit", "manager-audit"}
+
+        by_search = list_audit_logs(db, q="Admin Audit", page=1, page_size=5)
+        assert by_search["pagination"]["total"] == 1
+        assert by_search["items"][0]["actor"]["username"] == "admin-audit"
+    finally:
+        db.close()
+
+
 def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
     from datetime import datetime
 

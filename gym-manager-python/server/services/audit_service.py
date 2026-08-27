@@ -1,12 +1,19 @@
 import json
+import threading
+import time as monotonic_time
 from datetime import UTC, datetime, time
 
 from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only
 
-from ..models import AuditLog, Customer, User
+from ..config import settings
+from ..models import AuditLog, Customer, Person, User
 from .serializers import pagination
 from ..timeutils import VIETNAM_TZ, utc_iso, vietnam_today
+
+ACTOR_CACHE_SECONDS = 15
+_actors_cache: tuple[float, list[dict]] | None = None
+_actors_cache_lock = threading.Lock()
 
 
 def record_audit(
@@ -21,6 +28,7 @@ def record_audit(
     details: dict | None = None,
     ip_address: str | None = None,
 ):
+    _clear_actor_cache()
     db.add(
         AuditLog(
             actor_user_id=actor.id if actor else None,
@@ -33,6 +41,35 @@ def record_audit(
             ip_address=ip_address,
         )
     )
+
+
+def _clear_actor_cache():
+    global _actors_cache
+    with _actors_cache_lock:
+        _actors_cache = None
+
+
+def _actor_options(db: Session):
+    global _actors_cache
+    cache_enabled = settings.environment != "test"
+    now = monotonic_time.monotonic()
+    if cache_enabled:
+        with _actors_cache_lock:
+            if _actors_cache and _actors_cache[0] > now:
+                return list(_actors_cache[1])
+
+    rows = (
+        db.query(User.id, User.display_name, User.username)
+        .join(AuditLog, AuditLog.actor_user_id == User.id)
+        .distinct()
+        .order_by(User.display_name)
+        .all()
+    )
+    data = [{"id": row.id, "name": row.display_name, "username": row.username} for row in rows]
+    if cache_enabled:
+        with _actors_cache_lock:
+            _actors_cache = (now + ACTOR_CACHE_SECONDS, list(data))
+    return data
 
 
 def _customer_data(row: Customer | None):
@@ -84,8 +121,9 @@ def list_audit_logs(
     scope: str = "all",
     page: int = 1,
     page_size: int = 30,
+    include_actors: bool = True,
 ):
-    query = db.query(AuditLog).options(joinedload(AuditLog.actor))
+    query = db.query(AuditLog)
     if q.strip():
         term = q.strip()
         query = query.outerjoin(AuditLog.actor).filter(
@@ -107,25 +145,42 @@ def list_audit_logs(
         start = datetime.combine(today, time.min, tzinfo=VIETNAM_TZ).astimezone(UTC).replace(tzinfo=None)
         end = datetime.combine(today, time.max, tzinfo=VIETNAM_TZ).astimezone(UTC).replace(tzinfo=None)
         query = query.filter(AuditLog.created_at >= start, AuditLog.created_at <= end)
-    total = query.count()
-    rows = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(
-        (page - 1) * page_size
-    ).limit(page_size).all()
+    total = query.order_by(None).count()
+    rows = (
+        query.options(
+            joinedload(AuditLog.actor).load_only(User.id, User.display_name, User.username, User.role),
+            load_only(
+                AuditLog.id,
+                AuditLog.actor_user_id,
+                AuditLog.action,
+                AuditLog.entity_type,
+                AuditLog.entity_id,
+                AuditLog.customer_id,
+                AuditLog.summary,
+                AuditLog.details_json,
+                AuditLog.ip_address,
+                AuditLog.created_at,
+            ),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
     customer_ids = {row.customer_id for row in rows if row.customer_id}
     customers = {
         row.id: row
         for row in db.query(Customer)
-        .options(joinedload(Customer.person))
+        .options(
+            joinedload(Customer.person).load_only(Person.display_name, Person.phone),
+            load_only(Customer.id, Customer.customer_code, Customer.status, Customer.avatar_image_data),
+        )
         .filter(Customer.id.in_(customer_ids))
         .all()
     } if customer_ids else {}
-    actors = db.query(User).filter(User.id.in_(db.query(AuditLog.actor_user_id))).order_by(User.display_name).all()
     return {
         "items": [audit_data(row, customers) for row in rows],
-        "actors": [
-            {"id": row.id, "name": row.display_name, "username": row.username}
-            for row in actors
-        ],
+        "actors": _actor_options(db) if include_actors else [],
         "pagination": pagination(page, page_size, total),
     }
 
