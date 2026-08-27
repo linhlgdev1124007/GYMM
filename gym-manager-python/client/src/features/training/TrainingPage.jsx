@@ -38,17 +38,11 @@ export function TrainingPage() {
       ),
   });
   const options = useQuery({
-    queryKey: ["member-options"],
-    queryFn: () => api("/api/members/options"),
+    queryKey: ["member-options", coachMode ? "base" : "no-pt-members"],
+    queryFn: () => api(`/api/members/options?${queryString({ includeMembers: !coachMode, memberView: "no_pt" })}`),
     staleTime: 300000,
   });
-  const members = useQuery({
-    queryKey: ["training-member-options"],
-    queryFn: () => api("/api/members?view=no_pt&pageSize=2000&sort=name"),
-    staleTime: 60000,
-    enabled: !coachMode,
-  });
-  const memberOptions = (members.data?.items || []).map((row) => ({
+  const memberOptions = (options.data?.members || []).map((row) => ({
     value: row.id,
     label: row.name,
     meta: `${row.code} · ${formatPhone(row.phone)}${row.membership ? ` · ${row.membership.packageName || row.membership.package?.name || "Có gói"}` : ""}`,

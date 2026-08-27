@@ -4,7 +4,7 @@ from ..services import members_service
 
 
 def list_members(db: Session, **params): return members_service.list_members(db, **params)
-def options(db: Session): return members_service.member_options(db)
+def options(db: Session, **params): return members_service.member_options(db, **params)
 def get_member(db: Session, member_id: int, include_audit: bool = False): return members_service.get_member(db, member_id, include_audit=include_audit)
 def create_member(db: Session, payload: dict, actor=None): return members_service.create_member(db, payload, actor)
 def update_member(db: Session, member_id: int, payload: dict, actor=None): return members_service.update_member(db, member_id, payload, actor)

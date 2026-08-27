@@ -5,7 +5,7 @@ import json
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import Integer, and_, case, cast, func, or_
-from sqlalchemy.orm import Session, aliased, joinedload
+from sqlalchemy.orm import Session, aliased, joinedload, load_only
 
 from ..database import ROOT_DIR
 from ..models import (
@@ -518,7 +518,27 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     trainers = {}
     active_training = {}
     if ids:
-        checkins = db.query(AttendanceSession).filter(AttendanceSession.customer_id.in_(ids)).order_by(AttendanceSession.checked_in_at.desc()).all()
+        latest_checkins = (
+            db.query(
+                AttendanceSession.customer_id.label("customer_id"),
+                func.max(AttendanceSession.checked_in_at).label("checked_in_at"),
+            )
+            .filter(AttendanceSession.customer_id.in_(ids))
+            .group_by(AttendanceSession.customer_id)
+            .subquery()
+        )
+        checkins = (
+            db.query(AttendanceSession.customer_id, AttendanceSession.checked_in_at, AttendanceSession.source)
+            .join(
+                latest_checkins,
+                and_(
+                    AttendanceSession.customer_id == latest_checkins.c.customer_id,
+                    AttendanceSession.checked_in_at == latest_checkins.c.checked_in_at,
+                ),
+            )
+            .order_by(AttendanceSession.checked_in_at.desc(), AttendanceSession.id.desc())
+            .all()
+        )
         for checkin in checkins:
             last_checkins.setdefault(checkin.customer_id, _attendance_iso(checkin.checked_in_at, checkin.source))
         training_rows = db.query(PtEnrollment).options(joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person)).filter(PtEnrollment.customer_id.in_(ids), PtEnrollment.status == "active").order_by(PtEnrollment.id.desc()).all()
@@ -554,7 +574,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     return {"items": items, "pagination": pagination(page, page_size, total)}
 
 
-def member_options(db: Session):
+def member_options(db: Session, include_members: bool = False, member_view: str = "all", member_limit: int = 2000):
     employees = db.query(Employee).options(joinedload(Employee.person)).filter(Employee.status == "active").order_by(Employee.id).all()
     accounts = db.query(BankAccount).filter(BankAccount.status == "active").order_by(BankAccount.bank_name).all()
     pt_titles = {
@@ -562,12 +582,49 @@ def member_options(db: Session):
         .filter(EmployeeJobTitle.is_active == True, EmployeeJobTitle.is_pt_role == True)
         .all()
     } or {"Coach"}
+    members = []
+    if include_members:
+        member_query = (
+            db.query(Customer.id, Customer.customer_code, Person.display_name, Person.phone)
+            .join(Customer.person)
+            .filter(Customer.status != "cancelled")
+        )
+        if member_view == "no_pt":
+            member_query = member_query.filter(
+                ~db.query(PtEnrollment.id)
+                .filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.status == "active")
+                .exists()
+            )
+        member_rows = member_query.order_by(Person.display_name.asc(), Customer.id.desc()).limit(member_limit).all()
+        member_ids = [row.id for row in member_rows]
+        package_by_member = {}
+        if member_ids:
+            membership_rows = (
+                db.query(Membership.customer_id, ServicePackage.name.label("package_name"))
+                .join(ServicePackage)
+                .filter(Membership.customer_id.in_(member_ids), ServicePackage.is_pt == False)
+                .order_by(Membership.customer_id.asc(), Membership.starts_at.desc(), Membership.id.desc())
+                .all()
+            )
+            for row in membership_rows:
+                package_by_member.setdefault(row.customer_id, row.package_name)
+        members = [
+            {
+                "id": row.id,
+                "code": row.customer_code,
+                "name": row.display_name,
+                "phone": row.phone,
+                "membership": {"packageName": package_by_member[row.id]} if row.id in package_by_member else None,
+            }
+            for row in member_rows
+        ]
     return {
         "employees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title, "isPtRole": row.job_title in pt_titles} for row in employees],
         "salesEmployees": [{"id": row.id, "code": row.employee_code, "name": row.person.display_name, "title": row.job_title} for row in employees if _is_sales_employee(row)],
         "ptRoleTitles": sorted(pt_titles, key=str.casefold),
         "plans": list_plans(db),
         "bankAccounts": [{"id": row.id, "label": f"{row.bank_name} · {row.account_number}", "visibility": row.visibility} for row in accounts],
+        "members": members,
     }
 
 

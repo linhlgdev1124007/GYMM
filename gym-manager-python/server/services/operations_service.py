@@ -3,7 +3,7 @@ import secrets
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only
 
 from ..models import (
     Appointment, AttendanceSession, BankAccount, CashShift, CommissionLedger,
@@ -148,6 +148,47 @@ def _member_access_warning(db: Session, member: Customer | None) -> str | None:
     if member.status == "lead":
         return "Hội viên chưa ở trạng thái hoạt động."
     return None
+
+
+def _membership_access_warning(member_status: str | None, membership: Membership | None) -> str | None:
+    if not membership:
+        return "Khách tiềm năng chưa có gói tập."
+    today = vietnam_today()
+    if membership.status == "pending":
+        return "Gói đang chờ kích hoạt."
+    if membership.status == "suspended":
+        return "Gói đang tạm dừng."
+    if membership.status == "frozen":
+        return "Gói đang bảo lưu."
+    if membership.status == "cancelled":
+        return "Gói đã hủy."
+    if membership.expires_at and membership.expires_at < today:
+        return "Gói đã hết hạn."
+    if membership.starts_at and membership.starts_at > today:
+        return "Gói chưa tới ngày bắt đầu."
+    if member_status == "lead":
+        return "Hội viên chưa ở trạng thái hoạt động."
+    return None
+
+
+def _member_access_warnings(db: Session, members: list[Customer]) -> dict[int, str | None]:
+    if not members:
+        return {}
+    member_statuses = {row.id: row.status for row in members}
+    memberships = (
+        db.query(Membership)
+        .join(ServicePackage)
+        .filter(Membership.customer_id.in_(member_statuses), ServicePackage.is_pt == False)
+        .order_by(Membership.customer_id.asc(), Membership.registered_at.desc(), Membership.id.desc())
+        .all()
+    )
+    latest_memberships = {}
+    for membership in memberships:
+        latest_memberships.setdefault(membership.customer_id, membership)
+    return {
+        member_id: _membership_access_warning(status, latest_memberships.get(member_id))
+        for member_id, status in member_statuses.items()
+    }
 
 
 def _job_title(value, default="Coach"):
@@ -1479,8 +1520,26 @@ def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: 
     query = (
         db.query(AttendanceSession)
         .options(
-            joinedload(AttendanceSession.customer).joinedload(Customer.person),
-            joinedload(AttendanceSession.employee).joinedload(Employee.person),
+            load_only(
+                AttendanceSession.id,
+                AttendanceSession.customer_id,
+                AttendanceSession.employee_id,
+                AttendanceSession.scheduled_start_at,
+                AttendanceSession.scheduled_end_at,
+                AttendanceSession.checked_in_at,
+                AttendanceSession.checked_out_at,
+                AttendanceSession.source,
+                AttendanceSession.result,
+                AttendanceSession.status,
+            ),
+            joinedload(AttendanceSession.customer)
+            .load_only(Customer.id, Customer.customer_code, Customer.status, Customer.avatar_image_data)
+            .joinedload(Customer.person)
+            .load_only(Person.display_name),
+            joinedload(AttendanceSession.employee)
+            .load_only(Employee.id, Employee.employee_code)
+            .joinedload(Employee.person)
+            .load_only(Person.display_name),
         )
         .filter(or_(
             and_(AttendanceSession.source == "dah", AttendanceSession.checked_in_at >= start, AttendanceSession.checked_in_at < end),
@@ -1510,6 +1569,7 @@ def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: 
         .limit(page_size)
         .all()
     )
+    member_warnings = _member_access_warnings(db, [row.customer for row in rows if row.customer_id and row.customer])
     items = [{
         "id":row.id,
         "personType":"employee" if row.employee_id else "member",
@@ -1517,7 +1577,7 @@ def recent_checkins(db: Session, day: str = "", person_type: str = "all", page: 
         "memberName":row.customer.person.display_name if row.customer else None,
         "memberCode":row.customer.customer_code if row.customer else None,
         "memberStatus":row.customer.status if row.customer else None,
-        "memberAccessWarning":_member_access_warning(db, row.customer) if row.customer_id else None,
+        "memberAccessWarning":member_warnings.get(row.customer_id) if row.customer_id else None,
         "memberAvatarImageData":row.customer.avatar_image_data if row.customer else None,
         "employeeId":row.employee_id,
         "employeeName":row.employee.person.display_name if row.employee else None,

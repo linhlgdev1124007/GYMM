@@ -15,8 +15,18 @@ def list_members(q: str = "", status: str = "all", expiring_days: int = Query(14
 
 
 @router.get("/members/options")
-def member_options(db: Session = Depends(get_db)):
-    return members_controller.options(db)
+def member_options(
+    include_members: bool = Query(False, alias="includeMembers"),
+    member_view: str = Query("all", alias="memberView"),
+    member_limit: int = Query(2000, ge=10, le=2000, alias="memberLimit"),
+    db: Session = Depends(get_db),
+):
+    return members_controller.options(
+        db,
+        include_members=include_members,
+        member_view=member_view,
+        member_limit=member_limit,
+    )
 
 
 @router.post("/members", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
