@@ -1,73 +1,104 @@
+from copy import deepcopy
 from datetime import date, timedelta
+import threading
+import time
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from ..config import settings
 from ..models import AlertRead, Customer, Employee, Membership, PtEnrollment, PtEnrollmentCoach, ServicePackage
 from ..timeutils import utc_iso, utc_now, vietnam_today
 
+CACHE_SECONDS = 15
+_active_alerts_cache = {}
+_active_alerts_cache_lock = threading.Lock()
+
 
 def _active_alerts(db: Session, expiring_days: int = 14, pt_sessions: int = 3, include_financial: bool = True):
+    cache_key = ("active_alerts", expiring_days, pt_sessions, bool(include_financial), vietnam_today())
+    if settings.environment != "test":
+        now = time.monotonic()
+        with _active_alerts_cache_lock:
+            cached = _active_alerts_cache.get(cache_key)
+            if cached and cached[0] > now:
+                return deepcopy(cached[1])
+    items = _active_alerts_uncached(db, expiring_days, pt_sessions, include_financial)
+    if settings.environment != "test":
+        with _active_alerts_cache_lock:
+            _active_alerts_cache[cache_key] = (time.monotonic() + CACHE_SECONDS, deepcopy(items))
+    return items
+
+
+def _active_alerts_uncached(db: Session, expiring_days: int = 14, pt_sessions: int = 3, include_financial: bool = True):
     today = vietnam_today()
     soon = today + timedelta(days=expiring_days)
     items = []
-    overdue = db.query(Membership).options(
+    membership_conditions = [
+        (
+            Membership.expires_at != None,
+            Membership.expires_at < today,
+            Membership.status.in_(("active", "expired")),
+        ),
+        (
+            Membership.expires_at != None,
+            Membership.expires_at >= today,
+            Membership.expires_at <= soon,
+            Membership.status == "active",
+        ),
+    ]
+    if include_financial:
+        membership_conditions.append((
+            Membership.debt_amount > 0,
+            Membership.debt_due_date != None,
+            Membership.debt_due_date < today,
+            Membership.status.in_(("active", "pending")),
+        ))
+    membership_rows = db.query(Membership).options(
         joinedload(Membership.customer).joinedload(Customer.person),
         joinedload(Membership.package),
     ).join(Membership.package).filter(
         ServicePackage.is_pt == False,
-        Membership.debt_amount > 0,
-        Membership.debt_due_date != None,
-        Membership.debt_due_date < today,
-        Membership.status.in_(("active", "pending")),
-    ).all() if include_financial else []
-    for row in overdue:
-        days = (today - row.debt_due_date).days
-        items.append({
-            "id": f"debt-{row.id}-{row.debt_due_date.isoformat()}", "type": "overdue_debt", "severity": "error",
-            "memberId": row.customer_id, "memberName": row.customer.person.display_name,
-            "title": f"Nợ quá hạn {days} ngày",
-            "description": f"{row.package.name} · {row.debt_amount:,.0f} ₫ · hạn {row.debt_due_date.strftime('%d/%m/%Y')}",
-            "sortDate": row.debt_due_date.isoformat(),
-            "sortRank": row.debt_due_date.toordinal(),
-        })
-    expired = db.query(Membership).options(
-        joinedload(Membership.customer).joinedload(Customer.person),
-        joinedload(Membership.package),
-    ).join(Membership.package).filter(
-        ServicePackage.is_pt == False,
-        Membership.expires_at != None,
-        Membership.expires_at < today,
-        Membership.status.in_(("active", "expired")),
+        or_(*[and_(*condition) for condition in membership_conditions]),
     ).all()
-    for row in expired:
-        days = (today - row.expires_at).days
-        items.append({
-            "id": f"expired-{row.id}-{row.expires_at.isoformat()}", "type": "membership_expired", "severity": "error",
-            "memberId": row.customer_id, "memberName": row.customer.person.display_name,
-            "title": "Gói đã hết hạn hôm qua" if days == 1 else f"Gói đã hết hạn {days} ngày",
-            "description": f"{row.package.name} · hết hạn {row.expires_at.strftime('%d/%m/%Y')}",
-            "sortDate": row.expires_at.isoformat(),
-            "sortRank": -row.expires_at.toordinal(),
-        })
-    expiring = db.query(Membership).options(
-        joinedload(Membership.customer).joinedload(Customer.person),
-        joinedload(Membership.package),
-    ).join(Membership.package).filter(
-        ServicePackage.is_pt == False,
-        Membership.status == "active",
-        Membership.expires_at >= today,
-        Membership.expires_at <= soon,
-    ).all()
-    for row in expiring:
-        days = (row.expires_at - today).days
-        items.append({
-            "id": f"expiry-{row.id}-{row.expires_at.isoformat()}", "type": "membership_expiring", "severity": "warning",
-            "memberId": row.customer_id, "memberName": row.customer.person.display_name,
-            "title": "Gói hết hạn hôm nay" if days == 0 else f"Gói hết hạn sau {days} ngày",
-            "description": f"{row.package.name} · đến {row.expires_at.strftime('%d/%m/%Y')}",
-            "sortDate": row.expires_at.isoformat(),
-            "sortRank": row.expires_at.toordinal(),
-        })
+    for row in membership_rows:
+        if (
+            include_financial
+            and row.debt_amount
+            and row.debt_amount > 0
+            and row.debt_due_date
+            and row.debt_due_date < today
+            and row.status in ("active", "pending")
+        ):
+            days = (today - row.debt_due_date).days
+            items.append({
+                "id": f"debt-{row.id}-{row.debt_due_date.isoformat()}", "type": "overdue_debt", "severity": "error",
+                "memberId": row.customer_id, "memberName": row.customer.person.display_name,
+                "title": f"Nợ quá hạn {days} ngày",
+                "description": f"{row.package.name} · {row.debt_amount:,.0f} ₫ · hạn {row.debt_due_date.strftime('%d/%m/%Y')}",
+                "sortDate": row.debt_due_date.isoformat(),
+                "sortRank": row.debt_due_date.toordinal(),
+            })
+        if row.expires_at and row.expires_at < today and row.status in ("active", "expired"):
+            days = (today - row.expires_at).days
+            items.append({
+                "id": f"expired-{row.id}-{row.expires_at.isoformat()}", "type": "membership_expired", "severity": "error",
+                "memberId": row.customer_id, "memberName": row.customer.person.display_name,
+                "title": "Gói đã hết hạn hôm qua" if days == 1 else f"Gói đã hết hạn {days} ngày",
+                "description": f"{row.package.name} · hết hạn {row.expires_at.strftime('%d/%m/%Y')}",
+                "sortDate": row.expires_at.isoformat(),
+                "sortRank": -row.expires_at.toordinal(),
+            })
+        if row.expires_at and today <= row.expires_at <= soon and row.status == "active":
+            days = (row.expires_at - today).days
+            items.append({
+                "id": f"expiry-{row.id}-{row.expires_at.isoformat()}", "type": "membership_expiring", "severity": "warning",
+                "memberId": row.customer_id, "memberName": row.customer.person.display_name,
+                "title": "Gói hết hạn hôm nay" if days == 0 else f"Gói hết hạn sau {days} ngày",
+                "description": f"{row.package.name} · đến {row.expires_at.strftime('%d/%m/%Y')}",
+                "sortDate": row.expires_at.isoformat(),
+                "sortRank": row.expires_at.toordinal(),
+            })
     pt_rows = db.query(PtEnrollment).options(
         joinedload(PtEnrollment.customer).joinedload(Customer.person),
         joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),

@@ -1,11 +1,19 @@
+from copy import deepcopy
 from datetime import date, datetime, timedelta
+import threading
+import time
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from ..config import settings
 from ..models import AttendanceSession, Customer, DayPassVisit, Employee, Membership, Payment, ServicePackage
 from ..timeutils import attendance_vietnam_datetime, utc_iso, utc_now, utc_vietnam_date, vietnam_day_utc_bounds, vietnam_today
+
+CACHE_SECONDS = 15
+_dashboard_cache = {}
+_dashboard_cache_lock = threading.Lock()
 
 
 def _attendance_iso(value, source: str | None):
@@ -79,6 +87,21 @@ def _attendance_range_filter(start: date, end: date):
 
 
 def dashboard(db: Session, include_financial: bool = True):
+    cache_key = ("dashboard", bool(include_financial), vietnam_today())
+    if settings.environment != "test":
+        now = time.monotonic()
+        with _dashboard_cache_lock:
+            cached = _dashboard_cache.get(cache_key)
+            if cached and cached[0] > now:
+                return deepcopy(cached[1])
+    result = _dashboard_uncached(db, include_financial)
+    if settings.environment != "test":
+        with _dashboard_cache_lock:
+            _dashboard_cache[cache_key] = (time.monotonic() + CACHE_SECONDS, deepcopy(result))
+    return result
+
+
+def _dashboard_uncached(db: Session, include_financial: bool = True):
     today = vietnam_today()
     yesterday = today - timedelta(days=1)
     month_start = today.replace(day=1)
@@ -114,7 +137,7 @@ def dashboard(db: Session, include_financial: bool = True):
             "previousCheckins": attendance_counts.get(previous_day.isoformat(), 0),
         })
 
-    memberships = db.query(Membership).options(joinedload(Membership.package)).join(Membership.package).filter(ServicePackage.is_pt == False).all()
+    memberships = db.query(Membership.status, Membership.expires_at).join(Membership.package).filter(ServicePackage.is_pt == False).all()
     health = {
         "activeStable": 0,
         "expiring7": 0,
@@ -150,37 +173,40 @@ def dashboard(db: Session, include_financial: bool = True):
     expiring = health["expiring7"] + health["expiring8To14"]
     today_start, today_end = vietnam_day_utc_bounds(today)
     month_start_dt, month_end_dt = vietnam_day_utc_bounds(month_start, today)
-    revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at < today_end)) + _day_pass_sum(db, today_start, today_end)
-    revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at < month_end_dt)) + _day_pass_sum(db, month_start_dt, month_end_dt)
-    previous_start_dt, previous_end_dt = vietnam_day_utc_bounds(previous_month_start, previous_mtd_end - timedelta(days=1))
-    revenue_previous_mtd = _sum(db.query(func.sum(Payment.amount)).filter(
-        Payment.paid_at >= previous_start_dt,
-        Payment.paid_at < previous_end_dt,
-    )) + _day_pass_sum(db, previous_start_dt, previous_end_dt)
-    debt = _sum(db.query(func.sum(Membership.debt_amount)))
-    overdue_debt = _sum(db.query(func.sum(Membership.debt_amount)).filter(
-        Membership.debt_amount > 0,
-        Membership.debt_due_date != None,
-        Membership.debt_due_date < today,
-    ))
+    revenue_today = revenue_month = revenue_previous_mtd = debt = overdue_debt = 0
+    debt_aging = None
+    if include_financial:
+        revenue_today = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= today_start, Payment.paid_at < today_end)) + _day_pass_sum(db, today_start, today_end)
+        revenue_month = _sum(db.query(func.sum(Payment.amount)).filter(Payment.paid_at >= month_start_dt, Payment.paid_at < month_end_dt)) + _day_pass_sum(db, month_start_dt, month_end_dt)
+        previous_start_dt, previous_end_dt = vietnam_day_utc_bounds(previous_month_start, previous_mtd_end - timedelta(days=1))
+        revenue_previous_mtd = _sum(db.query(func.sum(Payment.amount)).filter(
+            Payment.paid_at >= previous_start_dt,
+            Payment.paid_at < previous_end_dt,
+        )) + _day_pass_sum(db, previous_start_dt, previous_end_dt)
+        debt = _sum(db.query(func.sum(Membership.debt_amount)))
+        overdue_debt = _sum(db.query(func.sum(Membership.debt_amount)).filter(
+            Membership.debt_amount > 0,
+            Membership.debt_due_date != None,
+            Membership.debt_due_date < today,
+        ))
 
-    debt_aging = {
-        "notDue": {"count": 0, "amount": 0},
-        "days1To7": {"count": 0, "amount": 0},
-        "days8To30": {"count": 0, "amount": 0},
-        "over30": {"count": 0, "amount": 0},
-        "noDueDate": {"count": 0, "amount": 0},
-    }
-    for amount, due_date in db.query(Membership.debt_amount, Membership.debt_due_date).filter(Membership.debt_amount > 0):
-        if not due_date:
-            bucket = "noDueDate"
-        elif due_date >= today:
-            bucket = "notDue"
-        else:
-            overdue_days = (today - due_date).days
-            bucket = "days1To7" if overdue_days <= 7 else "days8To30" if overdue_days <= 30 else "over30"
-        debt_aging[bucket]["count"] += 1
-        debt_aging[bucket]["amount"] += float(amount or 0)
+        debt_aging = {
+            "notDue": {"count": 0, "amount": 0},
+            "days1To7": {"count": 0, "amount": 0},
+            "days8To30": {"count": 0, "amount": 0},
+            "over30": {"count": 0, "amount": 0},
+            "noDueDate": {"count": 0, "amount": 0},
+        }
+        for amount, due_date in db.query(Membership.debt_amount, Membership.debt_due_date).filter(Membership.debt_amount > 0):
+            if not due_date:
+                bucket = "noDueDate"
+            elif due_date >= today:
+                bucket = "notDue"
+            else:
+                overdue_days = (today - due_date).days
+                bucket = "days1To7" if overdue_days <= 7 else "days8To30" if overdue_days <= 30 else "over30"
+            debt_aging[bucket]["count"] += 1
+            debt_aging[bucket]["amount"] += float(amount or 0)
 
     attention_candidates = db.query(Membership).options(
         joinedload(Membership.customer).joinedload(Customer.person),
@@ -191,14 +217,12 @@ def dashboard(db: Session, include_financial: bool = True):
     ).join(Membership.package).filter(
         ServicePackage.is_pt == False,
         Membership.status.in_(("active", "pending", "expired")),
-        or_(
-            Membership.debt_amount > 0,
-            Membership.expires_at.between(recent_expiry_start, soon_14),
-        ),
+        or_(Membership.debt_amount > 0, Membership.expires_at.between(recent_expiry_start, soon_14))
+        if include_financial else Membership.expires_at.between(recent_expiry_start, soon_14),
     ).all()
 
     def attention_priority(row):
-        if row.debt_amount and row.debt_amount > 0 and row.debt_due_date and row.debt_due_date < today:
+        if include_financial and row.debt_amount and row.debt_amount > 0 and row.debt_due_date and row.debt_due_date < today:
             return (0, row.debt_due_date.toordinal(), -row.id)
         if row.expires_at and row.expires_at < today:
             return (1, -row.expires_at.toordinal(), -row.id)
@@ -220,7 +244,7 @@ def dashboard(db: Session, include_financial: bool = True):
 
     attention = []
     for row in attention_rows:
-        if row.debt_amount and row.debt_amount > 0 and row.debt_due_date and row.debt_due_date < today:
+        if include_financial and row.debt_amount and row.debt_amount > 0 and row.debt_due_date and row.debt_due_date < today:
             age_days = (today - row.debt_due_date).days
             issue_type, issue, priority = "overdue_debt", "Nợ quá hạn", "critical"
             timing = f"Quá hạn {age_days} ngày"
@@ -240,11 +264,13 @@ def dashboard(db: Session, include_financial: bool = True):
             timing = "Hết hạn hôm nay" if days_left == 0 else f"Còn {days_left} ngày"
             value = None
             action_label = "Gia hạn"
-        else:
+        elif include_financial:
             issue_type, issue, priority = "debt", "Còn công nợ", "medium"
             timing = f"Hạn {row.debt_due_date.strftime('%d/%m/%Y')}" if row.debt_due_date else "Chưa có hạn thu"
             value = float(row.debt_amount or 0)
             action_label = "Thu tiền"
+        else:
+            continue
         attention.append({
             "id": f"{issue_type}-{row.id}",
             "memberId": row.customer_id,
@@ -283,7 +309,6 @@ def dashboard(db: Session, include_financial: bool = True):
         "activity": activity,
         "membershipStatus": status_counts,
         "membershipHealth": {**health, "totalContracts": len(memberships)},
-        "financialHealth": {"debtAging": debt_aging},
         "attention": attention,
         "recentCheckins": [{
             "id": r.id,
@@ -294,11 +319,11 @@ def dashboard(db: Session, include_financial: bool = True):
             "status": r.status,
         } for r in recent],
     }
-    if not include_financial:
+    if include_financial:
+        result["financialHealth"] = {"debtAging": debt_aging}
+    else:
         for key in ("revenueToday", "revenueMonth", "revenuePreviousMtd", "outstanding", "overdueDebt"):
             result["metrics"].pop(key, None)
-        result.pop("financialHealth", None)
-        result["attention"] = [item for item in result["attention"] if item["issueType"] not in {"debt", "overdue_debt"}]
     return result
 
 
