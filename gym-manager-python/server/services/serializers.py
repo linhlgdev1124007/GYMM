@@ -271,6 +271,8 @@ def pt_data(enrollment):
         "member": {
             "id": enrollment.customer.id,
             "code": enrollment.customer.customer_code,
+            "personUuid": enrollment.customer.person_uuid,
+            "avatarImageData": enrollment.customer.avatar_image_data,
             **person_data(enrollment.customer.person),
         } if getattr(enrollment, "customer", None) else None,
         "coach": coaches[0] if coaches else None,

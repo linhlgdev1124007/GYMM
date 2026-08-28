@@ -14,7 +14,7 @@ import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { TrainingForm } from "../../components/forms/TrainingForm";
-import { formatPhone, money, shortDate } from "../../utils/format";
+import { formatPhone, initials, money, shortDate } from "../../utils/format";
 import { useAuth } from "../../app/AuthContext";
 
 export function TrainingPage() {
@@ -108,14 +108,26 @@ export function TrainingPage() {
       render: (row) => (
         <Link
           to={`/members/${row.memberId}`}
-          className="cell-primary hover:underline"
+          className="flex items-center gap-3 text-left hover:underline"
         >
-          {row.member.name}
-          <div className="cell-secondary">
-            {row.member.code} · {formatPhone(row.member.phone)}
-          </div>
-          <div className="cell-secondary">
-            {row.type} · {row.packageName || "Gói PT"}
+          <span
+            className="avatar avatar-md"
+            title={row.member.personUuid ? "Đã có Face ID" : "Chưa có Face ID"}
+          >
+            {row.member.avatarImageData ? (
+              <img src={row.member.avatarImageData} alt={`Ảnh ${row.member.name}`} />
+            ) : (
+              initials(row.member.name)
+            )}
+          </span>
+          <div className="min-w-0">
+            <span className="cell-primary block">{row.member.name}</span>
+            <div className="cell-secondary">
+              {row.member.code} · {formatPhone(row.member.phone)}
+            </div>
+            <div className="cell-secondary">
+              {row.type} · {row.packageName || "Gói PT"}
+            </div>
           </div>
         </Link>
       ),
