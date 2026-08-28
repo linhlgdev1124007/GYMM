@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, aliased, joinedload, load_only
 from ..database import ROOT_DIR
 from ..models import (
     AttendanceSession, BankAccount, Customer, DahCustomerIdentity, DahWebhookEvent, Employee, EmployeeJobTitle, Membership,
-    MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtEnrollment, PtEnrollmentCoach, PtSessionLog, ServicePackage, User, DayPassVisit,
+    MembershipEvent, MembershipFreeze, Payment, PaymentReceipt, Person, PtDebtInstallment, PtEnrollment, PtEnrollmentCoach, PtSessionLog, ServicePackage, User, DayPassVisit,
 )
 from .audit_service import member_audit_logs, record_audit
 from .day_passes_service import mark_converted_day_pass
@@ -522,6 +522,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     trainers = {}
     active_training = {}
     pt_debt_amounts = {}
+    pt_debt_due_dates = {}
     if ids:
         latest_checkins = (
             db.query(
@@ -563,6 +564,14 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             PtEnrollment.debt_amount > 0,
         ).group_by(PtEnrollment.customer_id):
             pt_debt_amounts[customer_id] = float(debt_amount or 0)
+        for customer_id, due_date in db.query(
+            PtEnrollment.customer_id,
+            func.min(PtDebtInstallment.due_date),
+        ).join(PtDebtInstallment).filter(
+            PtEnrollment.customer_id.in_(ids),
+            PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
+        ).group_by(PtEnrollment.customer_id):
+            pt_debt_due_dates[customer_id] = due_date.isoformat() if due_date else None
     items = []
     for member in rows:
         regular = [m for m in member.memberships if not m.package.is_pt]
@@ -581,6 +590,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             "trainers": trainers.get(member.id, []),
             "ptGroup": active_training.get(member.id).group_type if active_training.get(member.id) else None,
             "ptDebtAmount": pt_debt_amounts.get(member.id, 0),
+            "ptDebtDueDate": pt_debt_due_dates.get(member.id),
             "activeTraining": pt_data(active_training[member.id]) if member.id in active_training else None,
             "membership": membership_data(current) if current else None,
             "lastCheckin": last_checkins.get(member.id),

@@ -945,6 +945,7 @@ def test_pt_finance_tracks_debt_separately_from_membership_debt(tmp_path):
         )
         assert member_rows["items"][0]["id"] == member.id
         assert member_rows["items"][0]["ptDebtAmount"] == 600_000
+        assert member_rows["items"][0]["ptDebtDueDate"] == "2026-09-01"
         assert member_rows["items"][0]["membership"] is None
     finally:
         db.close()

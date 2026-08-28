@@ -143,10 +143,22 @@ function memberDebtLines(row) {
       key: "pt",
       label: "PT",
       amount: ptDebt,
+      dueDate: row.ptDebtDueDate,
       action: "training",
     });
   }
   return lines;
+}
+
+function dueDateState(value) {
+  if (!value) return { text: "+ Đặt hạn", overdue: false, missing: true };
+  const overdue = new Date(`${value}T23:59:59`) < new Date();
+  return {
+    text: shortDate(value),
+    detail: overdue ? "Quá hạn" : "Chưa đến hạn",
+    overdue,
+    missing: false,
+  };
 }
 
 function membershipPricingFor(draft = {}) {
@@ -533,40 +545,49 @@ export function MembersPage() {
         key: "debtDueDate",
         label: "Hạn thanh toán",
         className: "max-[640px]:hidden",
-        sortValue: (row) => row.membership?.debtDueDate || "",
+        sortValue: (row) =>
+          memberDebtLines(row)
+            .map((line) => line.dueDate || "9999-12-31")
+            .sort()[0] || "",
         render: (row) => {
-          if (!row.membership?.debtAmount) return "—";
-          if (!row.membership.debtDueDate)
-            return (
-              <button
-                className="font-medium text-blue-700 hover:underline"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openMember(row, "deadline");
-                }}
-              >
-                + Đặt hạn
-              </button>
-            );
-          const overdue =
-            new Date(`${row.membership.debtDueDate}T23:59:59`) < new Date();
+          const debtLines = memberDebtLines(row);
+          if (!debtLines.length) return "—";
           return (
-            <button
-              className="text-left hover:underline"
-              onClick={(event) => {
-                event.stopPropagation();
-                openMember(row, "deadline");
-              }}
-            >
-              <span className={overdue ? "font-medium text-red-700" : ""}>
-                {shortDate(row.membership.debtDueDate)}
-              </span>
-              <div
-                className={`cell-secondary ${overdue ? "!text-red-600" : ""}`}
-              >
-                {overdue ? "Quá hạn · Đổi hạn" : "Chưa đến hạn · Đổi hạn"}
-              </div>
-            </button>
+            <div className="flex flex-col items-start gap-1">
+              {debtLines.map((line) => {
+                const due = dueDateState(line.dueDate);
+                return (
+                  <button
+                    key={line.key}
+                    className="text-left text-xs hover:underline"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openMember(row, line.key === "membership" ? "deadline" : "training");
+                    }}
+                  >
+                    <span
+                      className={
+                        due.overdue || due.missing
+                          ? "font-medium text-red-700"
+                          : "font-medium text-slate-900"
+                      }
+                    >
+                      {line.label}: {due.text}
+                    </span>
+                    {!due.missing && (
+                      <span
+                        className={`cell-secondary block ${
+                          due.overdue ? "!text-red-600" : ""
+                        }`}
+                      >
+                        {due.detail}
+                        {line.key === "membership" ? " · Đổi hạn" : ""}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           );
         },
       },
@@ -708,7 +729,7 @@ export function MembersPage() {
           row.salesEmployee?.name || "",
           row.membership?.package.name || "",
           memberDebtLines(row).map((line) => `${line.label}: ${line.amount}`).join("; ") || 0,
-          row.membership?.debtDueDate || "",
+          memberDebtLines(row).map((line) => `${line.label}: ${line.dueDate || ""}`).join("; "),
           row.ptGroup || "",
           row.status,
         ]
