@@ -428,6 +428,10 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     status_membership = aliased(Membership)
     def current_status_exists(*conditions):
         return db.query(status_membership.id).filter(status_membership.id == current_regular_id, *conditions).exists()
+    pt_debt_exists = db.query(PtEnrollment.id).filter(
+        PtEnrollment.customer_id == Customer.id,
+        PtEnrollment.debt_amount > 0,
+    ).exists()
     cancelled_member = Customer.status == "cancelled"
     if view == "cancelled" or member_status == "cancelled":
         query = query.filter(cancelled_member)
@@ -452,13 +456,13 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             status_membership.debt_due_date <= today + timedelta(days=overdue_days),
         ))
     elif payment_status == "debt":
-        query = query.filter(current_status_exists(status_membership.debt_amount > 0))
+        query = query.filter(or_(current_status_exists(status_membership.debt_amount > 0), pt_debt_exists))
     if view == "active":
         query = query.filter(current_status_exists(status_membership.status == "active", or_(status_membership.expires_at == None, status_membership.expires_at >= today)))
     elif view == "expiring":
         query = query.filter(current_status_exists(status_membership.status == "active", status_membership.expires_at >= today, status_membership.expires_at <= today + timedelta(days=14)))
     elif view == "debt":
-        query = query.filter(current_status_exists(status_membership.debt_amount > 0))
+        query = query.filter(or_(current_status_exists(status_membership.debt_amount > 0), pt_debt_exists))
     elif view == "no_pt":
         query = query.filter(~db.query(PtEnrollment.id).filter(PtEnrollment.customer_id == Customer.id, PtEnrollment.status == "active").exists())
     if package_id:
@@ -517,6 +521,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     last_checkins = {}
     trainers = {}
     active_training = {}
+    pt_debt_amounts = {}
     if ids:
         latest_checkins = (
             db.query(
@@ -550,6 +555,14 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
                     continue
                 if not any(item["id"] == assignment.coach.id for item in assigned):
                     assigned.append({"id": assignment.coach.id, "name": assignment.coach.person.display_name})
+        for customer_id, debt_amount in db.query(
+            PtEnrollment.customer_id,
+            func.coalesce(func.sum(PtEnrollment.debt_amount), 0),
+        ).filter(
+            PtEnrollment.customer_id.in_(ids),
+            PtEnrollment.debt_amount > 0,
+        ).group_by(PtEnrollment.customer_id):
+            pt_debt_amounts[customer_id] = float(debt_amount or 0)
     items = []
     for member in rows:
         regular = [m for m in member.memberships if not m.package.is_pt]
@@ -567,6 +580,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
             "trainer": (trainers.get(member.id) or [None])[0],
             "trainers": trainers.get(member.id, []),
             "ptGroup": active_training.get(member.id).group_type if active_training.get(member.id) else None,
+            "ptDebtAmount": pt_debt_amounts.get(member.id, 0),
             "activeTraining": pt_data(active_training[member.id]) if member.id in active_training else None,
             "membership": membership_data(current) if current else None,
             "lastCheckin": last_checkins.get(member.id),

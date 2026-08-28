@@ -870,6 +870,7 @@ def test_coach_can_only_update_assigned_pt_operational_fields(tmp_path):
 def test_pt_finance_tracks_debt_separately_from_membership_debt(tmp_path):
     from server.models import Customer, Payment, Person, PtDebtInstallment
     from server.services.dashboard_service import reports
+    from server.services.members_service import list_members
     from server.services.operations_service import create_pt
 
     db = make_session(tmp_path)
@@ -932,6 +933,19 @@ def test_pt_finance_tracks_debt_separately_from_membership_debt(tmp_path):
         assert report["daily"][0]["membershipAmount"] == 0
         assert report["revenueItems"][0]["type"] == "pt"
         assert report["revenueItems"][0]["ptEnrollmentId"] == data["id"]
+
+        member_rows = list_members(
+            db,
+            q="",
+            member_status="all",
+            view="debt",
+            payment_status="debt",
+            page=1,
+            page_size=20,
+        )
+        assert member_rows["items"][0]["id"] == member.id
+        assert member_rows["items"][0]["ptDebtAmount"] == 600_000
+        assert member_rows["items"][0]["membership"] is None
     finally:
         db.close()
 

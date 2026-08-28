@@ -125,6 +125,30 @@ function groupedPlanOptions(plans = []) {
 
 const toMoneyNumber = (value) => Math.max(Number(value || 0), 0);
 
+function memberDebtLines(row) {
+  const lines = [];
+  const membershipDebt = Number(row.membership?.debtAmount || 0);
+  const ptDebt = Number(row.ptDebtAmount || 0);
+  if (membershipDebt > 0) {
+    lines.push({
+      key: "membership",
+      label: "Gói",
+      amount: membershipDebt,
+      dueDate: row.membership?.debtDueDate,
+      action: "payment",
+    });
+  }
+  if (ptDebt > 0) {
+    lines.push({
+      key: "pt",
+      label: "PT",
+      amount: ptDebt,
+      action: "training",
+    });
+  }
+  return lines;
+}
+
 function membershipPricingFor(draft = {}) {
   const basePrice = toMoneyNumber(draft.basePrice);
   const surchargeAmount = toMoneyNumber(draft.surchargeAmount);
@@ -475,28 +499,35 @@ export function MembersPage() {
         key: "debt",
         label: "Công nợ",
         className: "text-right",
-        sortValue: (row) => row.membership?.debtAmount || 0,
-        render: (row) =>
-          row.membership?.debtAmount ? (
-            <div>
-              <button
-                className="font-medium text-red-700 hover:underline"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openMember(row, "payment");
-                }}
-              >
-                {money(row.membership.debtAmount)}
-              </button>
-              <div className="cell-secondary hidden max-[640px]:block">
-                Hạn {shortDate(row.membership.debtDueDate)}
-              </div>
+        sortValue: (row) =>
+          Number(row.membership?.debtAmount || 0) + Number(row.ptDebtAmount || 0),
+        render: (row) => {
+          const debtLines = memberDebtLines(row);
+          if (!debtLines.length) {
+            return canOperate ? "—" : <span className="text-slate-400">—</span>;
+          }
+          return (
+            <div className="flex flex-col items-end gap-1">
+              {debtLines.map((line) => (
+                <button
+                  key={line.key}
+                  className="text-right text-xs font-medium text-red-700 hover:underline"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openMember(row, line.action);
+                  }}
+                >
+                  {line.label}: {money(line.amount)}
+                  {line.dueDate && (
+                    <span className="cell-secondary block max-[640px]:hidden">
+                      Hạn {shortDate(line.dueDate)}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
-          ) : canOperate ? (
-            "—"
-          ) : (
-            <span className="text-slate-400">—</span>
-          ),
+          );
+        },
       },
       {
         key: "debtDueDate",
@@ -676,7 +707,7 @@ export function MembersPage() {
           row.phone || "",
           row.salesEmployee?.name || "",
           row.membership?.package.name || "",
-          row.membership?.debtAmount || 0,
+          memberDebtLines(row).map((line) => `${line.label}: ${line.amount}`).join("; ") || 0,
           row.membership?.debtDueDate || "",
           row.ptGroup || "",
           row.status,
