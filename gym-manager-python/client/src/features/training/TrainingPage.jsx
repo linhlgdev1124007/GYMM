@@ -115,7 +115,7 @@ export function TrainingPage() {
             {row.member.code} · {formatPhone(row.member.phone)}
           </div>
           <div className="cell-secondary">
-            {row.packageName || "Chưa đặt tên gói"} · {row.type}
+            {row.type} · {row.packageName || "Gói PT"}
           </div>
         </Link>
       ),

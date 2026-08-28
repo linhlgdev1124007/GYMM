@@ -331,6 +331,14 @@ function CopyValueButton({ value, label }) {
   );
 }
 
+function ptPackageLabel(row) {
+  return row?.type || "PT";
+}
+
+function ptPackageMeta(row) {
+  return row?.packageName || "Gói PT";
+}
+
 export function MemberDetailPage() {
   const { memberId } = useParams();
   const navigate = useNavigate();
@@ -875,11 +883,11 @@ export function MemberDetailPage() {
   const trainingColumns = [
     {
       key: "packageName",
-      label: "Gói PT/BT",
+      label: "Gói PT",
       render: (r) => (
         <span>
-          {r.packageName || "Chưa đặt tên gói"}
-          <small className="cell-secondary block">{r.type}</small>
+          {ptPackageLabel(r)}
+          <small className="cell-secondary block">{ptPackageMeta(r)}</small>
         </span>
       ),
     },
@@ -1176,10 +1184,10 @@ export function MemberDetailPage() {
                         {activeTraining ? (
                           <>
                             <strong>
-                              {activeTraining.packageName || "Chưa đặt tên gói"}
+                              {ptPackageLabel(activeTraining)}
                             </strong>
                             <span className="cell-secondary mt-0.5 block">
-                              {activeTraining.type} ·{" "}
+                              {ptPackageMeta(activeTraining)} ·{" "}
                               {activeTrainingCoaches
                                 .map((coach) => coach.name)
                                 .join(", ") || "Chưa phân Coach"}
@@ -1595,10 +1603,10 @@ export function MemberDetailPage() {
                     render: (row) => (
                       <div>
                         <span className="cell-primary">
-                          {row.packageName || "Chưa đặt tên gói"}
+                          {ptPackageLabel(row)}
                         </span>
                         <div className="cell-secondary">
-                          {row.type} ·{" "}
+                          {ptPackageMeta(row)} ·{" "}
                           {row.coaches.map((coach) => coach.name).join(", ") ||
                             "Chưa phân Coach"}
                         </div>
