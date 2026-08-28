@@ -172,6 +172,20 @@ export function MemberQuickDrawer({
   const displayStatus = current?.status || member?.status;
   const training = member?.training.find((row) => row.status === "active");
   const trainingCoaches = training?.coaches || [];
+  const membershipDebtAmount = Number(current?.debtAmount || 0);
+  const trainingDebtAmount = (member?.training || []).reduce(
+    (sum, row) => sum + Number(row.debtAmount || 0),
+    0,
+  );
+  const debtLines = [
+    ...(membershipDebtAmount > 0
+      ? [{ key: "membership", label: "Gói", amount: membershipDebtAmount }]
+      : []),
+    ...(trainingDebtAmount > 0
+      ? [{ key: "pt", label: "PT", amount: trainingDebtAmount }]
+      : []),
+  ];
+  const totalDebtAmount = membershipDebtAmount + trainingDebtAmount;
   const lastCheckin = member?.checkins[0];
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
@@ -290,9 +304,11 @@ export function MemberQuickDrawer({
               <button
                 className="quick-action"
                 onClick={() =>
-                  current?.debtAmount
+                  membershipDebtAmount > 0
                     ? openDialog("payment")
-                    : notify.info("Hội viên hiện không có công nợ.")
+                    : trainingDebtAmount > 0
+                      ? openDialog("training")
+                      : notify.info("Hội viên hiện không có công nợ.")
                 }
               >
                 <CreditCard size={17} />
@@ -335,13 +351,18 @@ export function MemberQuickDrawer({
                   {canFinancial && <button onClick={() => openDialog("renew")}>Gia hạn</button>}
                 </div>
               )}
-              {current?.debtAmount > 0 && (
+              {totalDebtAmount > 0 && (
                 <div className="detail-alert debt">
                   <span className="flex items-center gap-2">
                     <TriangleAlert size={15} />
-                    Công nợ {money(current.debtAmount)}
+                    Công nợ{" "}
+                    {debtLines.map((line) => (
+                      <span key={line.key} className="font-semibold">
+                        {line.label}: {money(line.amount)}
+                      </span>
+                    ))}
                   </span>
-                  {canFinancial && <button onClick={() => openDialog("payment")}>
+                  {canFinancial && <button onClick={() => membershipDebtAmount > 0 ? openDialog("payment") : openDialog("training")}>
                     Thu tiền
                   </button>}
                 </div>
@@ -401,13 +422,23 @@ export function MemberQuickDrawer({
                       <dt>Công nợ</dt>
                       <dd
                         className={
-                          current.debtAmount
+                          totalDebtAmount
                             ? "font-medium text-red-700"
                             : "text-emerald-700"
                         }
                       >
-                        {money(current.debtAmount)}
-                        {canFinancial && current.debtAmount > 0 && (
+                        {debtLines.length > 0 ? (
+                          <span className="inline-flex flex-col gap-0.5">
+                            {debtLines.map((line) => (
+                              <span key={line.key}>
+                                {line.label}: {money(line.amount)}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          money(0)
+                        )}
+                        {canFinancial && membershipDebtAmount > 0 && (
                           <button
                             className="ml-3 text-xs font-medium text-blue-700"
                             onClick={() => openDialog("payment")}
