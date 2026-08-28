@@ -579,6 +579,36 @@ export function MemberDetailPage() {
   const activeTraining = member.training.find((row) => row.status === "active");
   const canEditPt = canFinancial || (user.role === "coach" && !!activeTraining);
   const activeTrainingCoaches = activeTraining?.coaches || [];
+  const ptFinanceSummary = member.training.reduce(
+    (summary, row) => ({
+      finalPrice: summary.finalPrice + Number(row.finalPrice || 0),
+      paidAmount: summary.paidAmount + Number(row.paidAmount || 0),
+      debtAmount: summary.debtAmount + Number(row.debtAmount || 0),
+      remainingSessions:
+        summary.remainingSessions + Number(row.remainingSessions || 0),
+      totalSessions: summary.totalSessions + Number(row.totalSessions || 0),
+    }),
+    {
+      finalPrice: 0,
+      paidAmount: 0,
+      debtAmount: 0,
+      remainingSessions: 0,
+      totalSessions: 0,
+    },
+  );
+  const ptDebtRows = member.training.flatMap((enrollment) =>
+    (enrollment.debtInstallments || []).map((installment) => ({
+      ...installment,
+      enrollmentId: enrollment.id,
+      packageName: enrollment.packageName,
+      type: enrollment.type,
+      coaches: enrollment.coaches || [],
+    })),
+  );
+  const nextPtDebtDueDate = ptDebtRows
+    .filter((row) => Number(row.remainingAmount || 0) > 0 && row.dueDate)
+    .sort((left, right) => left.dueDate.localeCompare(right.dueDate))[0]
+    ?.dueDate;
   const lastCheckin = member.checkins[0];
   const daysLeft = current?.expiresAt
     ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
@@ -1059,7 +1089,24 @@ export function MemberDetailPage() {
             <div>
               <dt>Nhóm PT</dt>
               <dd>{activeTraining?.type || "Chưa đăng ký PT"}</dd>
-              <small>{activeTraining ? "Gói PT hiện tại" : "Không có lịch tập"}</small>
+              <small>
+                {activeTraining
+                  ? `${activeTraining.remainingSessions}/${activeTraining.totalSessions} buổi còn lại`
+                  : "Không có lịch tập"}
+              </small>
+            </div>
+            <div className={ptFinanceSummary.debtAmount ? "has-issue" : ""}>
+              <dt>Công nợ PT</dt>
+              <dd>
+                {member.training.length
+                  ? money(ptFinanceSummary.debtAmount)
+                  : "Chưa có gói PT"}
+              </dd>
+              <small>
+                {member.training.length
+                  ? `${money(ptFinanceSummary.paidAmount)} đã thu / ${money(ptFinanceSummary.finalPrice)}`
+                  : "Không phát sinh công nợ PT"}
+              </small>
             </div>
           </dl>
         </div>
@@ -1104,6 +1151,101 @@ export function MemberDetailPage() {
                 ) : <div className="compact-empty"><Dumbbell size={19} /><div><strong>Chưa có đăng ký PT</strong><p>Hội viên chưa có lịch PT đang hoạt động.</p></div></div>}
               </section>
             )}
+            <section className="workspace-section pt-finance-overview-section">
+              <div className="workspace-section-title">
+                <div>
+                  <h2>Gói PT & công nợ PT</h2>
+                  <p>Tổng hợp đăng ký PT, số buổi và các khoản còn phải thu</p>
+                </div>
+                {canEditPt && (
+                  <button
+                    className="icon-text-action"
+                    onClick={() => open("training", activeTraining)}
+                  >
+                    <Dumbbell size={13} />
+                    {activeTraining ? "Chỉnh sửa" : "Đăng ký PT"}
+                  </button>
+                )}
+              </div>
+              {member.training.length ? (
+                <>
+                  <div className="definition-list membership-overview-facts">
+                    <div>
+                      <dt>Gói PT hiện tại</dt>
+                      <dd>
+                        {activeTraining ? (
+                          <>
+                            <strong>
+                              {activeTraining.packageName || "Chưa đặt tên gói"}
+                            </strong>
+                            <span className="cell-secondary mt-0.5 block">
+                              {activeTraining.type} ·{" "}
+                              {activeTrainingCoaches
+                                .map((coach) => coach.name)
+                                .join(", ") || "Chưa phân Coach"}
+                            </span>
+                          </>
+                        ) : (
+                          "Không có gói PT đang hoạt động"
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Số buổi PT</dt>
+                      <dd>
+                        <strong>
+                          {ptFinanceSummary.remainingSessions}/
+                          {ptFinanceSummary.totalSessions}
+                        </strong>{" "}
+                        buổi còn lại
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Giá trị PT</dt>
+                      <dd>{money(ptFinanceSummary.finalPrice)}</dd>
+                    </div>
+                    <div>
+                      <dt>Đã thu PT</dt>
+                      <dd>{money(ptFinanceSummary.paidAmount)}</dd>
+                    </div>
+                    <div>
+                      <dt>Công nợ PT</dt>
+                      <dd>
+                        <span
+                          className={
+                            ptFinanceSummary.debtAmount
+                              ? "font-semibold text-red-700"
+                              : "font-semibold text-emerald-700"
+                          }
+                        >
+                          {ptFinanceSummary.debtAmount
+                            ? money(ptFinanceSummary.debtAmount)
+                            : "Đã tất toán"}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Hạn nợ gần nhất</dt>
+                      <dd>{nextPtDebtDueDate ? shortDate(nextPtDebtDueDate) : "Không có kỳ nợ mở"}</dd>
+                    </div>
+                  </div>
+                  <DataTable
+                    rows={member.training}
+                    columns={trainingColumns}
+                    emptyTitle="Chưa đăng ký PT"
+                    emptyDescription="Đăng ký PT để theo dõi số buổi và công nợ."
+                  />
+                </>
+              ) : (
+                <div className="compact-empty">
+                  <Dumbbell size={19} />
+                  <div>
+                    <strong>Chưa có đăng ký PT</strong>
+                    <p>Gói PT và công nợ PT sẽ hiển thị tại đây khi phát sinh.</p>
+                  </div>
+                </div>
+              )}
+            </section>
             <section className="workspace-section membership-workspace role-contract-section">
             <div className="workspace-section-title">
               <div><h2>Hồ sơ hiệu lực gói</h2><p>Đăng ký, hiệu lực thực tế và toàn bộ nguồn điều chỉnh</p></div>
@@ -1428,6 +1570,88 @@ export function MemberDetailPage() {
             emptyTitle="Chưa đăng ký PT"
             emptyDescription="Đăng ký PT để thiết lập coach, số buổi và lịch tập."
           />
+          {!!ptDebtRows.length && (
+            <div className="mt-6">
+              <div className="section-header">
+                <div>
+                  <h3>Kỳ công nợ PT</h3>
+                  <p>Chi tiết từng hạn thu còn mở theo gói PT</p>
+                </div>
+                <strong className="text-sm text-red-700">
+                  {money(
+                    ptDebtRows.reduce(
+                      (sum, row) => sum + Number(row.remainingAmount || 0),
+                      0,
+                    ),
+                  )}
+                </strong>
+              </div>
+              <DataTable
+                rows={ptDebtRows}
+                columns={[
+                  {
+                    key: "package",
+                    label: "Gói PT",
+                    render: (row) => (
+                      <div>
+                        <span className="cell-primary">
+                          {row.packageName || "Chưa đặt tên gói"}
+                        </span>
+                        <div className="cell-secondary">
+                          {row.type} ·{" "}
+                          {row.coaches.map((coach) => coach.name).join(", ") ||
+                            "Chưa phân Coach"}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: "dueDate",
+                    label: "Hạn thu",
+                    render: (row) => shortDate(row.dueDate),
+                  },
+                  {
+                    key: "amount",
+                    label: "Số tiền",
+                    className: "text-right",
+                    render: (row) => money(row.amount),
+                  },
+                  {
+                    key: "paidAmount",
+                    label: "Đã thu",
+                    className: "text-right",
+                    render: (row) => money(row.paidAmount),
+                  },
+                  {
+                    key: "remainingAmount",
+                    label: "Còn nợ",
+                    className: "text-right",
+                    render: (row) => (
+                      <strong
+                        className={
+                          row.remainingAmount > 0
+                            ? "text-red-700"
+                            : "text-emerald-700"
+                        }
+                      >
+                        {money(row.remainingAmount)}
+                      </strong>
+                    ),
+                  },
+                  {
+                    key: "status",
+                    label: "Trạng thái",
+                    render: (row) => <StatusBadge status={row.status} />,
+                  },
+                  {
+                    key: "note",
+                    label: "Ghi chú",
+                    render: (row) => row.note || "—",
+                  },
+                ]}
+              />
+            </div>
+          )}
         </section>
       )}
       {tab === "pt-sessions" && (
