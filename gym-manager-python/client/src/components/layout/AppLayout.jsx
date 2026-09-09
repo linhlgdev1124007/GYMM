@@ -226,7 +226,7 @@ function Sidebar({ open, close, role, processingTotal = 0 }) {
 
 export function AppLayout() {
   const [open, setOpen] = useState(false);
-  const [processingPromptDismissed, setProcessingPromptDismissed] = useState(false);
+  const [dismissedProcessingSessions, setDismissedProcessingSessions] = useState([]);
   const [processingPromptOpen, setProcessingPromptOpen] = useState(false);
   const { user, logout, logoutPending } = useAuth();
   const location = useLocation();
@@ -245,15 +245,19 @@ export function AppLayout() {
     queryKey: ["member-processing", processingToday, 1, 10],
     queryFn: () => api(`/api/member-processing?day=${processingToday}&page=1&pageSize=10`),
     enabled: processingEnabled,
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval: 3000,
+    staleTime: 1000,
     retry: false,
   });
   const processingTotal = processingQueue.data?.pagination?.total || 0;
+  const processingItems = processingQueue.data?.items || [];
+  const hasNewProcessingSession = processingItems.some(
+    (item) => !dismissedProcessingSessions.includes(item.sessionId),
+  );
   useEffect(() => {
-    if (!processingEnabled || processingPromptDismissed || processingPromptOpen) return;
-    if (processingTotal > 0) setProcessingPromptOpen(true);
-  }, [processingEnabled, processingPromptDismissed, processingPromptOpen, processingTotal]);
+    if (!processingEnabled || processingPromptOpen) return;
+    if (hasNewProcessingSession) setProcessingPromptOpen(true);
+  }, [processingEnabled, processingPromptOpen, hasNewProcessingSession]);
   const interceptMemberLink = (event) => {
     if (
       event.defaultPrevented ||
@@ -332,7 +336,12 @@ export function AppLayout() {
       <MemberProcessingPrompt
         open={processingPromptOpen}
         onClose={() => {
-          setProcessingPromptDismissed(true);
+          setDismissedProcessingSessions((current) => [
+            ...new Set([
+              ...current,
+              ...processingItems.map((item) => item.sessionId),
+            ]),
+          ]);
           setProcessingPromptOpen(false);
         }}
         query={processingQueue}
