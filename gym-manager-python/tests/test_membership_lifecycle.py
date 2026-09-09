@@ -153,6 +153,111 @@ def test_suspended_membership_gets_compensated_when_reactivated(tmp_path):
         db.close()
 
 
+def test_upgrade_membership_adjusts_expiry_by_duration_delta(tmp_path):
+    from server.models import MembershipEvent, ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        original_expiry = date(2026, 8, 31)
+        membership.expires_at = original_expiry
+        membership.final_price = 100000
+        membership.paid_amount = 500000
+        membership.deposit_amount = 500000
+        customer.status = "active"
+        upgrade_plan = ServicePackage(
+            code="FIT-UPGRADE-90",
+            name="Fitness Upgrade 90",
+            category="Fitness",
+            duration_days=90,
+            price=500000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add(upgrade_plan)
+        db.commit()
+
+        result = membership_action(db, membership.id, {
+            "action": "upgrade",
+            "planId": upgrade_plan.id,
+            "finalPrice": "500000",
+            "expiresAt": original_expiry.isoformat(),
+            "effectiveAt": "2026-08-15",
+            "reason": "Khách nâng cấp thêm gói",
+        }, actor=None)
+        db.refresh(membership)
+
+        assert result["action"] == "upgrade"
+        assert membership.package_id == upgrade_plan.id
+        assert membership.expires_at == original_expiry + timedelta(days=60)
+        assert membership.debt_amount == 0
+
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="upgrade").one()
+        details = json.loads(event.details_json)
+        assert details["previousExpiry"] == original_expiry.isoformat()
+        assert details["newExpiry"] == (original_expiry + timedelta(days=60)).isoformat()
+        assert details["previousDurationDays"] == 30
+        assert details["newDurationDays"] == 90
+        assert details["durationDeltaDays"] == 60
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("new_duration_days", "expected_delta_days"),
+    [(30, 0), (25, -5)],
+)
+def test_change_membership_adjusts_expiry_by_duration_delta(tmp_path, new_duration_days, expected_delta_days):
+    from server.models import ServicePackage
+    from server.services.members_service import membership_action
+
+    db = make_session(tmp_path)
+    try:
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        original_expiry = date(2026, 8, 31)
+        membership.expires_at = original_expiry
+        membership.final_price = 100000
+        membership.paid_amount = 100000
+        membership.deposit_amount = 100000
+        next_plan = ServicePackage(
+            code=f"FIT-CHANGE-{new_duration_days}",
+            name=f"Fitness Change {new_duration_days}",
+            category="Fitness",
+            duration_days=new_duration_days,
+            price=100000,
+            is_pt=False,
+            is_active=True,
+        )
+        db.add(next_plan)
+        db.commit()
+
+        membership_action(db, membership.id, {
+            "action": "change",
+            "planId": next_plan.id,
+            "finalPrice": "100000",
+            "expiresAt": original_expiry.isoformat(),
+            "effectiveAt": "2026-08-15",
+            "reason": "Đổi gói giữa kỳ",
+        }, actor=None)
+        db.refresh(membership)
+
+        assert membership.package_id == next_plan.id
+        assert membership.expires_at == original_expiry + timedelta(days=expected_delta_days)
+    finally:
+        db.close()
+
+
 def test_past_suspend_uses_effective_start_for_reactivation(tmp_path):
     from server.models import MembershipEvent
     from server.services.members_service import membership_action

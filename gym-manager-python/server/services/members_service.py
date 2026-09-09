@@ -1584,6 +1584,13 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
         previous_paid = row.paid_amount or 0
         previous_debt = row.debt_amount or 0
         previous_debt_due_date = row.debt_due_date
+        previous_duration_days = row.package.duration_days
+        new_duration_days = plan.duration_days
+        duration_delta_days = (
+            new_duration_days - previous_duration_days
+            if previous_duration_days is not None and new_duration_days is not None
+            else None
+        )
         overpaid_amount = max(previous_paid - new_price, 0)
         overpayment_policy = str(payload.get("overpaymentPolicy") or "keep_credit").strip()
         if overpaid_amount and overpayment_policy not in {"keep_credit", "external_refund", "reduce_paid"}:
@@ -1609,7 +1616,10 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
                 raise HTTPException(422, "Vui lòng chọn hạn thanh toán cho công nợ phát sinh khi đổi gói.")
         else:
             row.debt_due_date = None
-        if payload.get("expiresAt"):
+        previous_expiry = row.expires_at
+        if duration_delta_days is not None and previous_expiry:
+            row.expires_at = previous_expiry + timedelta(days=duration_delta_days)
+        elif payload.get("expiresAt"):
             row.expires_at = _parse_date(payload.get("expiresAt"))
         summary = f"{'Nâng cấp' if action == 'upgrade' else 'Đổi'} gói {old_package_name} sang {plan.name}"
         details = {
@@ -1623,6 +1633,11 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
             "newDebt": row.debt_amount,
             "previousDebtDueDate": previous_debt_due_date,
             "newDebtDueDate": row.debt_due_date,
+            "previousExpiry": previous_expiry,
+            "newExpiry": row.expires_at,
+            "previousDurationDays": previous_duration_days,
+            "newDurationDays": new_duration_days,
+            "durationDeltaDays": duration_delta_days,
             "overpaidAmount": overpaid_amount,
             "overpaymentPolicy": overpayment_policy if overpaid_amount else None,
             "creditAmount": overpaid_amount if overpaid_amount and overpayment_policy == "keep_credit" else 0,
