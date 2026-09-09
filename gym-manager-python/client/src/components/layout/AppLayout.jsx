@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   NavLink,
@@ -37,6 +37,7 @@ import { AlertCenter } from "../common/AlertCenter";
 import { CheckinSpeechPlayer } from "../common/CheckinSpeechPlayer";
 import { DahAgentWatcher } from "../common/DahAgentWatcher";
 import { MemberQuickDrawer } from "../../features/members/MemberQuickDrawer";
+import { MemberProcessingPrompt } from "../../features/memberProcessing/MemberProcessingPrompt";
 
 const groups = [
   {
@@ -111,6 +112,12 @@ const groups = [
 
 const AUTO_SYNC_ROLES = new Set(["admin", "manager", "receptionist"]);
 
+const localIsoDate = () => {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+};
+
 function AutoSyncControl({ role }) {
   const client = useQueryClient();
   const enabled = AUTO_SYNC_ROLES.has(role);
@@ -152,7 +159,7 @@ function AutoSyncControl({ role }) {
   );
 }
 
-function Sidebar({ open, close, role }) {
+function Sidebar({ open, close, role, processingTotal = 0 }) {
   return (
     <>
       <div
@@ -195,6 +202,9 @@ function Sidebar({ open, close, role }) {
                   >
                     <Icon size={17} />
                     <span>{label}</span>
+                    {to === "/member-processing" && processingTotal > 0 && (
+                      <b className="nav-count-badge">{processingTotal > 99 ? "99+" : processingTotal}</b>
+                    )}
                   </NavLink>
                 ))}
               </div>
@@ -216,6 +226,8 @@ function Sidebar({ open, close, role }) {
 
 export function AppLayout() {
   const [open, setOpen] = useState(false);
+  const [processingPromptDismissed, setProcessingPromptDismissed] = useState(false);
+  const [processingPromptOpen, setProcessingPromptOpen] = useState(false);
   const { user, logout, logoutPending } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -227,6 +239,21 @@ export function AppLayout() {
   const quickMember = !location.pathname.startsWith("/members")
     ? params.get("member")
     : null;
+  const processingEnabled = ["admin", "manager", "receptionist", "coach"].includes(user?.role);
+  const processingToday = localIsoDate();
+  const processingQueue = useQuery({
+    queryKey: ["member-processing", processingToday, 1, 10],
+    queryFn: () => api(`/api/member-processing?day=${processingToday}&page=1&pageSize=10`),
+    enabled: processingEnabled,
+    refetchInterval: 5000,
+    staleTime: 2000,
+    retry: false,
+  });
+  const processingTotal = processingQueue.data?.pagination?.total || 0;
+  useEffect(() => {
+    if (!processingEnabled || processingPromptDismissed || processingPromptOpen) return;
+    if (processingTotal > 0) setProcessingPromptOpen(true);
+  }, [processingEnabled, processingPromptDismissed, processingPromptOpen, processingTotal]);
   const interceptMemberLink = (event) => {
     if (
       event.defaultPrevented ||
@@ -254,7 +281,12 @@ export function AppLayout() {
     });
   return (
     <div className="app-layout" onClickCapture={interceptMemberLink}>
-      <Sidebar open={open} close={() => setOpen(false)} role={user?.role} />
+      <Sidebar
+        open={open}
+        close={() => setOpen(false)}
+        role={user?.role}
+        processingTotal={processingTotal}
+      />
       <div className="app-main">
         <NetworkStatusBanner />
         <header className="topbar">
@@ -297,6 +329,14 @@ export function AppLayout() {
       </div>
       <DahAgentWatcher role={user?.role} />
       <MemberQuickDrawer memberId={quickMember} onClose={closeQuickMember} />
+      <MemberProcessingPrompt
+        open={processingPromptOpen}
+        onClose={() => {
+          setProcessingPromptDismissed(true);
+          setProcessingPromptOpen(false);
+        }}
+        query={processingQueue}
+      />
     </div>
   );
 }
