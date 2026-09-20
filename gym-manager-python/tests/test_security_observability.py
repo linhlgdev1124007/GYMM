@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from io import BytesIO
 import asyncio
+from datetime import date
 
 TEST_DIR = Path(tempfile.mkdtemp(prefix="pulsefit-security-tests-"))
 os.environ.update({
@@ -201,6 +202,133 @@ def test_admin_can_change_an_account_password(client):
         headers={**ORIGIN, "X-Forwarded-For": "10.0.0.78"},
     )
     assert logged_in.status_code == 200
+
+
+def test_receptionist_can_activate_membership_and_view_all_audit_logs(client):
+    from server.models import AuditLog, Customer, Membership, Person, ServicePackage, User
+    from server.security import hash_password
+
+    username = "receptionist-activation-test"
+    password = "Receptionist!2026"
+    with SessionLocal() as db:
+        receptionist = db.query(User).filter(User.username == username).first()
+        if not receptionist:
+            receptionist = User(
+                username=username,
+                display_name="Receptionist Activation Test",
+                password_hash=hash_password(password),
+                role="receptionist",
+                is_active=True,
+            )
+            db.add(receptionist)
+        person = Person(display_name="Pending Activation Member", phone="0900999001")
+        db.add(person)
+        db.flush()
+        customer = Customer(
+            person_id=person.id,
+            customer_code="CUS-RECEPTION-ACTIVATE",
+            status="lead",
+        )
+        package = ServicePackage(
+            code="PKG-RECEPTION-ACTIVATE",
+            name="Reception Activation Package",
+            category="Fitness",
+            duration_days=30,
+            price=500000,
+        )
+        db.add_all([customer, package])
+        db.flush()
+        membership = Membership(
+            customer_id=customer.id,
+            package_id=package.id,
+            code="MS-RECEPTION-ACTIVATE",
+            registered_at=date(2026, 9, 21),
+            starts_at=date(2026, 9, 21),
+            expires_at=date(2026, 10, 21),
+            status="pending",
+        )
+        db.add(membership)
+        db.commit()
+        membership_id = membership.id
+        customer_id = customer.id
+
+    logged_in = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": password},
+        headers={**ORIGIN, "X-Forwarded-For": "10.0.0.91"},
+    )
+    assert logged_in.status_code == 200
+    headers = {**ORIGIN, "X-CSRF-Token": client.cookies.get("gym_csrf")}
+
+    activated = client.post(
+        f"/api/memberships/{membership_id}/actions",
+        json={
+            "action": "activate",
+            "activatedAt": "2026-09-22",
+            "reason": "Khách bắt đầu tập tại quầy lễ tân",
+        },
+        headers=headers,
+    )
+    assert activated.status_code == 200
+
+    forbidden = client.post(
+        f"/api/memberships/{membership_id}/actions",
+        json={
+            "action": "suspend",
+            "suspendedAt": "2026-09-22",
+            "reason": "Lễ tân không được tạm dừng",
+        },
+        headers=headers,
+    )
+    assert forbidden.status_code == 403
+
+    for action in ("cancel", "transfer", "change", "upgrade", "adjust_days"):
+        assert client.post(
+            f"/api/memberships/{membership_id}/actions",
+            json={"action": action, "reason": "Kiểm tra phân quyền"},
+            headers=headers,
+        ).status_code == 403
+
+    with SessionLocal() as db:
+        membership = db.get(Membership, membership_id)
+        membership.status = "suspended"
+        db.commit()
+    forbidden_reactivation = client.post(
+        f"/api/memberships/{membership_id}/actions",
+        json={
+            "action": "activate",
+            "activatedAt": "2026-09-23",
+            "reason": "Lễ tân không được kích hoạt lại gói tạm dừng",
+        },
+        headers=headers,
+    )
+    assert forbidden_reactivation.status_code == 403
+
+    with SessionLocal() as db:
+        membership = db.get(Membership, membership_id)
+        membership.status = "active"
+        db.commit()
+
+    audit_logs = client.get("/api/audit-logs?pageSize=100")
+    assert audit_logs.status_code == 200
+    activation_log = next(
+        row for row in audit_logs.json()["items"]
+        if row["action"] == "activate" and row["entityId"] == membership_id
+    )
+    assert activation_log["actor"]["username"] == username
+    assert activation_log["details"]["activatedAt"] == "2026-09-22"
+    assert activation_log["details"]["reason"] == "Khách bắt đầu tập tại quầy lễ tân"
+    assert any(row["actor"]["username"] != username for row in audit_logs.json()["items"])
+
+    member = client.get(f"/api/members/{customer_id}")
+    assert member.status_code == 200
+    assert any(row["id"] == activation_log["id"] for row in member.json()["auditLogs"])
+
+    with SessionLocal() as db:
+        membership = db.get(Membership, membership_id)
+        assert membership.status == "active"
+        assert membership.activated_at == date(2026, 9, 22)
+        assert db.query(AuditLog).filter_by(id=activation_log["id"]).one().actor_user_id is not None
 
 
 def test_untrusted_host_is_rejected(client):

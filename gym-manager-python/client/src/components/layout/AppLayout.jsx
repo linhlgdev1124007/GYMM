@@ -98,7 +98,7 @@ const groups = [
         to: "/audit-logs",
         label: "Nhật ký thao tác",
         icon: ScrollText,
-        roles: ["admin"],
+        roles: ["admin", "receptionist"],
       },
       {
         to: "/settings",

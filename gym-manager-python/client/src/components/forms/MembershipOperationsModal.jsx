@@ -22,7 +22,7 @@ function freezeCompensationDays(membership, startsAt, endsAt) {
   return Math.max(differenceInCalendarDays(new Date(`${endsAt}T00:00:00`), new Date(`${effectiveStart}T00:00:00`)), 0);
 }
 
-export function MembershipOperationsModal({ membership, memberships = [], memberId, options, open, initialAction, onClose, onSubmit, pending, error }) {
+export function MembershipOperationsModal({ membership, memberships = [], memberId, options, open, initialAction, activationOnly = false, onClose, onSubmit, pending, error }) {
   const [action, setAction] = useState("freeze");
   const [form, setForm] = useState({});
   const adjustableMemberships = useMemo(
@@ -57,8 +57,8 @@ export function MembershipOperationsModal({ membership, memberships = [], member
       effectiveAt: today(),
       reason: "",
     });
-    setAction(initialAction || (["pending", "suspended", "frozen"].includes(membership?.status) ? "activate" : "freeze"));
-  }, [membership?.id, memberships, open, initialAction]);
+    setAction(activationOnly ? "activate" : initialAction || (["pending", "suspended", "frozen"].includes(membership?.status) ? "activate" : "freeze"));
+  }, [membership?.id, memberships, open, initialAction, activationOnly]);
   useEffect(() => {
     if (action === "adjust_days" && adjustableMemberships.length && !adjustableMemberships.some((row) => String(row.id) === String(form.membershipId))) {
       setForm((current) => ({ ...current, membershipId: adjustableMemberships[0].id }));
@@ -137,15 +137,15 @@ export function MembershipOperationsModal({ membership, memberships = [], member
             <div><span>Tài chính</span><strong>{money(targetMembership?.paidAmount)} đã thu · {money(targetMembership?.debtAmount)} nợ</strong></div>
           </div>
           <Field label="Nghiệp vụ cần thực hiện" required>
-            <Select value={action} onChange={(event) => setAction(event.target.value)}>
+            <Select value={action} onChange={(event) => setAction(event.target.value)} disabled={activationOnly}>
               <option value="activate">Kích hoạt lần đầu tập</option>
-              <option value="suspend">Tạm dừng gói</option>
-              <option value="freeze">Bảo lưu và cộng bù thời hạn</option>
-              <option value="adjust_days">Cộng / trừ ngày</option>
-              <option value="transfer">Chuyển nhượng sang hội viên khác</option>
-              <option value="upgrade">Nâng cấp gói</option>
-              <option value="change">Đổi gói</option>
-              <option value="cancel">Hủy dịch vụ và inactive hội viên</option>
+              {!activationOnly && <option value="suspend">Tạm dừng gói</option>}
+              {!activationOnly && <option value="freeze">Bảo lưu và cộng bù thời hạn</option>}
+              {!activationOnly && <option value="adjust_days">Cộng / trừ ngày</option>}
+              {!activationOnly && <option value="transfer">Chuyển nhượng sang hội viên khác</option>}
+              {!activationOnly && <option value="upgrade">Nâng cấp gói</option>}
+              {!activationOnly && <option value="change">Đổi gói</option>}
+              {!activationOnly && <option value="cancel">Hủy dịch vụ và inactive hội viên</option>}
             </Select>
           </Field>
           {action === "activate" && (

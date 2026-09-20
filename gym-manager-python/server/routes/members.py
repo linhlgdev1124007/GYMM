@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from ..controllers import members_controller
 from ..database import get_db
 from ..dependencies import current_user, require_roles
-from ..models import User
+from ..models import Membership, User
 
 router = APIRouter(prefix="/api", tags=["members"], dependencies=[Depends(current_user)])
 
@@ -36,7 +36,7 @@ def create_member(payload: dict, db: Session = Depends(get_db), user: User = Dep
 
 @router.get("/members/{member_id}")
 def get_member(member_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    return members_controller.get_member(db, member_id, include_audit=user.role == "admin")
+    return members_controller.get_member(db, member_id, include_audit=user.role in {"admin", "receptionist"})
 
 
 @router.patch("/members/{member_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
@@ -118,5 +118,13 @@ def delete_membership_freeze(membership_id: int, freeze_id: int, db: Session = D
 
 
 @router.post("/memberships/{membership_id}/actions")
-def membership_action(membership_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager"))):
+def membership_action(membership_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    if user.role == "receptionist":
+        if payload.get("action") != "activate":
+            raise HTTPException(status_code=403, detail="Lễ tân chỉ được phép kích hoạt gói chờ kích hoạt.")
+        membership = db.get(Membership, membership_id)
+        if not membership:
+            raise HTTPException(status_code=404, detail="Không tìm thấy gói đăng ký.")
+        if membership.status != "pending":
+            raise HTTPException(status_code=403, detail="Lễ tân chỉ được phép kích hoạt gói đang chờ kích hoạt.")
     return members_controller.membership_action(db, membership_id, payload, user)

@@ -260,7 +260,7 @@ function RecentAuditPanel({ query, scope, pageSize, onScope, onPage, onPageSize 
       <div className="dashboard-section-header">
         <div>
           <h2>Thao tác gần đây</h2>
-          <p>Các thay đổi mới nhất trong hệ thống để admin kiểm soát nhanh.</p>
+          <p>Các thay đổi mới nhất trong hệ thống để đội ngũ vận hành kiểm tra nhanh.</p>
         </div>
         <div className="dashboard-audit-tools">
           <div className="dashboard-audit-tabs" role="tablist" aria-label="Phạm vi thao tác">
@@ -361,7 +361,7 @@ export function DashboardPage() {
       api(
         `/api/audit-logs?${queryString({ scope: auditScope, page: auditPage, pageSize: auditPageSize, includeActors: false })}`,
       ),
-    enabled: user.role === "admin",
+    enabled: ["admin", "receptionist"].includes(user.role),
     placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
@@ -513,7 +513,7 @@ export function DashboardPage() {
         </section>
       </div>
 
-      {user.role === "admin" && (
+      {["admin", "receptionist"].includes(user.role) && (
         <RecentAuditPanel
           query={auditQuery}
           scope={auditScope}

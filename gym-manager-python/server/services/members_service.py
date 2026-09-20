@@ -967,7 +967,7 @@ def update_member(db: Session, member_id: int, payload: dict, actor: User | None
         },
     )
     db.commit()
-    return get_member(db, member_id, include_audit=bool(actor and actor.role == "admin"))
+    return get_member(db, member_id, include_audit=bool(actor and actor.role in {"admin", "receptionist"}))
 
 
 def reactivate_cancelled_member(db: Session, member_id: int, actor: User | None = None):

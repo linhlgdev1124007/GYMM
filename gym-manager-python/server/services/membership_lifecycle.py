@@ -268,7 +268,7 @@ def activate_membership(
         membership.id,
         f"Kích hoạt gói {membership.package.name}",
         customer_id=membership.customer_id,
-        details={"activatedAt": day, "previousStatus": previous_status},
+        details={"activatedAt": day, "previousStatus": previous_status, "reason": reason},
     )
     return True
 

@@ -140,7 +140,7 @@ export function App() {
           />
           <Route
             path="audit-logs"
-            element={allowed(["admin"], <AuditLogPage />)}
+            element={allowed(["admin", "receptionist"], <AuditLogPage />)}
           />
           <Route
             path="accounts"

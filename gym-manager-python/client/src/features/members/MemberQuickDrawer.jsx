@@ -48,6 +48,7 @@ export function MemberQuickDrawer({
     user?.role,
   );
   const canManageLifecycle = ["admin", "manager"].includes(user?.role);
+  const canActivateLifecycle = canManageLifecycle || user?.role === "receptionist";
   const client = useQueryClient();
   const [dialog, setDialog] = useState(null);
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
@@ -74,6 +75,8 @@ export function MemberQuickDrawer({
     client.invalidateQueries({ queryKey: ["payments"] });
     client.invalidateQueries({ queryKey: ["reports"] });
     client.invalidateQueries({ queryKey: ["dashboard"] });
+    client.invalidateQueries({ queryKey: ["audit-logs"] });
+    client.invalidateQueries({ queryKey: ["dashboard-audit-logs"] });
   };
   const update = useMutation({
     mutationFn: ({ payload }) =>
@@ -206,23 +209,23 @@ export function MemberQuickDrawer({
     freezeMutation.mutate({ freezeId: freeze.id, method: "DELETE" });
   };
   const lifecycleActions = [];
-  if (current?.status === "pending") {
+  if (canActivateLifecycle && current?.status === "pending") {
     lifecycleActions.push(["activate", "Kích hoạt ngay"]);
   }
-  if (current?.status === "suspended") {
+  if (canManageLifecycle && current?.status === "suspended") {
     lifecycleActions.push(["activate", "Kích hoạt lại"]);
   }
-  if (current?.status === "frozen") {
+  if (canManageLifecycle && current?.status === "frozen") {
     lifecycleActions.push(["activate", "Kích hoạt lại"]);
   }
-  if (current?.status === "active") {
+  if (canManageLifecycle && current?.status === "active") {
     lifecycleActions.push(["suspend", "Tạm dừng"]);
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
-  if (current?.status === "expired") {
+  if (canManageLifecycle && current?.status === "expired") {
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
-  if (["active", "expired"].includes(current?.status)) {
+  if (canManageLifecycle && ["active", "expired"].includes(current?.status)) {
     lifecycleActions.push(["adjust_days", "Cộng / trừ ngày"]);
   }
   useEffect(() => {
@@ -328,7 +331,7 @@ export function MemberQuickDrawer({
                 <Dumbbell size={17} />
                 <span>{training ? "Đổi nhóm PT" : "Gán nhóm PT"}</span>
               </button>
-              {canManageLifecycle && current && lifecycleActions.length > 0 && (
+              {current && lifecycleActions.length > 0 && (
                 <RowMenu>
                   {lifecycleActions.map(([action, label]) => (
                     <button key={action} onClick={() => openDialog("operations", action)}>
@@ -655,6 +658,7 @@ export function MemberQuickDrawer({
             options={options.data}
             open={dialog === "operations"}
             initialAction={membershipOperationAction}
+            activationOnly={user?.role === "receptionist"}
             onClose={() => {
               setDialog(null);
               setMembershipOperationAction("");

@@ -24,6 +24,7 @@ const actionLabels = {
   checkout: "Check-out",
   employee_attendance_adjust: "Chỉnh chấm công",
   freeze: "Bảo lưu",
+  activate: "Kích hoạt",
   transfer: "Chuyển nhượng",
   upgrade: "Nâng cấp gói",
   change: "Đổi gói",
@@ -68,6 +69,9 @@ const fieldLabels = {
   debtDueDate: "Hạn thanh toán",
   status: "Trạng thái",
   activationDate: "Ngày kích hoạt",
+  activatedAt: "Ngày kích hoạt",
+  previousStatus: "Trạng thái trước đó",
+  reason: "Lý do",
   coachIds: "Coach phụ trách",
   type: "Nhóm PT",
   totalSessions: "Tổng buổi",
@@ -312,7 +316,7 @@ export function AuditLogPage() {
               {Object.entries(selected.details || {}).map(([key, value]) => (
                 key === "changes" ? null : (
                 <div key={key}>
-                  <dt>{key}</dt>
+                  <dt>{fieldLabels[key] || key}</dt>
                   <dd>
                     {typeof value === "object"
                       ? JSON.stringify(value, null, 2)

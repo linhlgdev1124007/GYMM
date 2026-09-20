@@ -110,6 +110,12 @@ const auditFieldLabels = {
 };
 
 function auditChangeLines(item) {
+  if (item.action === "activate" && item.details?.activatedAt) {
+    return [
+      { key: "activatedAt", label: "Ngày kích hoạt", text: shortDate(item.details.activatedAt) },
+      ...(item.details.reason ? [{ key: "reason", label: "Lý do", text: item.details.reason }] : []),
+    ];
+  }
   const changes = Array.isArray(item.details?.changes) ? item.details.changes : [];
   if (changes.length) {
     return changes.map((change) => ({
@@ -365,12 +371,12 @@ export function MemberDetailPage() {
   const [activityFilter, setActivityFilter] = useState("all");
   const workspaceHeaderRef = useRef(null);
   const [showStickyHeader, setShowStickyHeader] = useState(false);
-  const isAdmin = user.role === "admin";
+  const canViewAudit = ["admin", "receptionist"].includes(user.role);
   const visibleTabGroups = useMemo(
     () =>
       tabGroups
         .map((group) =>
-          group.key === "profile" && !isAdmin
+          group.key === "profile" && !canViewAudit
             ? {
                 ...group,
                 label: "Hồ sơ",
@@ -379,7 +385,7 @@ export function MemberDetailPage() {
             : group,
         )
         .filter((group) => group.tabs.length),
-    [isAdmin],
+    [canViewAudit],
   );
   const visibleTabs = useMemo(
     () => visibleTabGroups.flatMap((group) => group.tabs),
@@ -419,6 +425,7 @@ export function MemberDetailPage() {
     client.invalidateQueries({ queryKey: ["payments"] });
     client.invalidateQueries({ queryKey: ["reports"] });
     client.invalidateQueries({ queryKey: ["dashboard"] });
+    client.invalidateQueries({ queryKey: ["dashboard-audit-logs"] });
   };
   const updateMember = useMutation({
     mutationFn: ({ payload }) =>
@@ -584,6 +591,7 @@ export function MemberDetailPage() {
   const displayStatus = current?.status || member.status;
   const canFinancial = ["admin", "manager", "receptionist"].includes(user.role);
   const canManageLifecycle = ["admin", "manager"].includes(user.role);
+  const canActivateLifecycle = canManageLifecycle || user.role === "receptionist";
   const activeTraining = member.training.find((row) => row.status === "active");
   const canEditPt = canFinancial || (user.role === "coach" && !!activeTraining);
   const activeTrainingCoaches = activeTraining?.coaches || [];
@@ -660,26 +668,26 @@ export function MemberDetailPage() {
       )
     : 0;
   const lifecycleActions = [];
-  if (current?.status === "pending") {
+  if (canActivateLifecycle && current?.status === "pending") {
     lifecycleActions.push(["activate", "Kích hoạt ngay"]);
   }
-  if (current?.status === "suspended") {
+  if (canManageLifecycle && current?.status === "suspended") {
     lifecycleActions.push(["activate", "Kích hoạt lại"]);
   }
-  if (current?.status === "frozen") {
+  if (canManageLifecycle && current?.status === "frozen") {
     lifecycleActions.push(["activate", "Kích hoạt lại"]);
   }
-  if (current?.status === "active") {
+  if (canManageLifecycle && current?.status === "active") {
     lifecycleActions.push(["suspend", "Tạm dừng"]);
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
-  if (current?.status === "expired") {
+  if (canManageLifecycle && current?.status === "expired") {
     lifecycleActions.push(["freeze", "Bảo lưu"]);
   }
-  if (["active", "expired"].includes(current?.status)) {
+  if (canManageLifecycle && ["active", "expired"].includes(current?.status)) {
     lifecycleActions.push(["adjust_days", "Cộng / trừ ngày"]);
   }
-  if (["active", "pending", "frozen", "suspended"].includes(current?.status)) {
+  if (canManageLifecycle && ["active", "pending", "frozen", "suspended"].includes(current?.status)) {
     lifecycleActions.push(["cancel", "Hủy dịch vụ"]);
   }
   const open = (name, record = null, operationAction = "") => {
@@ -740,7 +748,7 @@ export function MemberDetailPage() {
           <Pencil size={15} /> Sửa hồ sơ
         </Button>
       )}
-      {canManageLifecycle && current && lifecycleActions.length > 0 && (
+      {current && lifecycleActions.length > 0 && (
         <RowMenu label={compact ? "Quản lý" : "Quản lý gói"}>
           {lifecycleActions.map(([action, label]) => (
             <button key={action} onClick={() => open("operations", current, action)}>
@@ -815,6 +823,11 @@ export function MemberDetailPage() {
           {canManageLifecycle && r.status !== "cancelled" && (
             <Button size="sm" variant="secondary" onClick={() => open("operations", r)}>
               Quản lý
+            </Button>
+          )}
+          {user.role === "receptionist" && r.status === "pending" && (
+            <Button size="sm" variant="secondary" onClick={() => open("operations", r, "activate")}>
+              Kích hoạt ngay
             </Button>
           )}
         </div>
@@ -1327,7 +1340,7 @@ export function MemberDetailPage() {
             <section className="workspace-section unified-activity-section role-activity-section">
               <div className="workspace-section-title">
                 <div><h2>Hoạt động gần đây</h2><p>Check-in, thanh toán và biến động gói trên cùng một dòng thời gian</p></div>
-                {isAdmin && <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>}
+                {canViewAudit && <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>}
               </div>
               <div className="activity-filter-bar" aria-label="Lọc hoạt động">
                 {[["all", "Tất cả"], ["membership", "Gói tập"], ["payment", "Thanh toán"], ["checkin", "Check-in"]].map(([key, label]) => (
@@ -1700,7 +1713,7 @@ export function MemberDetailPage() {
           </div>
         </section>
       )}
-      {isAdmin && tab === "activity" && (
+      {canViewAudit && tab === "activity" && (
         <section className="mt-5 max-w-3xl">
           <div className="section-header">
             <div>
@@ -1888,6 +1901,7 @@ export function MemberDetailPage() {
         options={options.data}
         open={dialog === "operations"}
         initialAction={membershipOperationAction}
+        activationOnly={user.role === "receptionist"}
         onClose={() => {
           setDialog(null);
           setSelectedMembership(null);
