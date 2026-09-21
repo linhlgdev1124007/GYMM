@@ -432,6 +432,53 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         PtEnrollment.customer_id == Customer.id,
         PtEnrollment.debt_amount > 0,
     ).exists()
+    pt_debt_due_soon_exists = db.query(PtDebtInstallment.id).join(PtEnrollment).filter(
+        PtEnrollment.customer_id == Customer.id,
+        PtEnrollment.debt_amount > 0,
+        PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
+        PtDebtInstallment.due_date <= today + timedelta(days=overdue_days),
+    ).exists()
+    pt_earliest_debt_due_date = db.query(func.min(PtDebtInstallment.due_date)).join(PtEnrollment).filter(
+        PtEnrollment.customer_id == Customer.id,
+        PtEnrollment.debt_amount > 0,
+        PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
+    ).correlate(Customer).scalar_subquery()
+    pt_latest_debt_due_date = db.query(func.max(PtDebtInstallment.due_date)).join(PtEnrollment).filter(
+        PtEnrollment.customer_id == Customer.id,
+        PtEnrollment.debt_amount > 0,
+        PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
+    ).correlate(Customer).scalar_subquery()
+    latest_debt_amount = db.query(Membership.debt_amount).filter(
+        Membership.id == current_regular_id
+    ).correlate(Customer).scalar_subquery()
+    latest_debt_due_date = db.query(Membership.debt_due_date).filter(
+        Membership.id == current_regular_id
+    ).correlate(Customer).scalar_subquery()
+    regular_debt_due_date = case(
+        (latest_debt_amount > 0, latest_debt_due_date),
+        else_=None,
+    )
+    earliest_debt_due_date = case(
+        (
+            and_(regular_debt_due_date != None, pt_earliest_debt_due_date != None),
+            case((regular_debt_due_date <= pt_earliest_debt_due_date, regular_debt_due_date), else_=pt_earliest_debt_due_date),
+        ),
+        (regular_debt_due_date != None, regular_debt_due_date),
+        else_=pt_earliest_debt_due_date,
+    )
+    latest_combined_debt_due_date = case(
+        (
+            and_(regular_debt_due_date != None, pt_latest_debt_due_date != None),
+            case((regular_debt_due_date >= pt_latest_debt_due_date, regular_debt_due_date), else_=pt_latest_debt_due_date),
+        ),
+        (regular_debt_due_date != None, regular_debt_due_date),
+        else_=pt_latest_debt_due_date,
+    )
+    debt_due_group = case(
+        (earliest_debt_due_date != None, 0),
+        (or_(latest_debt_amount > 0, pt_debt_exists), 1),
+        else_=2,
+    )
     cancelled_member = Customer.status == "cancelled"
     if view == "cancelled" or member_status == "cancelled":
         query = query.filter(cancelled_member)
@@ -450,10 +497,13 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     elif member_status == "inactive":
         query = query.filter(Customer.status == "inactive")
     if payment_status == "overdue":
-        query = query.filter(current_status_exists(
-            status_membership.debt_amount > 0,
-            status_membership.debt_due_date != None,
-            status_membership.debt_due_date <= today + timedelta(days=overdue_days),
+        query = query.filter(or_(
+            current_status_exists(
+                status_membership.debt_amount > 0,
+                status_membership.debt_due_date != None,
+                status_membership.debt_due_date <= today + timedelta(days=overdue_days),
+            ),
+            pt_debt_due_soon_exists,
         ))
     elif payment_status == "debt":
         query = query.filter(or_(current_status_exists(status_membership.debt_amount > 0), pt_debt_exists))
@@ -470,20 +520,9 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     if trainer_id:
         query = query.filter(db.query(PtEnrollmentCoach.enrollment_id).join(PtEnrollment).filter(PtEnrollment.customer_id == Customer.id, PtEnrollmentCoach.coach_id == trainer_id).exists())
     total = query.count()
-    latest_debt_amount = db.query(Membership.debt_amount).filter(
-        Membership.id == current_regular_id
-    ).correlate(Customer).scalar_subquery()
-    latest_debt_due_date = db.query(Membership.debt_due_date).filter(
-        Membership.id == current_regular_id
-    ).correlate(Customer).scalar_subquery()
     current_expires_at = db.query(Membership.expires_at).filter(
         Membership.id == current_regular_id
     ).correlate(Customer).scalar_subquery()
-    debt_due_group = case(
-        (and_(latest_debt_amount > 0, latest_debt_due_date != None), 0),
-        (latest_debt_amount > 0, 1),
-        else_=2,
-    )
     if sort == "name":
         orderings = [Person.display_name.asc(), Customer.id.desc()]
     elif sort == "status":
@@ -503,14 +542,14 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     elif sort == "debt_due_asc":
         orderings = [
             debt_due_group.asc(),
-            latest_debt_due_date.asc(),
+            earliest_debt_due_date.asc(),
             _customer_code_sort_expression(db).desc(),
             Customer.id.desc(),
         ]
     elif sort == "debt_due_desc":
         orderings = [
             debt_due_group.asc(),
-            latest_debt_due_date.desc(),
+            latest_combined_debt_due_date.desc(),
             _customer_code_sort_expression(db).desc(),
             Customer.id.desc(),
         ]

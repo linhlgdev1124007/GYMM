@@ -368,6 +368,98 @@ def test_debt_due_sort_orders_members_before_pagination(tmp_path):
         db.close()
 
 
+def test_debt_due_sort_and_due_soon_filter_use_pt_installment_dates(tmp_path):
+    from datetime import date
+
+    from server.models import Customer, Membership, PtDebtInstallment, PtEnrollment, ServicePackage
+    from server.services.members_service import list_members
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        set_test_today(date(2026, 8, 17))
+        plan = ServicePackage(
+            code="REGULAR-DEBT-SORT",
+            name="Regular Debt Sort",
+            category="Gym",
+            duration_days=30,
+            price=1000,
+            is_pt=False,
+        )
+        db.add(plan)
+        db.commit()
+
+        seed_customer(db, "CUS0000001", "PT Near Due", "0900000201")
+        seed_customer(db, "CUS0000002", "Membership Due", "0900000202")
+        seed_customer(db, "CUS0000003", "PT Far Due", "0900000203")
+        customers = {row.customer_code: row for row in db.query(Customer).all()}
+
+        membership = Membership(
+            customer_id=customers["CUS0000002"].id,
+            package_id=plan.id,
+            code="M-REGULAR-DUE",
+            registered_at=date(2026, 8, 1),
+            starts_at=date(2026, 8, 1),
+            expires_at=date(2026, 8, 31),
+            final_price=1000,
+            paid_amount=500,
+            debt_amount=500,
+            debt_due_date=date(2026, 8, 25),
+            status="active",
+        )
+        near_pt = PtEnrollment(
+            customer_id=customers["CUS0000001"].id,
+            group_type="1:1",
+            starts_at=date(2026, 8, 1),
+            total_sessions=12,
+            remaining_sessions=12,
+            final_price=1000,
+            paid_amount=0,
+            debt_amount=1000,
+            status="active",
+        )
+        far_pt = PtEnrollment(
+            customer_id=customers["CUS0000003"].id,
+            group_type="1:1",
+            starts_at=date(2026, 8, 1),
+            total_sessions=12,
+            remaining_sessions=12,
+            final_price=1000,
+            paid_amount=0,
+            debt_amount=1000,
+            status="active",
+        )
+        db.add_all([membership, near_pt, far_pt])
+        db.flush()
+        db.add_all([
+            PtDebtInstallment(enrollment_id=near_pt.id, amount=1000, paid_amount=0, due_date=date(2026, 8, 18)),
+            PtDebtInstallment(enrollment_id=far_pt.id, amount=1000, paid_amount=0, due_date=date(2026, 8, 30)),
+        ])
+        db.commit()
+
+        nearest = list_members(
+            db, q="", member_status="all", page=1, page_size=20, sort="debt_due_asc",
+        )
+        farthest = list_members(
+            db, q="", member_status="all", page=1, page_size=20, sort="debt_due_desc",
+        )
+        due_soon = list_members(
+            db, q="", member_status="all", page=1, page_size=20,
+            payment_status="overdue", overdue_days=3, sort="debt_due_asc",
+        )
+
+        assert [row["code"] for row in nearest["items"]] == [
+            "CUS0000001", "CUS0000002", "CUS0000003",
+        ]
+        assert [row["code"] for row in farthest["items"]] == [
+            "CUS0000003", "CUS0000002", "CUS0000001",
+        ]
+        assert [row["code"] for row in due_soon["items"]] == ["CUS0000001"]
+    finally:
+        set_test_today(None)
+        db.close()
+
+
 def test_created_member_without_regular_membership_stays_lead(tmp_path):
     from server.models import Customer, Employee, Person
     from server.services.members_service import create_member
