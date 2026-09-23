@@ -56,6 +56,40 @@ def seed_member_with_plan(db, status="pending", starts_at=date(2026, 8, 1), acti
     return customer, membership
 
 
+def test_backdated_suspend_preserves_displayed_days_until_reactivation(tmp_path):
+    from server.services.members_service import membership_action
+    from server.services.serializers import membership_data
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        today = date(2026, 9, 22)
+        set_test_today(today)
+        _, membership = seed_member_with_plan(db, status="active", activated_at=date(2026, 8, 1))
+        original_expiry = today + timedelta(days=66)
+        membership.expires_at = original_expiry
+        db.commit()
+        assert membership_data(membership)["timeline"]["remainingDays"] == 66
+        membership_action(db, membership.id, {
+            "action": "suspend", "suspendedAt": "2026-09-09", "reason": "Khách báo dừng lùi ngày",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership_data(membership, include_history=False)["timeline"]["remainingDays"] == 79
+        assert membership.expires_at == original_expiry
+        set_test_today(today + timedelta(days=90))
+        assert membership_data(membership)["timeline"]["remainingDays"] == 79
+        restart = today + timedelta(days=90)
+        membership_action(db, membership.id, {
+            "action": "activate", "activatedAt": restart.isoformat(), "reason": "Khách quay lại",
+        }, actor=None)
+        db.refresh(membership)
+        assert membership.expires_at == restart + timedelta(days=79)
+        assert membership_data(membership)["timeline"]["remainingDays"] == 79
+    finally:
+        set_test_today(None)
+        db.close()
+
+
 def test_pending_membership_activates_on_scheduled_vietnam_day(tmp_path):
     from server.services.membership_lifecycle import refresh_membership_lifecycle
 

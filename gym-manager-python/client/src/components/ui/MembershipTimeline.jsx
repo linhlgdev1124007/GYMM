@@ -28,17 +28,18 @@ export function MembershipTimeline({ membership, compact = false, onEditFreeze, 
   const timeline = membership?.timeline;
   if (!timeline?.segments?.length) return null;
   const freezes = timeline.freezes || timeline.segments.filter((segment) => segment.type === "freeze");
-  const marker = todayPosition(timeline);
+  const suspended = membership.status === "suspended";
+  const marker = suspended ? null : todayPosition(timeline);
   return (
     <div className={`membership-timeline ${compact ? "compact" : ""}`}>
       <div className="membership-timeline-head">
         <div>
-          <span>Còn lại</span>
+          <span>{suspended ? "Ngày được giữ lại" : "Còn lại"}</span>
           <strong>{remainingText(timeline.remainingDays)}</strong>
         </div>
         <div>
-          <span>Hạn hiện tại</span>
-          <strong>{shortDate(timeline.expiresAt)}</strong>
+          <span>{suspended ? "Tạm dừng từ" : "Hạn hiện tại"}</span>
+          <strong>{shortDate(suspended ? timeline.suspendedAt : timeline.expiresAt)}</strong>
         </div>
         <div>
           <span>Cộng bù</span>

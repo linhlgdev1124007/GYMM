@@ -626,9 +626,7 @@ export function MemberDetailPage() {
     .sort((left, right) => left.dueDate.localeCompare(right.dueDate))[0]
     ?.dueDate;
   const lastCheckin = member.checkins[0];
-  const daysLeft = current?.expiresAt
-    ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
-    : null;
+  const daysLeft = current?.timeline?.remainingDays ?? null;
   const joinedAt = member.memberships.at(-1)?.registeredAt;
   const currentPeriod = current ? membershipPeriodInfo(current) : null;
   const genderLabel =
@@ -1071,10 +1069,10 @@ export function MemberDetailPage() {
                 <h2>{current?.package.name || "Chưa đăng ký gói"}</h2>
                 <p>{current ? `${current.code} · Đăng ký ${shortDate(current.registeredAt)}` : "Chưa có hợp đồng membership đang được ghi nhận"}</p>
               </div>
-              {daysLeft != null && current?.status !== "suspended" && (
+              {daysLeft != null && (
                 <div className={`command-days ${daysLeft < 0 ? "danger" : daysLeft <= 14 ? "warning" : ""}`}>
                   <strong>{daysLeft < 0 ? Math.abs(daysLeft) : daysLeft}</strong>
-                  <span>{daysLeft < 0 ? "ngày quá hạn" : "ngày còn lại"}</span>
+                  <span>{current?.status === "suspended" ? "ngày được giữ lại" : daysLeft < 0 ? "ngày quá hạn" : "ngày còn lại"}</span>
                 </div>
               )}
             </div>

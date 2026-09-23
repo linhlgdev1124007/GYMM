@@ -95,12 +95,22 @@ def freeze_data(freeze):
 
 
 def membership_timeline(membership):
+    from .membership_lifecycle import _latest_suspend_event, _suspend_calculation_date
+
     if not membership.starts_at or not membership.expires_at:
         return None
     today = vietnam_today()
     starts_at = membership.starts_at
     expires_at = membership.expires_at
     total_days = max((expires_at - starts_at).days, 0)
+    suspended_at = (
+        _suspend_calculation_date(_latest_suspend_event(membership))
+        if membership.status == "suspended" else None
+    )
+    remaining_days = (
+        max((expires_at - max(suspended_at, starts_at)).days, 0)
+        if suspended_at else (expires_at - today).days
+    )
     freezes = sorted(
         [
             freeze for freeze in getattr(membership, "freezes", [])
@@ -168,7 +178,8 @@ def membership_timeline(membership):
         "startsAt": iso(starts_at),
         "expiresAt": iso(expires_at),
         "totalDays": total_days,
-        "remainingDays": (expires_at - today).days,
+        "remainingDays": remaining_days,
+        "suspendedAt": iso(suspended_at),
         "totalPlannedFreezeDays": total_planned,
         "totalCompensatedDays": total_compensated,
         "activeFreeze": active_freeze,

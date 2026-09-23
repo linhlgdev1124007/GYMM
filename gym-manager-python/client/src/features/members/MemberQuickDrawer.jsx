@@ -190,9 +190,7 @@ export function MemberQuickDrawer({
   ];
   const totalDebtAmount = membershipDebtAmount + trainingDebtAmount;
   const lastCheckin = member?.checkins[0];
-  const daysLeft = current?.expiresAt
-    ? Math.ceil((new Date(current.expiresAt) - new Date()) / 86400000)
-    : null;
+  const daysLeft = current?.timeline?.remainingDays ?? null;
   const openDialog = (name, operationAction = "") => {
     setFormError("");
     setMembershipOperationAction(name === "operations" ? operationAction : "");
@@ -342,7 +340,7 @@ export function MemberQuickDrawer({
               )}
             </div>}
             <section className="detail-section">
-              {daysLeft != null && daysLeft <= 14 && (
+              {current?.status !== "suspended" && daysLeft != null && daysLeft <= 14 && (
                 <div className="detail-alert">
                   <span className="flex items-center gap-2">
                     <TriangleAlert size={15} />
