@@ -443,11 +443,6 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         PtEnrollment.debt_amount > 0,
         PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
     ).correlate(Customer).scalar_subquery()
-    pt_latest_debt_due_date = db.query(func.max(PtDebtInstallment.due_date)).join(PtEnrollment).filter(
-        PtEnrollment.customer_id == Customer.id,
-        PtEnrollment.debt_amount > 0,
-        PtDebtInstallment.amount > PtDebtInstallment.paid_amount,
-    ).correlate(Customer).scalar_subquery()
     latest_debt_amount = db.query(Membership.debt_amount).filter(
         Membership.id == current_regular_id
     ).correlate(Customer).scalar_subquery()
@@ -465,14 +460,6 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
         ),
         (regular_debt_due_date != None, regular_debt_due_date),
         else_=pt_earliest_debt_due_date,
-    )
-    latest_combined_debt_due_date = case(
-        (
-            and_(regular_debt_due_date != None, pt_latest_debt_due_date != None),
-            case((regular_debt_due_date >= pt_latest_debt_due_date, regular_debt_due_date), else_=pt_latest_debt_due_date),
-        ),
-        (regular_debt_due_date != None, regular_debt_due_date),
-        else_=pt_latest_debt_due_date,
     )
     debt_due_group = case(
         (earliest_debt_due_date != None, 0),
@@ -549,7 +536,7 @@ def list_members(db: Session, q: str, member_status: str, page: int, page_size: 
     elif sort == "debt_due_desc":
         orderings = [
             debt_due_group.asc(),
-            latest_combined_debt_due_date.desc(),
+            earliest_debt_due_date.desc(),
             _customer_code_sort_expression(db).desc(),
             Customer.id.desc(),
         ]

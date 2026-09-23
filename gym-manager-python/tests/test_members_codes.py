@@ -432,7 +432,8 @@ def test_debt_due_sort_and_due_soon_filter_use_pt_installment_dates(tmp_path):
         db.add_all([membership, near_pt, far_pt])
         db.flush()
         db.add_all([
-            PtDebtInstallment(enrollment_id=near_pt.id, amount=1000, paid_amount=0, due_date=date(2026, 8, 18)),
+            PtDebtInstallment(enrollment_id=near_pt.id, amount=500, paid_amount=0, due_date=date(2026, 8, 18)),
+            PtDebtInstallment(enrollment_id=near_pt.id, amount=500, paid_amount=0, due_date=date(2026, 12, 25)),
             PtDebtInstallment(enrollment_id=far_pt.id, amount=1000, paid_amount=0, due_date=date(2026, 8, 30)),
         ])
         db.commit()
