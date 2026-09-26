@@ -51,6 +51,7 @@ const revenueTypeLabels = {
 const reportViews = [
   ["overview", "Tổng quan"],
   ["revenue", "Doanh thu"],
+  ["pt", "PT"],
   ["debt", "Công nợ"],
   ["attendance", "Điểm danh"],
 ];
@@ -188,7 +189,12 @@ export function ReportsPage() {
   const [revenueSort, setRevenueSort] = useState({ key: "paidAt", direction: "desc" });
   const [revenuePage, setRevenuePage] = useState(1);
   const [revenuePageSize, setRevenuePageSize] = useState(20);
+  const [ptMethodFilter, setPtMethodFilter] = useState("all");
+  const [ptSort, setPtSort] = useState({ key: "paidAt", direction: "desc" });
+  const [ptPage, setPtPage] = useState(1);
+  const [ptPageSize, setPtPageSize] = useState(20);
   const [revenueColumns, setRevenueColumns] = useState(["paidAt", "paymentNo", "type", "member", "package", "sale", "method", "discountAmount", "surchargeAmount", "amount"]);
+  const [ptColumns, setPtColumns] = useState(["paidAt", "paymentNo", "member", "package", "method", "amount"]);
   const [debtColumns, setDebtColumns] = useState(["member", "package", "sale", "amount", "dueDate", "status", "action"]);
   const [savedViews, setSavedViews] = useState(() => {
     try { return JSON.parse(localStorage.getItem("pulsefit-report-debt-views") || "[]"); } catch { return []; }
@@ -215,8 +221,9 @@ export function ReportsPage() {
     }, { replace: true });
   }, [compare, dateFrom, dateTo, debtFilter, debtSearch, setParams, view]);
 
-  const revenueSaleOptions = useMemo(() => data?.revenueBySale || [], [data?.revenueBySale]);
-  const revenueMethodOptions = useMemo(() => Array.from(new Set((data?.revenueItems || []).map((row) => row.method).filter(Boolean))).sort(), [data?.revenueItems]);
+  const revenueSaleOptions = useMemo(() => data?.businessRevenueBySale || [], [data?.businessRevenueBySale]);
+  const revenueMethodOptions = useMemo(() => Array.from(new Set((data?.businessRevenueItems || []).map((row) => row.method).filter(Boolean))).sort(), [data?.businessRevenueItems]);
+  const ptMethodOptions = useMemo(() => Array.from(new Set((data?.ptRevenueItems || []).map((row) => row.method).filter(Boolean))).sort(), [data?.ptRevenueItems]);
   const debtSaleOptions = useMemo(() => {
     const map = new Map();
     (data?.debts || []).forEach((row) => {
@@ -228,12 +235,17 @@ export function ReportsPage() {
   const debtPackageOptions = useMemo(() => Array.from(new Set((data?.debts || []).map((row) => row.package).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi")), [data?.debts]);
 
   const revenueRows = useMemo(() => {
-    const filtered = (data?.revenueItems || []).filter((row) => {
+    const filtered = (data?.businessRevenueItems || []).filter((row) => {
       const saleKey = row.saleEmployeeId == null ? "unassigned" : String(row.saleEmployeeId);
       return (revenueSaleFilter === "all" || saleKey === revenueSaleFilter) && (revenueMethodFilter === "all" || row.method === revenueMethodFilter) && (revenueTypeFilter === "all" || row.type === revenueTypeFilter);
     });
     return sortedRows(filtered, revenueSort, (row, key) => key === "sale" ? row.saleName : key === "member" ? row.member : key === "package" ? row.package : key === "method" ? row.method : row[key]);
-  }, [data?.revenueItems, revenueMethodFilter, revenueSaleFilter, revenueSort, revenueTypeFilter]);
+  }, [data?.businessRevenueItems, revenueMethodFilter, revenueSaleFilter, revenueSort, revenueTypeFilter]);
+
+  const ptRows = useMemo(() => {
+    const filtered = (data?.ptRevenueItems || []).filter((row) => ptMethodFilter === "all" || row.method === ptMethodFilter);
+    return sortedRows(filtered, ptSort, (row, key) => key === "member" ? row.member : key === "package" ? row.package : key === "method" ? row.method : row[key]);
+  }, [data?.ptRevenueItems, ptMethodFilter, ptSort]);
 
   const debtRows = useMemo(() => {
     const search = normalizeSearch(debtSearch);
@@ -262,8 +274,10 @@ export function ReportsPage() {
 
   const makePagination = (page, pageSize, total) => ({ page, pageSize, total, totalPages: Math.max(Math.ceil(total / pageSize), 1) });
   const revenuePagination = makePagination(revenuePage, revenuePageSize, revenueRows.length);
+  const ptPagination = makePagination(ptPage, ptPageSize, ptRows.length);
   const debtPagination = makePagination(debtPage, debtPageSize, debtRows.length);
   const revenuePageRows = revenueRows.slice((revenuePage - 1) * revenuePageSize, revenuePage * revenuePageSize);
+  const ptPageRows = ptRows.slice((ptPage - 1) * ptPageSize, ptPage * ptPageSize);
   const debtPageRows = debtRows.slice((debtPage - 1) * debtPageSize, debtPage * debtPageSize);
   const debtSummary = useMemo(() => ({
     amount: debtRows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
@@ -275,6 +289,7 @@ export function ReportsPage() {
 
   useEffect(() => { if (debtPage > debtPagination.totalPages) setDebtPage(debtPagination.totalPages); }, [debtPage, debtPagination.totalPages]);
   useEffect(() => { if (revenuePage > revenuePagination.totalPages) setRevenuePage(revenuePagination.totalPages); }, [revenuePage, revenuePagination.totalPages]);
+  useEffect(() => { if (ptPage > ptPagination.totalPages) setPtPage(ptPagination.totalPages); }, [ptPage, ptPagination.totalPages]);
   useEffect(() => { setDebtSelection((current) => current.filter((id) => debtRows.some((row) => row.membershipId === id))); }, [debtRows]);
 
   const applyPeriod = (from = draftFrom, to = draftTo) => {
@@ -306,6 +321,9 @@ export function ReportsPage() {
   const exportRevenue = () => downloadCsv(`doanh-thu-${dateFrom}-${dateTo}.csv`, [
     { label: "Ngày thu", value: (row) => dateTime(row.paidAt) }, { label: "Phiếu thu", value: (row) => row.paymentNo }, { label: "Phân loại", value: (row) => row.revenueType }, { label: "Hội viên/Khách", value: (row) => row.member }, { label: "Mã hội viên", value: (row) => row.memberCode }, { label: "Gói tập", value: (row) => row.package }, { label: "Sale", value: (row) => row.saleName }, { label: "Phương thức", value: (row) => methodLabels[row.method] || row.method }, { label: "Giá gốc gói", value: (row) => row.basePrice }, { label: "Ưu đãi", value: (row) => row.discountAmount }, { label: "Phụ thu", value: (row) => row.surchargeAmount }, { label: "Tổng gói sau điều chỉnh", value: (row) => row.finalPrice }, { label: "Số tiền thu", value: (row) => row.amount },
   ], revenueRows);
+  const exportPtRevenue = () => downloadCsv(`doanh-thu-pt-${dateFrom}-${dateTo}.csv`, [
+    { label: "Ngày thu", value: (row) => dateTime(row.paidAt) }, { label: "Phiếu thu", value: (row) => row.paymentNo }, { label: "Hội viên", value: (row) => row.member }, { label: "Mã hội viên", value: (row) => row.memberCode }, { label: "Gói PT", value: (row) => row.package }, { label: "Phương thức", value: (row) => methodLabels[row.method] || row.method }, { label: "Số tiền thu", value: (row) => row.amount },
+  ], ptRows);
   const exportDebt = (selectedOnly = false) => {
     const rows = selectedOnly ? debtRows.filter((row) => debtSelection.includes(row.membershipId)) : debtRows;
     downloadCsv(`cong-no-${dateFrom}-${dateTo}.csv`, [
@@ -340,12 +358,13 @@ export function ReportsPage() {
   const switchView = (next) => { setView(next); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const activeFilterCount = [debtSaleFilter !== "all", debtPackageFilter !== "all", debtAmountFilter !== "all"].filter(Boolean).length;
   const summary = data?.summary || {};
-  const revenueDelta = compare ? percentDelta(summary.revenue, summary.previousRevenue) : null;
+  const revenueDelta = compare ? percentDelta(summary.businessRevenue, summary.previousBusinessRevenue) : null;
+  const ptRevenueDelta = compare ? percentDelta(summary.ptRevenue, summary.previousPtRevenue) : null;
   const checkinDelta = compare ? percentDelta(summary.checkins, summary.previousCheckins) : null;
 
   return (
     <div className="reports-workspace">
-      <PageHeader eyebrow="Phân tích" title="Báo cáo điều hành" description="Theo dõi dòng tiền, công nợ và nhịp độ vận hành trong một không gian thống nhất." action={<div className="report-header-actions"><span className="report-freshness"><Clock3 size={13} />{data?.generatedAt ? `Cập nhật ${dateTime(data.generatedAt)}` : "Đang cập nhật"}</span><Button variant="secondary" size="sm" onClick={() => query.refetch()} loading={query.isFetching}><RefreshCw size={14} />Làm mới</Button><Button size="sm" onClick={view === "debt" ? () => exportDebt() : exportRevenue}><Download size={14} />Xuất CSV</Button></div>} />
+      <PageHeader eyebrow="Phân tích" title="Báo cáo điều hành" description="Theo dõi dòng tiền, công nợ và nhịp độ vận hành trong một không gian thống nhất." action={<div className="report-header-actions"><span className="report-freshness"><Clock3 size={13} />{data?.generatedAt ? `Cập nhật ${dateTime(data.generatedAt)}` : "Đang cập nhật"}</span><Button variant="secondary" size="sm" onClick={() => query.refetch()} loading={query.isFetching}><RefreshCw size={14} />Làm mới</Button><Button size="sm" onClick={view === "debt" ? () => exportDebt() : view === "pt" ? exportPtRevenue : exportRevenue}><Download size={14} />Xuất CSV</Button></div>} />
 
       <section className="report-control-bar" aria-label="Phạm vi báo cáo">
         <div className="report-presets" role="group" aria-label="Khoảng thời gian nhanh">
@@ -369,8 +388,9 @@ export function ReportsPage() {
       </nav>
 
       <section className="report-metric-grid" aria-label="Chỉ số chính">
-        <Metric label="Doanh thu đã thu" value={money(summary.revenue)} delta={revenueDelta} tone="positive" onClick={() => switchView("revenue")} />
+        <Metric label="Doanh thu" value={money(summary.businessRevenue)} delta={revenueDelta} tone="positive" onClick={() => switchView("revenue")} />
         <Metric label="Doanh thu hội viên" value={money(summary.membershipRevenue)} context="Gói đăng ký, gia hạn và thu thêm" tone="neutral" onClick={() => { setRevenueTypeFilter("membership"); switchView("revenue"); }} />
+        <Metric label="Doanh thu PT" value={money(summary.ptRevenue)} delta={ptRevenueDelta} tone="positive" onClick={() => switchView("pt")} />
         <Metric label="Ưu đãi áp dụng" value={money(summary.membershipDiscountAmount)} context={`${summary.membershipAdjustmentCount || 0} gói trong kỳ`} tone="neutral" onClick={() => switchView("revenue")} />
         <Metric label="Phụ thu gói" value={money(summary.membershipSurchargeAmount)} context="Cộng vào tổng giá trị gói" tone="neutral" onClick={() => switchView("revenue")} />
         <Metric label="Khách tập ngày" value={money(summary.dayPassRevenue)} context="Lượt vãng lai chưa hoàn tiền" tone="neutral" onClick={() => { setRevenueTypeFilter("day_pass"); switchView("revenue"); }} />
@@ -386,7 +406,7 @@ export function ReportsPage() {
           <div className="report-overview-grid">
             <section className="report-panel report-trend-panel">
               <div className="report-panel-header"><div><h2>Xu hướng doanh thu</h2><p>Dòng tiền thực thu theo ngày trong kỳ đã chọn</p></div><button type="button" onClick={() => switchView("revenue")}>Xem chi tiết</button></div>
-              <div className="report-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.daily || []} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}><defs><linearGradient id="revenueArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#163a5f" stopOpacity={0.22} /><stop offset="100%" stopColor="#163a5f" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e2e8f0" /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).slice(0, 5)} tickLine={false} axisLine={false} minTickGap={22} /><YAxis tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} width={34} /><Tooltip content={<ChartTooltip />} /><Area type="monotone" dataKey="amount" name="Đã thu" stroke="#163a5f" strokeWidth={2} fill="url(#revenueArea)" /></AreaChart></ResponsiveContainer></div>
+              <div className="report-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.daily || []} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}><defs><linearGradient id="revenueArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#163a5f" stopOpacity={0.22} /><stop offset="100%" stopColor="#163a5f" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e2e8f0" /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).slice(0, 5)} tickLine={false} axisLine={false} minTickGap={22} /><YAxis tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} width={34} /><Tooltip content={<ChartTooltip />} /><Area type="monotone" dataKey="businessAmount" name="Hội viên + tập ngày" stroke="#163a5f" strokeWidth={2} fill="url(#revenueArea)" /></AreaChart></ResponsiveContainer></div>
             </section>
             <section className="report-panel report-aging-panel">
               <div className="report-panel-header"><div><h2>Ưu tiên công nợ</h2><p>Khoản đến hạn trong phạm vi báo cáo</p></div><button type="button" onClick={() => switchView("debt")}>Mở công nợ</button></div>
@@ -396,7 +416,7 @@ export function ReportsPage() {
           <div className="report-overview-grid secondary">
             <section className="report-panel">
               <div className="report-panel-header"><div><h2>Hiệu suất Sale</h2><p>Xếp hạng theo doanh thu thực thu</p></div><button type="button" onClick={() => switchView("revenue")}>Toàn bộ Sale</button></div>
-              <div className="sale-ranking">{(data?.revenueBySale || []).slice(0, 6).map((row, index) => { const max = Number(data?.revenueBySale?.[0]?.amount || 1); return <div key={row.saleEmployeeId || "unassigned"}><span className="sale-rank">{index + 1}</span><span className="sale-person"><strong>{row.saleName}</strong><small>{row.saleTitle || "Chưa có chức vụ"} · {row.payments} phiếu</small></span><span className="sale-bar"><i style={{ width: `${Math.max((row.amount / max) * 100, 2)}%` }} /></span><strong className="sale-amount">{money(row.amount)}</strong></div>; })}{!data?.revenueBySale?.length && <div className="report-empty-compact">Chưa có doanh thu trong kỳ.</div>}</div>
+              <div className="sale-ranking">{(data?.businessRevenueBySale || []).slice(0, 6).map((row, index) => { const max = Number(data?.businessRevenueBySale?.[0]?.amount || 1); return <div key={row.saleEmployeeId || "unassigned"}><span className="sale-rank">{index + 1}</span><span className="sale-person"><strong>{row.saleName}</strong><small>{row.saleTitle || "Chưa có chức vụ"} · {row.payments} phiếu</small></span><span className="sale-bar"><i style={{ width: `${Math.max((row.amount / max) * 100, 2)}%` }} /></span><strong className="sale-amount">{money(row.amount)}</strong></div>; })}{!data?.businessRevenueBySale?.length && <div className="report-empty-compact">Chưa có doanh thu trong kỳ.</div>}</div>
             </section>
             <section className="report-panel">
               <div className="report-panel-header"><div><h2>Khoản cần xử lý trước</h2><p>Sắp xếp theo mức độ khẩn cấp và hạn thanh toán</p></div><button type="button" onClick={() => switchView("debt")}>Xem tất cả</button></div>
@@ -409,10 +429,10 @@ export function ReportsPage() {
       {view === "revenue" && (
         <div className="report-view">
           <div className="report-overview-grid">
-            <section className="report-panel report-trend-panel"><div className="report-panel-header"><div><h2>Doanh thu theo ngày</h2><p>{shortDate(dateFrom)} - {shortDate(dateTo)}</p></div></div><div className="report-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.daily || []} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}><CartesianGrid vertical={false} stroke="#e2e8f0" /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).slice(0, 5)} tickLine={false} axisLine={false} minTickGap={22} /><YAxis tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} width={34} /><Tooltip content={<ChartTooltip />} /><Area type="monotone" dataKey="amount" name="Đã thu" stroke="#163a5f" strokeWidth={2} fill="#e8eef4" /></AreaChart></ResponsiveContainer></div></section>
-            <section className="report-panel"><div className="report-panel-header"><div><h2>Phân loại doanh thu</h2><p>Tách riêng hội viên và khách tập ngày</p></div></div><div className="method-breakdown">{(data?.revenueByType || []).map((row) => <button type="button" key={row.type} onClick={() => { setRevenueTypeFilter(row.type); setRevenuePage(1); }}><span><strong>{row.label}</strong><small>{row.share}% · {row.payments} phiếu</small></span><span className="method-track"><i style={{ width: `${row.share}%` }} /></span><strong>{money(row.amount)}</strong></button>)}{!data?.revenueByType?.length && <div className="report-empty-compact">Chưa có giao dịch trong kỳ.</div>}</div></section>
+            <section className="report-panel report-trend-panel"><div className="report-panel-header"><div><h2>Doanh thu theo ngày</h2><p>Hội viên + khách tập ngày · {shortDate(dateFrom)} - {shortDate(dateTo)}</p></div></div><div className="report-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.daily || []} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}><CartesianGrid vertical={false} stroke="#e2e8f0" /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).slice(0, 5)} tickLine={false} axisLine={false} minTickGap={22} /><YAxis tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} width={34} /><Tooltip content={<ChartTooltip />} /><Area type="monotone" dataKey="businessAmount" name="Hội viên + tập ngày" stroke="#163a5f" strokeWidth={2} fill="#e8eef4" /></AreaChart></ResponsiveContainer></div></section>
+            <section className="report-panel"><div className="report-panel-header"><div><h2>Phân loại doanh thu</h2><p>Tách riêng hội viên và khách tập ngày</p></div></div><div className="method-breakdown">{(data?.businessRevenueByType || []).map((row) => <button type="button" key={row.type} onClick={() => { setRevenueTypeFilter(row.type); setRevenuePage(1); }}><span><strong>{row.label}</strong><small>{row.share}% · {row.payments} phiếu</small></span><span className="method-track"><i style={{ width: `${row.share}%` }} /></span><strong>{money(row.amount)}</strong></button>)}{!data?.businessRevenueByType?.length && <div className="report-empty-compact">Chưa có giao dịch trong kỳ.</div>}</div></section>
           </div>
-          <section className="report-panel report-section-block"><div className="report-panel-header"><div><h2>Phương thức thanh toán</h2><p>Tỷ trọng trên tổng doanh thu</p></div></div><div className="method-breakdown">{(data?.revenueByMethod || []).map((row) => <div key={row.method}><span><strong>{methodLabels[row.method] || row.method}</strong><small>{row.share}%</small></span><span className="method-track"><i style={{ width: `${row.share}%` }} /></span><strong>{money(row.amount)}</strong></div>)}{!data?.revenueByMethod?.length && <div className="report-empty-compact">Chưa có giao dịch trong kỳ.</div>}</div></section>
+          <section className="report-panel report-section-block"><div className="report-panel-header"><div><h2>Phương thức thanh toán</h2><p>Tỷ trọng trên doanh thu hội viên + tập ngày</p></div></div><div className="method-breakdown">{(data?.businessRevenueByMethod || []).map((row) => <div key={row.method}><span><strong>{methodLabels[row.method] || row.method}</strong><small>{row.share}%</small></span><span className="method-track"><i style={{ width: `${row.share}%` }} /></span><strong>{money(row.amount)}</strong></div>)}{!data?.businessRevenueByMethod?.length && <div className="report-empty-compact">Chưa có giao dịch trong kỳ.</div>}</div></section>
           <section className="report-panel report-section-block">
             <div className="report-panel-header"><div><h2>Điều chỉnh giá gói</h2><p>Ưu đãi và phụ thu theo ngày đăng ký gói trong kỳ</p></div></div>
             <div className="method-breakdown">
@@ -422,11 +442,35 @@ export function ReportsPage() {
               <div><span><strong>Tổng gói sau điều chỉnh</strong><small>Giá gốc - ưu đãi + phụ thu</small></span><span className="method-track"><i style={{ width: "100%" }} /></span><strong>{money(summary.membershipAdjustedValue)}</strong></div>
             </div>
           </section>
-          <section className="report-panel report-section-block"><div className="report-panel-header"><div><h2>Hiệu suất Sale</h2><p>So sánh doanh thu và số phiếu thu của từng nhân viên</p></div></div><div className="report-sale-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={(data?.revenueBySale || []).slice(0, 12)} layout="vertical" margin={{ top: 8, right: 24, left: 20, bottom: 8 }}><CartesianGrid horizontal={false} stroke="#e2e8f0" /><XAxis type="number" tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="saleName" width={130} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => money(value)} /><Bar dataKey="amount" name="Doanh thu" fill="#163a5f" radius={[0, 3, 3, 0]} barSize={18} /></BarChart></ResponsiveContainer></div></section>
+          <section className="report-panel report-section-block"><div className="report-panel-header"><div><h2>Hiệu suất Sale</h2><p>So sánh doanh thu và số phiếu thu của từng nhân viên</p></div></div><div className="report-sale-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={(data?.businessRevenueBySale || []).slice(0, 12)} layout="vertical" margin={{ top: 8, right: 24, left: 20, bottom: 8 }}><CartesianGrid horizontal={false} stroke="#e2e8f0" /><XAxis type="number" tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="saleName" width={130} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => money(value)} /><Bar dataKey="amount" name="Doanh thu" fill="#163a5f" radius={[0, 3, 3, 0]} barSize={18} /></BarChart></ResponsiveContainer></div></section>
           <section className="report-panel report-section-block">
             <div className="report-table-header"><div><h2>Chi tiết doanh thu</h2><p>Từng phiếu thu để đối chiếu và truy vết</p></div><div className="report-table-tools"><Select aria-label="Lọc theo phân loại" value={revenueTypeFilter} onChange={(event) => { setRevenueTypeFilter(event.target.value); setRevenuePage(1); }}><option value="all">Mọi phân loại</option>{Object.entries(revenueTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select><Select aria-label="Lọc theo Sale" value={revenueSaleFilter} onChange={(event) => { setRevenueSaleFilter(event.target.value); setRevenuePage(1); }}><option value="all">Mọi Sale</option>{revenueSaleOptions.map((row) => <option key={row.saleEmployeeId || "unassigned"} value={row.saleEmployeeId == null ? "unassigned" : String(row.saleEmployeeId)}>{row.saleName}</option>)}</Select><Select aria-label="Lọc theo phương thức" value={revenueMethodFilter} onChange={(event) => { setRevenueMethodFilter(event.target.value); setRevenuePage(1); }}><option value="all">Mọi phương thức</option>{revenueMethodOptions.map((method) => <option key={method} value={method}>{methodLabels[method] || method}</option>)}</Select><details className="report-menu"><summary title="Chọn cột hiển thị"><Columns3 size={15} /><span>Cột</span><ChevronDown size={13} /></summary><div>{revenueColumnDefinitions.map((column) => <label key={column.key}><input type="checkbox" checked={revenueColumns.includes(column.key)} onChange={() => setRevenueColumns((current) => current.includes(column.key) ? current.filter((key) => key !== column.key) : [...current, column.key])} />{column.label || "Thao tác"}</label>)}</div></details><Button size="sm" variant="secondary" onClick={exportRevenue}><Download size={14} />Xuất</Button></div></div>
             <DataTable loading={query.isLoading} error={query.error} onRetry={query.refetch} rows={revenuePageRows} rowKey="paymentId" columns={revenueColumnDefinitions.filter((column) => revenueColumns.includes(column.key))} sortState={revenueSort} onSortChange={(next) => { setRevenueSort(next); setRevenuePage(1); }} emptyTitle="Không có doanh thu" emptyDescription="Không có phiếu thu nào trong kỳ hoặc bộ lọc hiện tại." />
             <Pagination data={revenuePagination} onPage={setRevenuePage} pageSize={revenuePageSize} onPageSize={(value) => { setRevenuePageSize(value); setRevenuePage(1); }} />
+          </section>
+        </div>
+      )}
+
+      {view === "pt" && (
+        <div className="report-view">
+          <div className="report-overview-grid">
+            <section className="report-panel report-trend-panel">
+              <div className="report-panel-header"><div><h2>Doanh thu PT theo ngày</h2><p>{shortDate(dateFrom)} - {shortDate(dateTo)}</p></div></div>
+              <div className="report-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.daily || []} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}><CartesianGrid vertical={false} stroke="#e2e8f0" /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).slice(0, 5)} tickLine={false} axisLine={false} minTickGap={22} /><YAxis tickFormatter={(value) => `${Math.round(value / 1000000)}M`} tickLine={false} axisLine={false} width={34} /><Tooltip content={<ChartTooltip />} /><Area type="monotone" dataKey="ptAmount" name="PT" stroke="#7c3aed" strokeWidth={2} fill="#ede9fe" /></AreaChart></ResponsiveContainer></div>
+            </section>
+            <section className="report-panel">
+              <div className="report-panel-header"><div><h2>Tổng quan PT</h2><p>Dòng tiền PT được tách khỏi doanh thu hội viên</p></div></div>
+              <div className="method-breakdown">
+                <div><span><strong>Thực thu PT</strong><small>{data?.ptRevenueItems?.length || 0} phiếu thu</small></span><span className="method-track"><i style={{ width: "100%" }} /></span><strong>{money(summary.ptRevenue)}</strong></div>
+                <div><span><strong>Tổng dòng tiền trung tâm</strong><small>Doanh thu + PT</small></span><span className="method-track"><i style={{ width: summary.totalRevenue ? `${Math.min((Number(summary.ptRevenue || 0) / Number(summary.totalRevenue)) * 100, 100)}%` : "0%" }} /></span><strong>{money(summary.totalRevenue)}</strong></div>
+              </div>
+            </section>
+          </div>
+          <section className="report-panel report-section-block"><div className="report-panel-header"><div><h2>Phương thức thanh toán PT</h2><p>Tỷ trọng trên doanh thu PT</p></div></div><div className="method-breakdown">{(data?.ptRevenueByMethod || []).map((row) => <div key={row.method}><span><strong>{methodLabels[row.method] || row.method}</strong><small>{row.share}%</small></span><span className="method-track"><i style={{ width: `${row.share}%` }} /></span><strong>{money(row.amount)}</strong></div>)}{!data?.ptRevenueByMethod?.length && <div className="report-empty-compact">Chưa có giao dịch PT trong kỳ.</div>}</div></section>
+          <section className="report-panel report-section-block">
+            <div className="report-table-header"><div><h2>Chi tiết doanh thu PT</h2><p>Các phiếu thu liên kết với đăng ký PT</p></div><div className="report-table-tools"><Select aria-label="Lọc phương thức PT" value={ptMethodFilter} onChange={(event) => { setPtMethodFilter(event.target.value); setPtPage(1); }}><option value="all">Mọi phương thức</option>{ptMethodOptions.map((method) => <option key={method} value={method}>{methodLabels[method] || method}</option>)}</Select><details className="report-menu"><summary title="Chọn cột hiển thị"><Columns3 size={15} /><span>Cột</span><ChevronDown size={13} /></summary><div>{revenueColumnDefinitions.filter((column) => !["type", "basePrice", "discountAmount", "surchargeAmount", "finalPrice", "sale"].includes(column.key)).map((column) => <label key={column.key}><input type="checkbox" checked={ptColumns.includes(column.key)} onChange={() => setPtColumns((current) => current.includes(column.key) ? current.filter((key) => key !== column.key) : [...current, column.key])} />{column.label}</label>)}</div></details><Button size="sm" variant="secondary" onClick={exportPtRevenue}><Download size={14} />Xuất PT</Button></div></div>
+            <DataTable loading={query.isLoading} error={query.error} onRetry={query.refetch} rows={ptPageRows} rowKey="paymentId" columns={revenueColumnDefinitions.filter((column) => ptColumns.includes(column.key))} sortState={ptSort} onSortChange={(next) => { setPtSort(next); setPtPage(1); }} emptyTitle="Không có doanh thu PT" emptyDescription="Không có phiếu thu PT nào trong kỳ hoặc bộ lọc hiện tại." />
+            <Pagination data={ptPagination} onPage={setPtPage} pageSize={ptPageSize} onPageSize={(value) => { setPtPageSize(value); setPtPage(1); }} />
           </section>
         </div>
       )}

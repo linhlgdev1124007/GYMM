@@ -239,6 +239,8 @@ def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
         assert data["daily"] == [{
             "date": vietnam_today().isoformat(),
             "amount": 700000.0,
+            "businessAmount": 700000.0,
+            "totalAmount": 700000.0,
             "membershipAmount": 700000.0,
             "ptAmount": 0,
             "dayPassAmount": 0,
@@ -254,6 +256,78 @@ def test_reports_include_revenue_by_sale_and_detail_rows(tmp_path):
         assert data["revenueItems"][0]["paymentNo"] == "PAY-REPORT"
         assert data["revenueItems"][0]["saleName"] == "Sale Report"
         assert data["revenueItems"][0]["memberCode"] == "CUS-REPORT"
+    finally:
+        db.close()
+
+
+def test_reports_separate_membership_and_day_pass_revenue_from_pt(tmp_path):
+    from datetime import datetime
+
+    from server.models import DayPassVisit, Membership, Payment, PtEnrollment
+    from server.services.dashboard_service import reports
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        customer = seed_expired_member(db, code="CUS-REPORT-SPLIT")
+        membership = db.query(Membership).one()
+        today = vietnam_today()
+        paid_at = datetime.combine(today, datetime.min.time())
+        pt_enrollment = PtEnrollment(
+            customer_id=customer.id,
+            package_name="PT 12 buổi",
+            starts_at=today,
+            total_sessions=12,
+            remaining_sessions=12,
+            final_price=900000,
+            paid_amount=300000,
+            debt_amount=600000,
+        )
+        db.add(pt_enrollment)
+        db.flush()
+        db.add_all([
+            Payment(
+                customer_id=customer.id,
+                membership_id=membership.id,
+                payment_no="PAY-MEMBERSHIP-SPLIT",
+                paid_at=paid_at,
+                amount=500000,
+                method="cash",
+            ),
+            Payment(
+                customer_id=customer.id,
+                pt_enrollment_id=pt_enrollment.id,
+                payment_no="PAY-PT-SPLIT",
+                paid_at=paid_at,
+                amount=300000,
+                method="bank_transfer",
+                channel="pt",
+            ),
+            DayPassVisit(
+                guest_name="Walk-in Split",
+                visit_date=today,
+                charged_amount=79000,
+                payment_method="cash",
+                paid_at=paid_at,
+                status="active",
+            ),
+        ])
+        db.commit()
+
+        data = reports(db, today.isoformat(), today.isoformat())
+
+        assert data["summary"]["businessRevenue"] == 579000
+        assert data["summary"]["ptRevenue"] == 300000
+        assert data["summary"]["totalRevenue"] == 879000
+        assert data["daily"][0]["businessAmount"] == 579000
+        assert data["daily"][0]["ptAmount"] == 300000
+        assert data["daily"][0]["totalAmount"] == 879000
+        assert [row["type"] for row in data["businessRevenueByType"]] == ["membership", "day_pass"]
+        assert data["businessRevenueByMethod"] == [{"method": "cash", "amount": 579000.0, "share": 100.0}]
+        assert data["ptRevenueByMethod"] == [{"method": "bank_transfer", "amount": 300000.0, "share": 100.0}]
+        assert {row["type"] for row in data["businessRevenueItems"]} == {"membership", "day_pass"}
+        assert [row["type"] for row in data["ptRevenueItems"]] == ["pt"]
+        assert data["ptRevenueItems"][0]["package"] == "PT 12 buổi"
     finally:
         db.close()
 
