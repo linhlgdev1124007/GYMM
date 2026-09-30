@@ -35,15 +35,15 @@ export function MembershipTimeline({ membership, compact = false, onEditFreeze, 
       <div className="membership-timeline-head">
         <div>
           <span>{suspended ? "Ngày được giữ lại" : "Còn lại"}</span>
-          <strong>{remainingText(timeline.remainingDays)}</strong>
+          <strong>{remainingText(timeline.effectiveRemainingDays ?? timeline.remainingDays)}</strong>
         </div>
         <div>
           <span>{suspended ? "Tạm dừng từ" : "Hạn hiện tại"}</span>
-          <strong>{shortDate(suspended ? timeline.suspendedAt : timeline.expiresAt)}</strong>
+          <strong>{shortDate(suspended ? timeline.suspendedAt : timeline.effectiveExpiresAt || timeline.expiresAt)}</strong>
         </div>
         <div>
-          <span>Cộng bù</span>
-          <strong>{timeline.totalCompensatedDays || 0} ngày</strong>
+          <span>{timeline.pendingFreezeDays ? "Bù dự kiến" : "Đã cộng bù"}</span>
+          <strong>{(timeline.totalCompensatedDays || 0) + (timeline.pendingFreezeDays || 0)} ngày</strong>
         </div>
       </div>
       <div className="membership-timeline-bar" aria-label="Timeline thời hạn gói">
@@ -64,7 +64,7 @@ export function MembershipTimeline({ membership, compact = false, onEditFreeze, 
       </div>
       <div className="membership-timeline-scale">
         <span>{shortDate(timeline.startsAt)}</span>
-        <span>{shortDate(timeline.expiresAt)}</span>
+        <span>{shortDate(timeline.effectiveExpiresAt || timeline.expiresAt)}</span>
       </div>
       {!!freezes.length && (
         <div className="membership-freeze-list">
@@ -76,7 +76,9 @@ export function MembershipTimeline({ membership, compact = false, onEditFreeze, 
                   {statusLabel[freeze.status] || "Bảo lưu"} · {shortDate(freeze.startsAt)} → {shortDate(freeze.endsAt)}
                 </strong>
                 <p>
-                  {freeze.days} ngày bảo lưu · đã cộng {freeze.compensatedDays || 0} ngày
+                  {freeze.days} ngày bảo lưu · {freeze.completedAt
+                    ? `đã cộng ${freeze.compensatedDays || 0} ngày`
+                    : `dự kiến cộng ${freeze.projectedCompensationDays ?? freeze.effectiveDays ?? freeze.days} ngày`}
                   {freeze.completedAt ? ` · kết thúc ${shortDate(freeze.completedAt)}` : ""}
                   {freeze.reason ? ` · ${freeze.reason}` : ""}
                 </p>

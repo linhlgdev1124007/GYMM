@@ -190,7 +190,9 @@ export function MemberQuickDrawer({
   ];
   const totalDebtAmount = membershipDebtAmount + trainingDebtAmount;
   const lastCheckin = member?.checkins[0];
-  const daysLeft = current?.timeline?.remainingDays ?? null;
+  const daysLeft = current?.timeline?.effectiveRemainingDays
+    ?? current?.timeline?.remainingDays
+    ?? null;
   const openDialog = (name, operationAction = "") => {
     setFormError("");
     setMembershipOperationAction(name === "operations" ? operationAction : "");
@@ -401,12 +403,13 @@ export function MemberQuickDrawer({
                     <div className="inline-field">
                       <dt>Thời hạn</dt>
                       <dd>
-                        {shortDate(current.startsAt)} →{" "}
-                        {shortDate(current.expiresAt)}
+                        {current.status === "suspended"
+                          ? "Đang tạm dừng"
+                          : `${shortDate(current.startsAt)} → ${shortDate(current.timeline?.effectiveExpiresAt || current.expiresAt)}`}
                       </dd>
                     </div>
                     <div className="inline-field">
-                      <dt>Còn lại</dt>
+                      <dt>{current.status === "suspended" ? "Ngày được giữ lại" : "Còn lại"}</dt>
                       <dd>
                         {daysLeft == null
                           ? "—"

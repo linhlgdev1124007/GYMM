@@ -838,10 +838,53 @@ def test_membership_timeline_splits_active_and_freeze_segments(tmp_path):
         timeline = membership_data(membership)["timeline"]
         assert timeline["totalDays"] == 31
         assert timeline["totalPlannedFreezeDays"] == 6
+        assert timeline["effectiveExpiresAt"] == (today + timedelta(days=24)).isoformat()
+        assert timeline["effectiveRemainingDays"] == 24
         assert [segment["type"] for segment in timeline["segments"]] == ["active", "freeze", "active"]
         assert [segment["days"] for segment in timeline["segments"]] == [13, 6, 12]
         assert timeline["activeFreeze"]["startsAt"] == today.isoformat()
         assert timeline["activeFreeze"]["endsAt"] == (today + timedelta(days=6)).isoformat()
+    finally:
+        db.close()
+
+
+def test_membership_timeline_projects_sequential_pending_freezes(tmp_path):
+    from server.services.members_service import freeze_membership
+    from server.services.serializers import membership_data
+    from server.timeutils import vietnam_today
+
+    db = make_session(tmp_path)
+    try:
+        today = vietnam_today()
+        _customer, membership = seed_member_with_plan(
+            db,
+            status="active",
+            starts_at=today - timedelta(days=13),
+            activated_at=today - timedelta(days=13),
+        )
+        membership.expires_at = today + timedelta(days=18)
+        db.commit()
+
+        freeze_membership(db, membership.id, {
+            "startsAt": (today + timedelta(days=12)).isoformat(),
+            "endsAt": (today + timedelta(days=20)).isoformat(),
+            "reason": "Bảo lưu đợt một",
+        }, actor=None)
+        freeze_membership(db, membership.id, {
+            "startsAt": (today + timedelta(days=21)).isoformat(),
+            "endsAt": (today + timedelta(days=25)).isoformat(),
+            "reason": "Bảo lưu đợt hai",
+        }, actor=None)
+        db.refresh(membership)
+
+        timeline = membership_data(membership)["timeline"]
+        assert timeline["pendingFreezeDays"] == 12
+        assert timeline["effectiveExpiresAt"] == (today + timedelta(days=30)).isoformat()
+        assert timeline["effectiveRemainingDays"] == 30
+        assert {
+            freeze["reason"]: freeze["projectedCompensationDays"]
+            for freeze in timeline["freezes"]
+        } == {"Bảo lưu đợt một": 8, "Bảo lưu đợt hai": 4}
     finally:
         db.close()
 

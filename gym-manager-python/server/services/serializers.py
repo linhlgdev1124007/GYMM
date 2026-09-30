@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 
 from ..timeutils import utc_iso, vietnam_today
@@ -119,6 +119,27 @@ def membership_timeline(membership):
         key=lambda row: (row.starts_at, row.id),
     )
     all_freezes = sorted(getattr(membership, "freezes", []), key=lambda row: (row.starts_at, row.id), reverse=True)
+    pending_freeze_days = 0
+    projected_freeze_days = {}
+    effective_expires_at = expires_at
+    for freeze in sorted(
+        (freeze for freeze in all_freezes if not freeze.completed_at),
+        key=lambda row: (row.starts_at, row.id),
+    ):
+        if freeze.ends_at <= starts_at or freeze.starts_at >= effective_expires_at:
+            continue
+        effective_start = max(freeze.starts_at, starts_at)
+        compensation_days = max(
+            (freeze.ends_at - effective_start).days - (freeze.compensated_days or 0),
+            0,
+        )
+        projected_freeze_days[freeze.id] = compensation_days
+        pending_freeze_days += compensation_days
+        effective_expires_at += timedelta(days=compensation_days)
+    effective_remaining_days = (
+        remaining_days + pending_freeze_days
+        if suspended_at else (effective_expires_at - today).days
+    )
     segments = []
     cursor = starts_at
     total_compensated = 0
@@ -177,15 +198,24 @@ def membership_timeline(membership):
     return {
         "startsAt": iso(starts_at),
         "expiresAt": iso(expires_at),
+        "effectiveExpiresAt": iso(effective_expires_at),
         "totalDays": total_days,
         "remainingDays": remaining_days,
+        "effectiveRemainingDays": effective_remaining_days,
+        "pendingFreezeDays": pending_freeze_days,
         "suspendedAt": iso(suspended_at),
         "totalPlannedFreezeDays": total_planned,
         "totalCompensatedDays": total_compensated,
         "activeFreeze": active_freeze,
         "latestFreeze": latest_freeze,
         "hasOverdueUncompletedFreeze": has_overdue_uncompleted,
-        "freezes": [freeze_data(freeze) for freeze in all_freezes],
+        "freezes": [
+            {
+                **freeze_data(freeze),
+                "projectedCompensationDays": projected_freeze_days.get(freeze.id, 0),
+            }
+            for freeze in all_freezes
+        ],
         "segments": segments,
     }
 

@@ -492,7 +492,9 @@ export function MembersPage() {
       {
         key: "membership",
         label: "Gói & hết hạn",
-        sortValue: (row) => row.membership?.expiresAt || "",
+        sortValue: (row) => row.membership?.status === "suspended"
+          ? row.membership?.expiresAt || ""
+          : row.membership?.timeline?.effectiveExpiresAt || row.membership?.expiresAt || "",
         render: (row) =>
           row.membership ? (
             <div>
@@ -500,7 +502,9 @@ export function MembersPage() {
                 {row.membership.package.name}
               </span>
               <div className="cell-secondary">
-                {shortDate(row.membership.expiresAt)}
+                {row.membership.status === "suspended"
+                  ? "Đang tạm dừng"
+                  : shortDate(row.membership.timeline?.effectiveExpiresAt || row.membership.expiresAt)}
               </div>
             </div>
           ) : (
