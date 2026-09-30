@@ -1005,9 +1005,11 @@ def test_pending_member_status_filter_returns_waiting_members(tmp_path):
 def test_adjust_membership_days_updates_expiry_and_history(tmp_path):
     from server.models import MembershipEvent
     from server.services.members_service import membership_action
+    from server.timeutils import set_test_today
 
     db = make_session(tmp_path)
     try:
+        set_test_today(date(2026, 8, 15))
         _customer, membership = seed_member_with_plan(
             db,
             status="active",
@@ -1040,51 +1042,126 @@ def test_adjust_membership_days_updates_expiry_and_history(tmp_path):
             }, None)
         assert "trước ngày bắt đầu" in str(exc.value)
     finally:
+        set_test_today(None)
         db.close()
 
 
-def test_adjust_expired_membership_days_can_reactivate_when_new_expiry_is_current(tmp_path):
+def test_adjust_expired_membership_days_starts_a_new_granted_period(tmp_path):
     from server.models import MembershipEvent
     from server.services.members_service import membership_action
-    from server.timeutils import vietnam_today
+    from server.timeutils import set_test_today
 
     db = make_session(tmp_path)
     try:
-        today = vietnam_today()
+        today = date(2026, 9, 30)
+        set_test_today(today)
         customer, membership = seed_member_with_plan(
             db,
             status="expired",
-            starts_at=today - timedelta(days=40),
-            activated_at=today - timedelta(days=40),
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
         )
-        membership.expires_at = today - timedelta(days=5)
+        membership.expires_at = date(2026, 8, 31)
         customer.status = "inactive"
         db.commit()
 
         membership_action(db, membership.id, {
             "action": "adjust_days",
-            "days": 3,
-            "reason": "Cộng ngày tặng bị sót",
+            "days": 5,
+            "adjustmentStartAt": today.isoformat(),
+            "reason": "Tặng bù 5 ngày",
         }, None)
         db.refresh(membership)
         db.refresh(customer)
-        assert membership.expires_at == today - timedelta(days=2)
-        assert membership.status == "expired"
-        assert customer.status == "inactive"
+
+        assert membership.starts_at == today
+        assert membership.activated_at == today
+        assert membership.expires_at == today + timedelta(days=5)
+        assert membership.status == "active"
+        assert customer.status == "active"
+        event = db.query(MembershipEvent).filter_by(membership_id=membership.id, action="adjust_days").one()
+        details = json.loads(event.details_json)
+        assert details["adjustmentStartAt"] == today.isoformat()
+        assert details["previousExpiry"] == "2026-08-31"
+        assert details["newExpiry"] == "2026-10-05"
+    finally:
+        set_test_today(None)
+        db.close()
+
+
+def test_adjust_expired_membership_days_can_start_in_future_without_losing_granted_days(tmp_path):
+    from server.services.members_service import membership_action
+    from server.services.membership_lifecycle import refresh_membership_lifecycle
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        today = date(2026, 9, 30)
+        starts_at = date(2026, 10, 5)
+        set_test_today(today)
+        customer, membership = seed_member_with_plan(
+            db,
+            status="expired",
+            starts_at=date(2026, 8, 1),
+            activated_at=date(2026, 8, 1),
+        )
+        membership.expires_at = date(2026, 8, 31)
+        customer.status = "inactive"
+        db.commit()
 
         membership_action(db, membership.id, {
             "action": "adjust_days",
-            "days": 10,
-            "reason": "Cộng đủ ngày tặng bị sót",
+            "days": 5,
+            "adjustmentStartAt": starts_at.isoformat(),
+            "reason": "Hẹn tặng bù 5 ngày",
         }, None)
         db.refresh(membership)
         db.refresh(customer)
 
-        assert membership.expires_at == today + timedelta(days=8)
+        assert membership.starts_at == starts_at
+        assert membership.activated_at == starts_at
+        assert membership.expires_at == date(2026, 10, 10)
+        assert membership.status == "pending"
+        assert customer.status == "lead"
+
+        refresh_membership_lifecycle(db, today=starts_at)
+        db.refresh(membership)
+        db.refresh(customer)
         assert membership.status == "active"
+        assert membership.expires_at == date(2026, 10, 10)
         assert customer.status == "active"
-        assert db.query(MembershipEvent).filter_by(membership_id=membership.id, action="adjust_days").count() == 2
     finally:
+        set_test_today(None)
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "payload, message",
+    [
+        ({"days": 5}, "ngày bắt đầu"),
+        ({"days": -5, "adjustmentStartAt": "2026-09-30"}, "số ngày dương"),
+    ],
+)
+def test_adjust_expired_membership_days_validates_new_period(tmp_path, payload, message):
+    from fastapi import HTTPException
+    from server.services.members_service import membership_action
+    from server.timeutils import set_test_today
+
+    db = make_session(tmp_path)
+    try:
+        set_test_today(date(2026, 9, 30))
+        _customer, membership = seed_member_with_plan(db, status="expired")
+        membership.expires_at = date(2026, 8, 31)
+        db.commit()
+
+        with pytest.raises(HTTPException, match=message):
+            membership_action(db, membership.id, {
+                "action": "adjust_days",
+                "reason": "Kiểm tra dữ liệu",
+                **payload,
+            }, None)
+    finally:
+        set_test_today(None)
         db.close()
 
 

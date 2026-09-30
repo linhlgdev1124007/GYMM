@@ -54,6 +54,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
       refundMethod: "cash",
       refundBankAccountId: "",
       days: "",
+      adjustmentStartAt: today(),
       effectiveAt: today(),
       reason: "",
     });
@@ -67,6 +68,11 @@ export function MembershipOperationsModal({ membership, memberships = [], member
   const targetMembership = action === "adjust_days"
     ? adjustableMemberships.find((row) => String(row.id) === String(form.membershipId)) || membership
     : membership;
+  const adjustingExpiredMembership = action === "adjust_days" && targetMembership?.status === "expired";
+  const adjustmentBaseDate = adjustingExpiredMembership ? form.adjustmentStartAt : targetMembership?.expiresAt;
+  const adjustedExpiry = adjustmentBaseDate && Number(form.days || 0) !== 0
+    ? format(addDays(new Date(`${adjustmentBaseDate}T00:00:00`), Number(form.days || 0)), "yyyy-MM-dd")
+    : "";
   const plan = options?.plans?.find((row) => String(row.id) === String(form.planId));
   const enteredFreezeDays = form.startsAt && form.endsAt
     ? Math.max(differenceInCalendarDays(new Date(`${form.endsAt}T00:00:00`), new Date(`${form.startsAt}T00:00:00`)), 0)
@@ -99,7 +105,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
         ...(action === "activate" ? { activatedAt: form.effectiveAt } : {}),
         ...(action === "suspend" ? { suspendedAt: form.effectiveAt } : {}),
         ...(action === "transfer" ? { targetMemberId: form.targetMemberId } : {}),
-        ...(action === "adjust_days" ? { days: form.days } : {}),
+        ...(action === "adjust_days" ? { days: form.days, adjustmentStartAt: adjustingExpiredMembership ? form.adjustmentStartAt : undefined } : {}),
         ...(action === "change" || action === "upgrade"
           ? {
               planId: form.planId,
@@ -123,7 +129,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
     (action === "freeze" && enteredFreezeDays > 0) ||
     action === "activate" ||
     action === "suspend" ||
-    (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && Number(form.days || 0) !== 0) ||
+    (action === "adjust_days" && adjustableMemberships.some((row) => String(row.id) === String(form.membershipId)) && (adjustingExpiredMembership ? Number(form.days || 0) > 0 && form.adjustmentStartAt : Number(form.days || 0) !== 0)) ||
     (action === "transfer" && form.targetMemberId) ||
     ((action === "change" || action === "upgrade") && form.planId && (!projectedDebt || form.debtDueDate) && (!projectedOverpaid || form.overpaymentPolicy) && (form.overpaymentPolicy !== "external_refund" || (form.refundAt && (form.refundMethod !== "bank_transfer" || form.refundBankAccountId)))) ||
     action === "cancel"
@@ -170,7 +176,7 @@ export function MembershipOperationsModal({ membership, memberships = [], member
           )}
           {action === "adjust_days" && (
             <section className="operation-panel">
-              <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>Điều chỉnh trực tiếp ngày hết hạn gói và lưu lịch sử đối soát. Gói hết hạn sẽ tự hoạt động lại nếu hạn mới từ hôm nay trở đi.</span></div></div>
+              <div className="operation-heading"><CalendarClock size={17} /><div><strong>Cộng / trừ ngày</strong><span>{adjustingExpiredMembership ? "Gói đã hết hạn: chọn ngày bắt đầu để tạo khoảng ngày được cộng mới." : "Cộng vào hạn hiện tại của gói đang hoạt động và lưu lịch sử đối soát."}</span></div></div>
               <Field label="Gói áp dụng" required>
                 <Select value={form.membershipId || ""} onChange={(event) => setForm({ ...form, membershipId: event.target.value })}>
                   {adjustableMemberships.map((row) => (
@@ -180,14 +186,19 @@ export function MembershipOperationsModal({ membership, memberships = [], member
                   ))}
                 </Select>
               </Field>
-              <Field label="Số ngày" required hint="Nhập số dương để cộng, số âm để trừ.">
-                <input className="input tabular-nums" type="number" step="1" value={form.days} onChange={(event) => setForm({ ...form, days: event.target.value })} />
+              {adjustingExpiredMembership && (
+                <Field label="Ngày bắt đầu được cộng" required hint="Gói sẽ hoạt động từ ngày này; nếu chọn ngày tương lai, gói sẽ chờ kích hoạt.">
+                  <DateInput min={today()} value={form.adjustmentStartAt || ""} onChange={(adjustmentStartAt) => setForm({ ...form, adjustmentStartAt })} />
+                </Field>
+              )}
+              <Field label="Số ngày" required hint={adjustingExpiredMembership ? "Gói hết hạn chỉ được nhập số ngày dương." : "Nhập số dương để cộng, số âm để trừ."}>
+                <input className="input tabular-nums" type="number" min={adjustingExpiredMembership ? 1 : undefined} step="1" value={form.days} onChange={(event) => setForm({ ...form, days: event.target.value })} />
               </Field>
-              {targetMembership?.expiresAt && Number(form.days || 0) !== 0 && (
+              {adjustedExpiry && (
                 <div className="compensation-preview">
-                  <span>Hạn hiện tại <strong>{shortDate(targetMembership.expiresAt)}</strong></span>
+                  <span>{adjustingExpiredMembership ? "Bắt đầu" : "Hạn hiện tại"} <strong>{shortDate(adjustmentBaseDate)}</strong></span>
                   <ArrowRightLeft size={14} />
-                  <span>Hạn mới <strong>{shortDate(format(addDays(new Date(`${targetMembership.expiresAt}T00:00:00`), Number(form.days || 0)), "yyyy-MM-dd"))}</strong></span>
+                  <span>Hạn mới <strong>{shortDate(adjustedExpiry)}</strong></span>
                 </div>
               )}
             </section>

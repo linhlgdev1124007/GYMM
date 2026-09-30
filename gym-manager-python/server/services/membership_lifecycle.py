@@ -234,6 +234,8 @@ def activate_membership(
     membership.starts_at = day
     if previous_status == "suspended" and remaining_days is not None:
         membership.expires_at = day + timedelta(days=remaining_days)
+    elif previous_status == "pending" and previous_starts_at == day and previous_expires_at:
+        membership.expires_at = previous_expires_at
     elif membership.package.duration_days:
         membership.expires_at = day + timedelta(days=membership.package.duration_days)
 

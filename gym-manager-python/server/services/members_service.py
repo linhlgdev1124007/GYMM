@@ -1551,19 +1551,46 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
             raise HTTPException(422, "Vui lòng nhập số ngày cần cộng hoặc trừ.")
         if not row.expires_at:
             raise HTTPException(422, "Gói không có ngày hết hạn nên không thể cộng/trừ ngày.")
-        new_expiry = row.expires_at + timedelta(days=days)
+        today = vietnam_today()
+        expired_period = row.status == "expired"
+        adjustment_start_at = _parse_date(payload.get("adjustmentStartAt"))
+        previous_starts_at = row.starts_at
+        previous_activated_at = row.activated_at
+        if expired_period:
+            if days < 0:
+                raise HTTPException(422, "Gói đã hết hạn chỉ có thể cộng số ngày dương.")
+            if not adjustment_start_at:
+                raise HTTPException(422, "Vui lòng chọn ngày bắt đầu được cộng cho gói đã hết hạn.")
+            new_expiry = adjustment_start_at + timedelta(days=days)
+        else:
+            new_expiry = row.expires_at + timedelta(days=days)
         if row.starts_at and new_expiry < row.starts_at:
             raise HTTPException(422, "Ngày hết hạn mới không được trước ngày bắt đầu gói.")
         previous_expiry = row.expires_at
+        if expired_period:
+            row.starts_at = adjustment_start_at
+            row.activated_at = adjustment_start_at
         row.expires_at = new_expiry
-        if row.status == "active" and new_expiry < vietnam_today():
+        if expired_period:
+            if adjustment_start_at > today:
+                row.status = "pending"
+                row.customer.status = "lead"
+            elif new_expiry >= today:
+                row.status = "active"
+                row.customer.status = "active"
+            else:
+                row.status = "expired"
+                row.customer.status = "inactive"
+        elif row.status == "active" and new_expiry < today:
             row.status = "expired"
-        if row.status == "expired" and new_expiry >= vietnam_today():
-            row.status = "active"
-            row.customer.status = "active"
         summary = f"{'Cộng' if days > 0 else 'Trừ'} {abs(days)} ngày cho gói {old_package_name} của {old_customer_name}"
+        if expired_period:
+            summary += f" từ {adjustment_start_at.strftime('%d/%m/%Y')}"
         details = {
             "days": days,
+            "adjustmentStartAt": str(adjustment_start_at) if adjustment_start_at else None,
+            "previousStartsAt": str(previous_starts_at) if previous_starts_at else None,
+            "previousActivatedAt": str(previous_activated_at) if previous_activated_at else None,
             "previousExpiry": str(previous_expiry),
             "newExpiry": str(new_expiry),
         }
@@ -1574,7 +1601,7 @@ def membership_action(db: Session, membership_id: int, payload: dict, actor: Use
             to_customer_id=old_customer_id,
             from_package_id=old_package_id,
             to_package_id=old_package_id,
-            effective_at=vietnam_today(),
+            effective_at=adjustment_start_at if expired_period else today,
             reason=reason,
             details_json=json.dumps(details, ensure_ascii=False),
             created_by_user_id=actor.id if actor else None,
