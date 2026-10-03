@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Minus, Plus, UserRoundCheck, UserRoundPlus } from "lucide-react";
+import { CreditCard, Minus, Plus, UserRoundCheck, UserRoundPlus } from "lucide-react";
 import { api, queryString } from "../../services/api";
 import { notify } from "../../services/notify";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -14,6 +14,7 @@ import { Pagination } from "../../components/ui/Pagination";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ScheduleSummary } from "../../components/ui/ScheduleSummary";
 import { TrainingForm } from "../../components/forms/TrainingForm";
+import { PtPaymentForm } from "../../components/forms/PtPaymentForm";
 import { formatPhone, initials, money, shortDate } from "../../utils/format";
 import { useAuth } from "../../app/AuthContext";
 
@@ -28,6 +29,7 @@ export function TrainingPage() {
   const [pageSize, setPageSize] = useState(20);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [paymentTarget, setPaymentTarget] = useState(null);
   const [formError, setFormError] = useState("");
   const q = useDebouncedValue(search);
   const query = useQuery({
@@ -95,6 +97,20 @@ export function TrainingPage() {
       notify.success(variables.action === "add" ? "Đã cộng 1 buổi PT." : "Đã trừ 1 buổi PT.");
     },
     onError: (error) => notify.errorFrom(error, "Không thể cập nhật số buổi PT."),
+  });
+  const collectPayment = useMutation({
+    mutationFn: ({ enrollmentId, data }) =>
+      api(`/api/training/${enrollmentId}/payments`, { method: "POST", body: data }),
+    onSuccess: (data) => {
+      client.invalidateQueries({ queryKey: ["training"] });
+      client.invalidateQueries({ queryKey: ["members"] });
+      client.invalidateQueries({ queryKey: ["member", data.memberId] });
+      client.invalidateQueries({ queryKey: ["payments"] });
+      client.invalidateQueries({ queryKey: ["reports"] });
+      setPaymentTarget(null);
+      notify.success(`Đã ghi nhận thanh toán PT của ${data.member?.name || "hội viên"}.`);
+    },
+    onError: (error) => setFormError(error.message),
   });
   const edit = (row) => {
     setFormError("");
@@ -217,6 +233,18 @@ export function TrainingPage() {
           : null;
         return (
           <div className="flex justify-end gap-1.5">
+            {!coachMode && row.debtAmount > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setFormError("");
+                  setPaymentTarget(row);
+                }}
+              >
+                <CreditCard size={14} /> Thu tiền
+              </Button>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -363,6 +391,16 @@ export function TrainingPage() {
         pending={create.isPending}
         error={formError}
         coachMode={false}
+      />
+      <PtPaymentForm
+        enrollment={paymentTarget}
+        options={options.data}
+        canWaive={["admin", "manager"].includes(user.role)}
+        open={!!paymentTarget}
+        onClose={() => setPaymentTarget(null)}
+        onSubmit={(data) => collectPayment.mutate({ enrollmentId: paymentTarget.id, data })}
+        pending={collectPayment.isPending}
+        error={formError}
       />
     </>
   );

@@ -21,6 +21,7 @@ def delete_employee_shift(db: Session, shift_id: int, actor=None): return operat
 def list_pt(db: Session, **params): return operations_service.list_pt(db, **params)
 def create_pt(db: Session, member_id: int, payload: dict, actor=None): return operations_service.create_pt(db, member_id, payload, actor)
 def update_pt(db: Session, enrollment_id: int, payload: dict, actor=None): return operations_service.update_pt(db, enrollment_id, payload, actor)
+async def collect_pt_payment(db: Session, enrollment_id: int, payload: dict, receipts, actor=None): return await operations_service.collect_pt_payment(db, enrollment_id, payload, receipts, actor)
 def adjust_pt_sessions(db: Session, enrollment_id: int, payload: dict, actor=None): return operations_service.adjust_pt_sessions(db, enrollment_id, payload, actor)
 def checkin_candidates(db: Session, q: str): return operations_service.checkin_candidates(db, q)
 def recent_checkins(db: Session, **params): return operations_service.recent_checkins(db, **params)

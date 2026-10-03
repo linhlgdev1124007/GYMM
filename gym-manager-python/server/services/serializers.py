@@ -286,7 +286,7 @@ def pt_data(enrollment):
             "id": row.id,
             "amount": row.amount or 0,
             "paidAmount": row.paid_amount or 0,
-            "remainingAmount": max((row.amount or 0) - (row.paid_amount or 0), 0),
+            "remainingAmount": 0 if row.status == "waived" else max((row.amount or 0) - (row.paid_amount or 0), 0),
             "dueDate": iso(row.due_date),
             "status": row.status,
             "note": row.note,

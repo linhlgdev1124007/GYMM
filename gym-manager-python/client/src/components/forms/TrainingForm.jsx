@@ -216,7 +216,7 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
             onChange={(expiresAt) => setForm({ ...form, expiresAt })}
           />
         </Field>}
-        {!coachMode && (
+        {!coachMode && !editing && (
           <>
             <Field label="Giá trị gói PT">
               <MoneyInput min="0" value={form.finalPrice || 0} onChange={(finalPrice) => setForm({ ...form, finalPrice })} />
@@ -248,7 +248,7 @@ export function TrainingFields({ form, setForm, options, editing = false, coachM
             )}
           </>
         )}
-        {!coachMode && remainingDebt > 0 && (
+        {!coachMode && !editing && remainingDebt > 0 && (
           <div className="field form-span">
             <span className="field-label">Hạn công nợ PT</span>
             <div className="grid gap-2">
@@ -362,23 +362,33 @@ export function TrainingForm({
             setLocalError("Vui lòng chọn hội viên đăng ký PT.");
             return;
           }
-          if (Number(form.paidAmount || 0) > Number(form.finalPrice || 0)) {
+          if (!enrollment && Number(form.paidAmount || 0) > Number(form.finalPrice || 0)) {
             setLocalError("Số tiền PT đã thanh toán không thể lớn hơn giá trị gói.");
             return;
           }
-          if (Number(form.paidAmount || 0) > 0 && form.paymentMethod === "bank_transfer" && !form.bankAccountId) {
+          if (!enrollment && Number(form.paidAmount || 0) > 0 && form.paymentMethod === "bank_transfer" && !form.bankAccountId) {
             setLocalError("Vui lòng chọn tài khoản nhận tiền khi thanh toán PT chuyển khoản.");
             return;
           }
-          if (remainingDebt > 0 && Math.round(debtTotal) !== Math.round(remainingDebt)) {
+          if (!enrollment && remainingDebt > 0 && Math.round(debtTotal) !== Math.round(remainingDebt)) {
             setLocalError("Tổng các hạn công nợ PT phải bằng số tiền còn nợ.");
             return;
           }
-          if (remainingDebt > 0 && !(form.debtInstallments || []).every((row) => Number(row.amount || 0) > 0 && row.dueDate)) {
+          if (!enrollment && remainingDebt > 0 && !(form.debtInstallments || []).every((row) => Number(row.amount || 0) > 0 && row.dueDate)) {
             setLocalError("Vui lòng nhập đủ số tiền và ngày hạn cho từng kỳ công nợ PT.");
             return;
           }
-          onSubmit(form);
+          const payload = enrollment
+            ? Object.fromEntries(Object.entries(form).filter(([key]) => ![
+                "finalPrice",
+                "paidAmount",
+                "paidAt",
+                "paymentMethod",
+                "bankAccountId",
+                "debtInstallments",
+              ].includes(key)))
+            : form;
+          onSubmit(payload);
         }}
       >
         <div className="modal-body">

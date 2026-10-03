@@ -1048,3 +1048,130 @@ def test_pt_finance_update_collects_more_money_and_replaces_remaining_debt_plan(
         assert [(row.amount, row.paid_amount, row.status) for row in installments] == [(300_000, 0, "pending")]
     finally:
         db.close()
+
+
+def test_pt_payment_collects_current_amount_and_allocates_oldest_debt_first(tmp_path):
+    import asyncio
+    from server.models import Customer, Payment, Person
+    from server.services.operations_service import collect_pt_payment, create_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="PT Payment", phone="0900000053", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-PAY", status="active")
+        db.add(member)
+        db.commit()
+
+        created = create_pt(db, member.id, {
+            "type": "1:1",
+            "packageName": "PT 10 buổi",
+            "startsAt": "2026-09-01",
+            "totalSessions": 10,
+            "finalPrice": 1_000_000,
+            "paidAmount": 400_000,
+            "paidAt": "2026-09-01",
+            "debtInstallments": [
+                {"amount": 300_000, "dueDate": "2026-09-15"},
+                {"amount": 300_000, "dueDate": "2026-10-15"},
+            ],
+        })
+
+        updated = asyncio.run(collect_pt_payment(db, created["id"], {
+            "amount": 400_000,
+            "paidAt": "2026-09-20T10:30",
+            "paymentMethod": "cash",
+        }, [], actor=None))
+
+        assert updated["paidAmount"] == 800_000
+        assert updated["debtAmount"] == 200_000
+        assert [
+            (row["paidAmount"], row["remainingAmount"], row["status"])
+            for row in updated["debtInstallments"]
+        ] == [
+            (300_000, 0, "paid"),
+            (100_000, 200_000, "partial"),
+        ]
+        assert [row.amount for row in db.query(Payment).order_by(Payment.id)] == [400_000, 400_000]
+    finally:
+        db.close()
+
+
+def test_pt_payment_can_target_a_specific_debt_installment(tmp_path):
+    import asyncio
+    from server.models import Customer, Person
+    from server.services.operations_service import collect_pt_payment, create_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="PT Target Payment", phone="0900000054", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-TARGET", status="active")
+        db.add(member)
+        db.commit()
+        created = create_pt(db, member.id, {
+            "type": "1:1",
+            "packageName": "PT có hai kỳ",
+            "startsAt": "2026-09-01",
+            "finalPrice": 1_000_000,
+            "paidAmount": 400_000,
+            "debtInstallments": [
+                {"amount": 300_000, "dueDate": "2026-09-15"},
+                {"amount": 300_000, "dueDate": "2026-10-15"},
+            ],
+        })
+        target_id = created["debtInstallments"][1]["id"]
+
+        updated = asyncio.run(collect_pt_payment(db, created["id"], {
+            "amount": 100_000,
+            "installmentId": target_id,
+            "paymentMethod": "cash",
+        }, [], actor=None))
+
+        assert [row["paidAmount"] for row in updated["debtInstallments"]] == [0, 100_000]
+        assert [row["status"] for row in updated["debtInstallments"]] == ["pending", "partial"]
+    finally:
+        db.close()
+
+
+def test_pt_debt_waiver_is_admin_only_and_preserves_installment_history(tmp_path):
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+    from server.models import Customer, Person, User
+    from server.services.operations_service import collect_pt_payment, create_pt
+
+    db = make_session(tmp_path)
+    try:
+        person = Person(display_name="PT Waiver", phone="0900000055", status="active")
+        db.add(person)
+        db.flush()
+        member = Customer(person_id=person.id, customer_code="CUS-PT-WAIVE", status="active")
+        admin = User(username="pt-admin", display_name="PT Admin", password_hash="x", role="admin", is_active=True)
+        receptionist = User(username="pt-reception", display_name="PT Reception", password_hash="x", role="receptionist", is_active=True)
+        db.add_all([member, admin, receptionist])
+        db.commit()
+        created = create_pt(db, member.id, {
+            "type": "1:1",
+            "packageName": "PT miễn nợ",
+            "startsAt": "2026-09-01",
+            "finalPrice": 1_000_000,
+            "paidAmount": 400_000,
+            "debtInstallments": [{"amount": 600_000, "dueDate": "2026-10-15"}],
+        })
+
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(collect_pt_payment(db, created["id"], {"mode": "waive"}, [], receptionist))
+        assert denied.value.status_code == 403
+
+        updated = asyncio.run(collect_pt_payment(db, created["id"], {"mode": "waive"}, [], admin))
+
+        assert updated["finalPrice"] == 400_000
+        assert updated["paidAmount"] == 400_000
+        assert updated["debtAmount"] == 0
+        assert updated["debtInstallments"][0]["status"] == "waived"
+        assert updated["debtInstallments"][0]["remainingAmount"] == 0
+    finally:
+        db.close()

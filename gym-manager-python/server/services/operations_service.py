@@ -1175,6 +1175,143 @@ def update_pt(db: Session, enrollment_id: int, payload: dict, actor: User | None
     db.commit();db.refresh(row);return pt_data(row)
 
 
+async def collect_pt_payment(
+    db: Session,
+    enrollment_id: int,
+    payload: dict,
+    receipts,
+    actor: User | None = None,
+):
+    from .members_service import attach_receipts
+
+    row = db.query(PtEnrollment).options(
+        joinedload(PtEnrollment.customer).joinedload(Customer.person),
+        joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        joinedload(PtEnrollment.debt_installments),
+        joinedload(PtEnrollment.payments),
+    ).filter(PtEnrollment.id == enrollment_id).first()
+    if not row:
+        raise HTTPException(404, "Không tìm thấy đăng ký PT.")
+
+    mode = str(payload.get("mode") or "payment").strip()
+    if mode == "waive":
+        if not actor or actor.role not in {"admin", "manager"}:
+            raise HTTPException(403, "Chỉ Admin hoặc Quản lý được miễn/điều chỉnh công nợ PT.")
+        previous_price = row.final_price or 0
+        waived_amount = max(row.debt_amount or 0, 0)
+        if waived_amount <= 0:
+            raise HTTPException(422, "Gói PT này hiện không có công nợ để điều chỉnh.")
+        row.final_price = row.paid_amount or 0
+        row.debt_amount = 0
+        for installment in row.debt_installments:
+            if installment.status != "paid":
+                installment.status = "waived"
+        record_audit(
+            db,
+            actor,
+            "adjust_debt",
+            "pt_enrollment",
+            row.id,
+            f"Miễn/điều chỉnh công nợ PT {waived_amount:,.0f} ₫",
+            customer_id=row.customer_id,
+            details={
+                "previousFinalPrice": previous_price,
+                "newFinalPrice": row.final_price,
+                "waivedAmount": waived_amount,
+            },
+        )
+        db.commit()
+        db.refresh(row)
+        return pt_data(row)
+
+    amount = _money(payload.get("amount"))
+    current_debt = max(row.debt_amount or 0, 0)
+    if amount <= 0:
+        raise HTTPException(422, "Số tiền thu PT phải lớn hơn 0.")
+    if amount > current_debt:
+        raise HTTPException(422, "Số tiền thu PT không thể lớn hơn công nợ hiện tại.")
+
+    method = payload.get("paymentMethod") or "cash"
+    bank_account_id = _as_int(payload.get("bankAccountId"))
+    if method == "bank_transfer":
+        if not bank_account_id:
+            raise HTTPException(422, "Vui lòng chọn tài khoản nhận tiền khi thanh toán PT chuyển khoản.")
+        account = db.query(BankAccount).filter(
+            BankAccount.id == bank_account_id,
+            BankAccount.status == "active",
+        ).first()
+        if not account:
+            raise HTTPException(422, "Tài khoản nhận tiền không hợp lệ hoặc đã tạm ngừng.")
+
+    installments = sorted(row.debt_installments, key=lambda item: (item.due_date, item.id or 0))
+    target_id = _as_int(payload.get("installmentId"))
+    if target_id:
+        target = next((item for item in installments if item.id == target_id), None)
+        if not target:
+            raise HTTPException(422, "Kỳ công nợ PT không thuộc đăng ký này.")
+        installments = [target, *(item for item in installments if item.id != target_id)]
+
+    remaining = amount
+    allocations = []
+    for installment in installments:
+        installment_remaining = max((installment.amount or 0) - (installment.paid_amount or 0), 0)
+        applied = min(remaining, installment_remaining)
+        if applied <= 0:
+            continue
+        installment.paid_amount = (installment.paid_amount or 0) + applied
+        installment.status = _pt_installment_status(installment.amount or 0, installment.paid_amount or 0)
+        allocations.append({"installmentId": installment.id, "amount": applied})
+        remaining -= applied
+        if remaining <= 0:
+            break
+
+    row.paid_amount = (row.paid_amount or 0) + amount
+    row.debt_amount = max((row.final_price or 0) - row.paid_amount, 0)
+    paid_at = _parse_paid_at(payload.get("paidAt"))
+    sequence = db.query(Payment).filter(Payment.pt_enrollment_id == row.id).count() + 1
+    payment = Payment(
+        customer_id=row.customer_id,
+        pt_enrollment_id=row.id,
+        bank_account_id=bank_account_id,
+        payment_no=f"PTPAY-{row.id:06d}-{sequence:03d}",
+        paid_at=paid_at,
+        amount=amount,
+        method=method,
+        channel="pt",
+        shift_date=utc_vietnam_date(paid_at) or vietnam_today(),
+        note=f"Thanh toán công nợ PT {row.package_name or row.group_type}",
+    )
+    db.add(payment)
+    await attach_receipts(payment, receipts, actor)
+    db.flush()
+    record_audit(
+        db,
+        actor,
+        "payment",
+        "payment",
+        payment.id,
+        f"Ghi nhận thanh toán PT {amount:,.0f} ₫",
+        customer_id=row.customer_id,
+        details={
+            "ptEnrollmentId": row.id,
+            "paymentNo": payment.payment_no,
+            "amount": amount,
+            "allocations": allocations,
+            "remainingDebt": row.debt_amount,
+            "receiptCount": len(receipts),
+            "paidAt": utc_iso(paid_at),
+        },
+    )
+    db.commit()
+    row = db.query(PtEnrollment).options(
+        joinedload(PtEnrollment.customer).joinedload(Customer.person),
+        joinedload(PtEnrollment.coach_assignments).joinedload(PtEnrollmentCoach.coach).joinedload(Employee.person),
+        joinedload(PtEnrollment.debt_installments),
+        joinedload(PtEnrollment.payments),
+    ).get(row.id)
+    return pt_data(row)
+
+
 def _pt_log_data(row: PtSessionLog):
     return {
         "id": row.id,

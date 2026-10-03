@@ -32,6 +32,7 @@ import { MembershipOperationsModal } from "../../components/forms/MembershipOper
 import { MembershipFreezeForm } from "../../components/forms/MembershipFreezeForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
+import { PtPaymentForm } from "../../components/forms/PtPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { useAuth } from "../../app/AuthContext";
 import { DahIdentityDeleteModal } from "./DahIdentityDeleteModal";
@@ -53,6 +54,7 @@ export function MemberQuickDrawer({
   const [dialog, setDialog] = useState(null);
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedFreeze, setSelectedFreeze] = useState(null);
+  const [ptPaymentTarget, setPtPaymentTarget] = useState(null);
   const [identityLinkOpen, setIdentityLinkOpen] = useState(false);
   const [identityDeleteOpen, setIdentityDeleteOpen] = useState(false);
   const [formError, setFormError] = useState("");
@@ -157,6 +159,19 @@ export function MemberQuickDrawer({
     },
     onError: (e) => setFormError(e.message),
   });
+  const collectPtPayment = useMutation({
+    mutationFn: ({ enrollmentId, payload }) =>
+      api(`/api/training/${enrollmentId}/payments`, {
+        method: "POST",
+        body: payload,
+      }),
+    onSuccess: () => {
+      refresh();
+      setPtPaymentTarget(null);
+      notify.success(`Đã ghi nhận thanh toán PT của ${member.name}.`);
+    },
+    onError: (e) => setFormError(e.message),
+  });
   const freezeMutation = useMutation({
     mutationFn: ({ freezeId, payload, method }) =>
       api(`/api/memberships/${current.id}/freezes/${freezeId}`, {
@@ -174,6 +189,9 @@ export function MemberQuickDrawer({
   const current = member?.memberships[0];
   const displayStatus = current?.status || member?.status;
   const training = member?.training.find((row) => row.status === "active");
+  const trainingWithDebt = member?.training.find(
+    (row) => Number(row.debtAmount || 0) > 0,
+  );
   const trainingCoaches = training?.coaches || [];
   const membershipDebtAmount = Number(current?.debtAmount || 0);
   const trainingDebtAmount = (member?.training || []).reduce(
@@ -197,6 +215,14 @@ export function MemberQuickDrawer({
     setFormError("");
     setMembershipOperationAction(name === "operations" ? operationAction : "");
     setDialog(name);
+  };
+  const openPtPayment = (enrollment = trainingWithDebt) => {
+    if (!enrollment) {
+      notify.info("Hội viên hiện không có công nợ PT.");
+      return;
+    }
+    setFormError("");
+    setPtPaymentTarget(enrollment);
   };
   const openFreezeEdit = (freeze) => {
     setFormError("");
@@ -237,6 +263,7 @@ export function MemberQuickDrawer({
   useEffect(() => {
     if (!memberId) {
       setDialog(null);
+      setPtPaymentTarget(null);
       setIdentityLinkOpen(false);
     }
   }, [memberId]);
@@ -310,7 +337,7 @@ export function MemberQuickDrawer({
                   membershipDebtAmount > 0
                     ? openDialog("payment")
                     : trainingDebtAmount > 0
-                      ? openDialog("training")
+                      ? openPtPayment()
                       : notify.info("Hội viên hiện không có công nợ.")
                 }
               >
@@ -365,7 +392,7 @@ export function MemberQuickDrawer({
                       </span>
                     ))}
                   </span>
-                  {canFinancial && <button onClick={() => membershipDebtAmount > 0 ? openDialog("payment") : openDialog("training")}>
+                  {canFinancial && <button onClick={() => membershipDebtAmount > 0 ? openDialog("payment") : openPtPayment()}>
                     Thu tiền
                   </button>}
                 </div>
@@ -526,6 +553,14 @@ export function MemberQuickDrawer({
                       <small className={`block text-xs ${training.debtAmount > 0 ? "text-red-700" : "text-emerald-700"}`}>
                         {training.debtAmount > 0 ? `${money(training.debtAmount)} nợ${training.nextDebtDueDate ? ` · hạn ${shortDate(training.nextDebtDueDate)}` : ""}` : "Đã tất toán"}
                       </small>
+                      {canFinancial && training.debtAmount > 0 && (
+                        <button
+                          className="mt-1 text-xs font-medium text-blue-700"
+                          onClick={() => openPtPayment(training)}
+                        >
+                          Thu tiền
+                        </button>
+                      )}
                     </dd>
                   </div>
                 )}
@@ -689,6 +724,21 @@ export function MemberQuickDrawer({
               trainingSave.mutate({ id: training?.id, payload })
             }
             pending={trainingSave.isPending}
+            error={formError}
+          />
+          <PtPaymentForm
+            enrollment={ptPaymentTarget}
+            options={options.data}
+            canWaive={canManageLifecycle}
+            open={!!ptPaymentTarget}
+            onClose={() => setPtPaymentTarget(null)}
+            onSubmit={(payload) =>
+              collectPtPayment.mutate({
+                enrollmentId: ptPaymentTarget.id,
+                payload,
+              })
+            }
+            pending={collectPtPayment.isPending}
             error={formError}
           />
           <DahIdentityLinkModal

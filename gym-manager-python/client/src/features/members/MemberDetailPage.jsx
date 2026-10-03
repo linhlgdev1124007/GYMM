@@ -34,6 +34,7 @@ import { RowMenu } from "../../components/ui/RowMenu";
 import { MemberEditForm } from "../../components/forms/MemberEditForm";
 import { MembershipForm } from "../../components/forms/MembershipForm";
 import { TrainingForm } from "../../components/forms/TrainingForm";
+import { PtPaymentForm } from "../../components/forms/PtPaymentForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
 import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
@@ -347,6 +348,7 @@ export function MemberDetailPage() {
   const [selectedFreeze, setSelectedFreeze] = useState(null);
   const [membershipOperationAction, setMembershipOperationAction] = useState("");
   const [selectedTraining, setSelectedTraining] = useState(null);
+  const [ptPaymentTarget, setPtPaymentTarget] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [editingPaymentDate, setEditingPaymentDate] = useState(null);
   const [paymentPaidAt, setPaymentPaidAt] = useState("");
@@ -494,6 +496,16 @@ export function MemberDetailPage() {
       notify.success(`Đã thêm chứng từ cho ${payment.number}.`);
     },
     onError: (error) => setFormError(error.message),
+  });
+  const collectPtPayment = useMutation({
+    mutationFn: ({ enrollmentId, data }) =>
+      api(`/api/training/${enrollmentId}/payments`, { method: "POST", body: data }),
+    onSuccess: () => {
+      refresh();
+      setPtPaymentTarget(null);
+      notify.success(`Đã ghi nhận thanh toán PT của ${member.name}.`);
+    },
+    onError: (reason) => setFormError(reason.message),
   });
   const updatePayment = useMutation({
     mutationFn: ({ paymentId, paidAt }) =>
@@ -937,9 +949,23 @@ export function MemberDetailPage() {
       key: "action",
       label: "",
       render: (r) => (
-        <Button size="sm" variant="ghost" onClick={() => open("training", r)}>
-          Chỉnh sửa
-        </Button>
+        <div className="flex justify-end gap-1.5">
+          {canFinancial && r.debtAmount > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setFormError("");
+                setPtPaymentTarget({ enrollment: r, installment: null });
+              }}
+            >
+              Thu tiền
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => open("training", r)}>
+            Chỉnh sửa
+          </Button>
+        </div>
       ),
     },
   ];
@@ -1655,6 +1681,27 @@ export function MemberDetailPage() {
                     label: "Ghi chú",
                     render: (row) => row.note || "—",
                   },
+                  {
+                    key: "action",
+                    label: "",
+                    sortable: false,
+                    className: "text-right",
+                    render: (row) => row.remainingAmount > 0 && canFinancial ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setFormError("");
+                          setPtPaymentTarget({
+                            enrollment: member.training.find((item) => item.id === row.enrollmentId),
+                            installment: row,
+                          });
+                        }}
+                      >
+                        Thu tiền
+                      </Button>
+                    ) : null,
+                  },
                 ]}
               />
             </div>
@@ -1929,6 +1976,17 @@ export function MemberDetailPage() {
           saveTraining.mutate({ enrollment: selectedTraining, payload })
         }
         pending={saveTraining.isPending}
+        error={formError}
+      />
+      <PtPaymentForm
+        enrollment={ptPaymentTarget?.enrollment}
+        installment={ptPaymentTarget?.installment}
+        options={options.data}
+        canWaive={["admin", "manager"].includes(user.role)}
+        open={!!ptPaymentTarget}
+        onClose={() => setPtPaymentTarget(null)}
+        onSubmit={(data) => collectPtPayment.mutate({ enrollmentId: ptPaymentTarget.enrollment.id, data })}
+        pending={collectPtPayment.isPending}
         error={formError}
       />
       <DahIdentityLinkModal

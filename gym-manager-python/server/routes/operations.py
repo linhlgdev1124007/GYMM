@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from ..controllers import operations_controller
@@ -141,6 +141,14 @@ def create_training(member_id: int, payload: dict, db: Session = Depends(get_db)
 @router.patch("/training/{enrollment_id}", dependencies=[Depends(require_roles("admin", "manager", "receptionist", "coach"))])
 def update_training(enrollment_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist", "coach"))):
     return operations_controller.update_pt(db, enrollment_id, payload, user)
+
+
+@router.post("/training/{enrollment_id}/payments", dependencies=[Depends(require_roles("admin", "manager", "receptionist"))])
+async def collect_training_payment(enrollment_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "manager", "receptionist"))):
+    incoming = await request.form()
+    payload = {key: value for key, value in incoming.items() if key != "receipts"}
+    receipts = [item for item in incoming.getlist("receipts") if getattr(item, "filename", None)]
+    return await operations_controller.collect_pt_payment(db, enrollment_id, payload, receipts, user)
 
 
 @router.post("/training/{enrollment_id}/sessions", dependencies=[Depends(require_roles("admin", "manager", "receptionist", "coach"))])
