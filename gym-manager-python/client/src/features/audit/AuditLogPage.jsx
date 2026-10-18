@@ -25,6 +25,7 @@ const actionLabels = {
   employee_attendance_adjust: "Chỉnh chấm công",
   freeze: "Bảo lưu",
   activate: "Kích hoạt",
+  adjust_days: "Cộng / trừ ngày",
   transfer: "Chuyển nhượng",
   upgrade: "Nâng cấp gói",
   change: "Đổi gói",
@@ -86,6 +87,10 @@ const fieldLabels = {
 function compactValue(value) {
   const text = String(value ?? "—");
   return text.length > 46 ? `${text.slice(0, 43)}…` : text;
+}
+
+function auditReason(row) {
+  return typeof row.details?.reason === "string" ? row.details.reason.trim() : "";
 }
 
 function auditDetailText(row) {
@@ -166,6 +171,11 @@ export function AuditLogPage() {
           <div className="cell-secondary">
             {auditDetailText(row)}
           </div>
+          {auditReason(row) && (
+            <div className="cell-secondary mt-1 line-clamp-2 max-w-xl whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <strong>Lý do:</strong> {auditReason(row)}
+            </div>
+          )}
         </div>
       ),
     },
@@ -300,6 +310,12 @@ export function AuditLogPage() {
                 <dt>Thời gian</dt>
                 <dd>{dateTime(selected.createdAt)}</dd>
               </div>
+              {auditReason(selected) && (
+                <div>
+                  <dt>Lý do</dt>
+                  <dd className="[overflow-wrap:anywhere]">{auditReason(selected)}</dd>
+                </div>
+              )}
               {Array.isArray(selected.details?.changes) && selected.details.changes.length && (
                 <div>
                   <dt>Thay đổi</dt>
@@ -314,7 +330,7 @@ export function AuditLogPage() {
                 </div>
               )}
               {Object.entries(selected.details || {}).map(([key, value]) => (
-                key === "changes" ? null : (
+                key === "changes" || key === "reason" ? null : (
                 <div key={key}>
                   <dt>{fieldLabels[key] || key}</dt>
                   <dd>
