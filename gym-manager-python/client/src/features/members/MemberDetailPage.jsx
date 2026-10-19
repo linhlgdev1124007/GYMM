@@ -37,6 +37,7 @@ import { TrainingForm } from "../../components/forms/TrainingForm";
 import { PtPaymentForm } from "../../components/forms/PtPaymentForm";
 import { QuickPaymentForm } from "../../components/forms/QuickPaymentForm";
 import { DebtDeadlineForm } from "../../components/forms/DebtDeadlineForm";
+import { AuditNotes, auditChanges } from "../../components/common/AuditNotes";
 import { PaymentReceiptModal } from "../../components/forms/PaymentReceiptModal";
 import { MembershipOperationsModal } from "../../components/forms/MembershipOperationsModal";
 import { MembershipFreezeForm } from "../../components/forms/MembershipFreezeForm";
@@ -114,10 +115,9 @@ function auditChangeLines(item) {
   if (item.action === "activate" && item.details?.activatedAt) {
     return [
       { key: "activatedAt", label: "Ngày kích hoạt", text: shortDate(item.details.activatedAt) },
-      ...(item.details.reason ? [{ key: "reason", label: "Lý do", text: item.details.reason }] : []),
     ];
   }
-  const changes = Array.isArray(item.details?.changes) ? item.details.changes : [];
+  const changes = auditChanges(item);
   if (changes.length) {
     return changes.map((change) => ({
       key: change.field,
@@ -414,6 +414,7 @@ export function MemberDetailPage() {
     client.invalidateQueries({ queryKey: ["reports"] });
     client.invalidateQueries({ queryKey: ["dashboard"] });
     client.invalidateQueries({ queryKey: ["dashboard-audit-logs"] });
+    client.invalidateQueries({ queryKey: ["audit-logs"] });
   };
   const updateMember = useMutation({
     mutationFn: ({ payload }) =>
@@ -493,6 +494,7 @@ export function MemberDetailPage() {
     onSuccess: (payment) => {
       refresh();
       setSelectedPayment(payment);
+      setFormError("");
       notify.success(`Đã thêm chứng từ cho ${payment.number}.`);
     },
     onError: (error) => setFormError(error.message),
@@ -876,8 +878,8 @@ export function MemberDetailPage() {
     },
     {
       key: "receipts",
-      label: "Chứng từ",
-      render: (row) => (
+      label: "Phiếu thu",
+      render: (row) => canFinancial ? (
         <button
           className="receipt-count-button"
           onClick={() => {
@@ -886,9 +888,9 @@ export function MemberDetailPage() {
           }}
         >
           <ReceiptText size={14} />
-          {row.receiptCount ? `${row.receiptCount} ảnh` : "+ Thêm bill"}
+          {row.receiptCount ? `Xem phiếu thu (${row.receiptCount})` : "Thêm phiếu thu"}
         </button>
-      ),
+      ) : "—",
     },
   ];
   const trainingColumns = [
@@ -1352,7 +1354,10 @@ export function MemberDetailPage() {
             <section className="workspace-section unified-activity-section role-activity-section">
               <div className="workspace-section-title">
                 <div><h2>Hoạt động gần đây</h2><p>Check-in, thanh toán và biến động gói trên cùng một dòng thời gian</p></div>
-                {canViewAudit && <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>}
+                <div className="flex flex-wrap gap-3">
+                  {canFinancial && <button className="section-link" onClick={() => selectTab("payments")}>Thanh toán & phiếu thu <ChevronRight size={14} /></button>}
+                  {canViewAudit && <button className="section-link" onClick={() => selectTab("activity")}>Xem nhật ký <ChevronRight size={14} /></button>}
+                </div>
               </div>
               <div className="activity-filter-bar" aria-label="Lọc hoạt động">
                 {[["all", "Tất cả"], ["membership", "Gói tập"], ["payment", "Thanh toán"], ["checkin", "Check-in"]].map(([key, label]) => (
@@ -1363,12 +1368,12 @@ export function MemberDetailPage() {
                 {filteredRecentActivity.map((item) => (
                   <div
                     key={item.id}
-                    className={`unified-activity-row ${item.record ? "clickable" : ""}`}
-                    role={item.record ? "button" : undefined}
-                    tabIndex={item.record ? 0 : undefined}
-                    onClick={() => item.record && setSelectedPayment(item.record)}
+                    className={`unified-activity-row ${canFinancial && item.record ? "clickable" : ""}`}
+                    role={canFinancial && item.record ? "button" : undefined}
+                    tabIndex={canFinancial && item.record ? 0 : undefined}
+                    onClick={() => canFinancial && item.record && setSelectedPayment(item.record)}
                     onKeyDown={(event) => {
-                      if (item.record && (event.key === "Enter" || event.key === " ")) {
+                      if (canFinancial && item.record && (event.key === "Enter" || event.key === " ")) {
                         event.preventDefault();
                         setSelectedPayment(item.record);
                       }
@@ -1518,7 +1523,7 @@ export function MemberDetailPage() {
             <div>
               <h2>Lịch sử thanh toán</h2>
               <p>
-                Mỗi lần thu tiền là một giao dịch độc lập, kèm đầy đủ chứng từ
+                Chọn “Xem phiếu thu” tại từng giao dịch để mở ảnh đã lưu; chọn “Thêm phiếu thu” để bổ sung.
               </p>
             </div>
             <div className="text-right">
@@ -1761,6 +1766,19 @@ export function MemberDetailPage() {
                   <time>{dateTime(item.createdAt)}</time>
                   <div>
                     <strong>{item.summary}</strong>
+                    <AuditNotes item={item} />
+                    {canFinancial && item.entityType === "payment" && (() => {
+                      const payment = member.payments.find((row) => row.id === item.entityId);
+                      return payment ? (
+                        <button type="button" className="receipt-count-button mt-2" onClick={() => {
+                          setFormError("");
+                          setSelectedPayment(payment);
+                        }}>
+                          <ReceiptText size={14} />
+                          {payment.receiptCount ? `Xem phiếu thu (${payment.receiptCount})` : "Thêm phiếu thu"}
+                        </button>
+                      ) : null;
+                    })()}
                     {auditChangeLines(item).map((change) => (
                       <span className="audit-change-line" key={change.key}>
                         <strong>{change.label}</strong>
@@ -1866,9 +1884,9 @@ export function MemberDetailPage() {
           setSelectedPayment(null);
           setFormError("");
         }}
-        onUpload={(data) =>
-          uploadReceipts.mutate({ paymentId: selectedPayment.id, data })
-        }
+        onUpload={canFinancial ? (data) =>
+          uploadReceipts.mutateAsync({ paymentId: selectedPayment.id, data })
+          : undefined}
         pending={uploadReceipts.isPending}
         error={formError}
       />

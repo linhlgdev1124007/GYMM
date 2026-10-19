@@ -7,7 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload, load_only
 
 from ..config import settings
-from ..models import AuditLog, Customer, Person, User
+from ..models import AuditLog, Customer, Membership, Payment, Person, User
 from .serializers import pagination
 from ..timeutils import VIETNAM_TZ, utc_iso, vietnam_today
 
@@ -112,6 +112,28 @@ def audit_data(row: AuditLog, customers: dict[int, Customer] | None = None):
     }
 
 
+def _with_current_pricing_notes(db: Session, items: list[dict]) -> list[dict]:
+    # A missing key means the old audit did not capture a snapshot. An explicit
+    # null in a new audit means there was no pricing note at that time.
+    legacy = [item for item in items if item["entityType"] == "payment"
+              and item["action"] == "payment"
+              and "pricingNote" not in (item["details"] or {})]
+    payment_ids = {item["entityId"] for item in legacy if item["entityId"]}
+    if not payment_ids:
+        return items
+    notes = {
+        row.id: (row.customer_id, row.pricing_note)
+        for row in db.query(Payment.id, Payment.customer_id, Membership.pricing_note)
+        .join(Membership, Payment.membership_id == Membership.id)
+        .filter(Payment.id.in_(payment_ids)).all()
+    }
+    for item in legacy:
+        customer_id, note = notes.get(item["entityId"], (None, None))
+        if customer_id == item["customerId"] and note and note.strip():
+            item["currentPricingNote"] = note
+    return items
+
+
 def list_audit_logs(
     db: Session,
     q: str = "",
@@ -179,7 +201,7 @@ def list_audit_logs(
         .all()
     } if customer_ids else {}
     return {
-        "items": [audit_data(row, customers) for row in rows],
+        "items": _with_current_pricing_notes(db, [audit_data(row, customers) for row in rows]),
         "actors": _actor_options(db) if include_actors else [],
         "pagination": pagination(page, page_size, total),
     }
@@ -195,4 +217,4 @@ def member_audit_logs(db: Session, customer_id: int, limit: int = 100):
         .filter(Customer.id == customer_id)
         .first()
     }
-    return [audit_data(row, customers) for row in rows]
+    return _with_current_pricing_notes(db, [audit_data(row, customers) for row in rows])

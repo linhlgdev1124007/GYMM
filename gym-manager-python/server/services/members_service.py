@@ -893,7 +893,7 @@ def create_member(db: Session, payload: dict, actor: User | None = None):
                 note="Thanh toán đăng ký gói cùng lúc tạo hội viên",
             )
             db.add(payment); db.flush()
-            record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create", "paidAt": utc_iso(paid_at)})
+            record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": membership.id, "source": "member_create", "paidAt": utc_iso(paid_at), "pricingNote": membership.pricing_note})
         db.flush()
         _sync_member_status_from_memberships(db, member)
         record_audit(db, actor, "create", "membership", membership.id, f"Đăng ký gói {plan.name} cùng lúc tạo hội viên", customer_id=member.id, details={"startsAt": starts_at, "expiresAt": expires_at, "basePrice": pricing["base_price"], "discountType": pricing["discount_type"], "discountValue": pricing["discount_value"], "discountAmount": pricing["discount_amount"], "surchargeAmount": pricing["surcharge_amount"], "pricingNote": pricing["pricing_note"], "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
@@ -1136,7 +1136,7 @@ async def create_membership(db: Session, form: dict, receipts: list[UploadFile],
         db.flush()
     record_audit(db, actor, "create", "membership", row.id, f"Đăng ký gói {plan.name}", customer_id=member.id, details={"startsAt": row.starts_at, "expiresAt": row.expires_at, "basePrice": pricing["base_price"], "discountType": pricing["discount_type"], "discountValue": pricing["discount_value"], "discountAmount": pricing["discount_amount"], "surchargeAmount": pricing["surcharge_amount"], "pricingNote": pricing["pricing_note"], "finalPrice": final_price, "paidAmount": paid, "cashPaidAmount": cash_paid, "dayPassCredit": conversion_credit})
     if cash_paid:
-        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at)})
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {cash_paid:,.0f} ₫", customer_id=member.id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at), "pricingNote": row.pricing_note})
     mark_converted_day_pass(
         db,
         day_pass_id,
@@ -1208,7 +1208,7 @@ async def update_membership(db: Session, membership_id: int, form: dict, receipt
         db.add(payment)
         await attach_receipts(payment, receipts, actor)
         db.flush()
-        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at)})
+        record_audit(db, actor, "payment", "payment", payment.id, f"Ghi nhận thanh toán {delta:,.0f} ₫", customer_id=row.customer_id, details={"membershipId": row.id, "receiptCount": len(receipts), "paidAt": utc_iso(paid_at), "pricingNote": row.pricing_note})
     new_values = {
         "startsAt": row.starts_at,
         "expiresAt": row.expires_at,
@@ -1395,7 +1395,7 @@ def freeze_membership(db: Session, membership_id: int, payload: dict, actor: Use
     db.flush()
     if ends_at < vietnam_today():
         _complete_freeze(db, row, freeze, ends_at, actor, reason="Hoàn tất bảo lưu nhập bù")
-    record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {planned_days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": previous_expiry, "newExpiry": row.expires_at})
+    record_audit(db, actor, "freeze", "membership", row.id, f"Bảo lưu gói {row.package.name} trong {planned_days} ngày", customer_id=row.customer_id, details={"startsAt": starts_at, "endsAt": ends_at, "plannedDays": planned_days, "compensatedDays": 0, "previousExpiry": previous_expiry, "newExpiry": row.expires_at, "reason": reason})
     db.commit()
     return get_member(db, row.customer_id)
 

@@ -11,6 +11,33 @@ const methods = {
   card: "Thẻ",
 };
 
+function ReceiptImage({ receipt, index }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const name = receipt.name || `Chứng từ ${index + 1}`;
+  const source = attempt ? `${receipt.url}${receipt.url.includes("?") ? "&" : "?"}retry=${attempt}` : receipt.url;
+  return (
+    <div>
+      <a href={receipt.url} target="_blank" rel="noreferrer">
+        {!failed && <img src={source} alt={name} onError={() => setFailed(true)} />}
+        <span>
+          <strong>{name}</strong>
+          <small>{receipt.uploadedBy || "Dữ liệu trước đây"}</small>
+        </span>
+        <ExternalLink size={13} />
+      </a>
+      {failed && (
+        <div role="status" className="mt-2 text-xs text-red-700">
+          Không tải được ảnh phiếu thu.
+          <button type="button" className="ml-2 underline" onClick={() => { setAttempt(Date.now()); setFailed(false); }}>
+            Thử lại
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PaymentReceiptModal({
   payment,
   open,
@@ -20,19 +47,24 @@ export function PaymentReceiptModal({
   error,
 }) {
   const [files, setFiles] = useState([]);
-  useEffect(() => setFiles([]), [payment?.id, open]);
+  useEffect(() => setFiles([]), [payment?.id, payment?.receiptCount, open]);
   if (!payment) return null;
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     const data = new FormData();
     files.forEach((file) => data.append("receipts", file));
-    onUpload(data);
+    if (!onUpload || pending) return;
+    try {
+      await onUpload(data);
+    } catch {
+      // The parent's mutation exposes the upload error without clearing files.
+    }
   };
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`Chứng từ · ${payment.number}`}
+      title={`Phiếu thu · ${payment.number}`}
       description={`${money(payment.amount)} · ${methods[payment.method] || payment.method} · ${dateTime(payment.paidAt)}`}
       dirty={files.length > 0}
       size="lg"
@@ -49,22 +81,7 @@ export function PaymentReceiptModal({
             {payment.receipts?.length ? (
               <div className="receipt-gallery">
                 {payment.receipts.map((receipt, index) => (
-                  <a
-                    key={receipt.id || `${receipt.url}-${index}`}
-                    href={receipt.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <img
-                      src={receipt.url}
-                      alt={receipt.name || `Chứng từ ${index + 1}`}
-                    />
-                    <span>
-                      <strong>{receipt.name || `Chứng từ ${index + 1}`}</strong>
-                      <small>{receipt.uploadedBy || "Dữ liệu trước đây"}</small>
-                    </span>
-                    <ExternalLink size={13} />
-                  </a>
+                  <ReceiptImage key={`${receipt.id}-${receipt.url}-${index}`} receipt={receipt} index={index} />
                 ))}
               </div>
             ) : (
@@ -74,28 +91,28 @@ export function PaymentReceiptModal({
               </div>
             )}
           </section>
-          <section className="form-section">
+          {onUpload && <section className="form-section">
             <h3 className="form-section-title">Bổ sung chứng từ</h3>
             <ReceiptPicker
               files={files}
               onChange={setFiles}
               disabled={pending}
             />
-          </section>
+          </section>}
           {error && <div className="inline-error">{error}</div>}
         </div>
         <div className="form-actions">
           <Button data-modal-close variant="secondary" onClick={onClose}>
             Đóng
           </Button>
-          <Button
+          {onUpload && <Button
             type="submit"
             loading={pending}
             loadingText="Đang tải lên…"
-            disabled={!files.length}
+            disabled={!files.length || pending}
           >
             Thêm {files.length || ""} ảnh
-          </Button>
+          </Button>}
         </div>
       </form>
     </Modal>
